@@ -1,5 +1,6 @@
 package com.roylet.photos.ui.gallery
 
+import android.content.Context
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
@@ -65,6 +66,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
@@ -81,13 +83,18 @@ import kotlinx.coroutines.launch
 import java.text.DateFormatSymbols
 import java.util.Calendar
 import java.util.Locale
+import kotlin.math.sqrt
 
 val GridSpacing = 3.dp
 private val HeaderHeight = 52.dp
 /** Densities are tuned for this width; wider windows get proportionally more columns. */
 private val PhoneWidth = 420.dp
-private val PinchIn = 1.28f
-private val PinchOut = 0.78f
+/**
+ * How far past the geometric midpoint between two levels a pinch must go before snapping. After a
+ * snap the scale is rescaled by the level ratio, so without this margin it would land right on the
+ * way-back threshold and flicker between the two.
+ */
+private const val PinchHysteresis = 1.08f
 
 /**
  * The month-by-month justified photo grid used by every timeline-like screen.
@@ -107,7 +114,8 @@ fun TimelineGrid(
     modifier: Modifier = Modifier,
     selection: GridSelection = remember { GridSelection() },
     state: LazyListState = rememberLazyListState(),
-    initialDensity: GridDensity = GridDensity.Medium,
+    /** The density to start at; null = the last one the user pinched to (remembered across restarts), else [GridDensity.Medium]. */
+    initialDensity: GridDensity? = null,
     contentPadding: PaddingValues = PaddingValues(bottom = 16.dp),
     /** Scroll so this global index is visible on first composition (returning from the viewer). */
     revealIndex: Int? = null,
@@ -126,15 +134,18 @@ fun TimelineGrid(
     val headerPx = with(px) { HeaderHeight.toPx() }
     val lead = if (topContent != null) 1 else 0
     val open by rememberUpdatedState(onOpen)
+    val context = LocalContext.current
 
     BoxWithConstraints(modifier.fillMaxSize().background(Brutal.Paper)) {
         val widthPx = constraints.maxWidth.toFloat()
         val heightPx = constraints.maxHeight.toFloat()
-        var densityIndex by rememberSaveable { mutableIntStateOf(initialDensity.ordinal) }
+        var densityIndex by rememberSaveable { mutableIntStateOf((initialDensity ?: GridDensityPrefs.load(context) ?: GridDensity.Medium).ordinal) }
         val density = GridDensity.entries[densityIndex]
         val cache = remember { GridLayoutCache() }
         val columnScale = (maxWidth / PhoneWidth).coerceAtLeast(1f)
-        val model = remember(snapshot, widthPx, density, columnScale) { cache.build(snapshot, widthPx, density, spacingPx, columnScale) }
+        val model = remember(snapshot, widthPx, heightPx, density, columnScale) { cache.build(snapshot, widthPx, density, spacingPx, columnScale, heightPx) }
+        /** Effective photos per row of each level at this width, for the pinch thresholds and the snap rescale. */
+        val levelColumns = remember(columnScale) { GridDensity.entries.map { GridLayoutCache.columnsFor(it, columnScale).toFloat() } }
         val currentModel by rememberUpdatedState(model)
 
         // ---- Pinch-to-zoom density ----
@@ -153,6 +164,8 @@ fun TimelineGrid(
                 ?: return null
             val item = m.items[info.index - lead] as GridItem.Row
             val lefts = item.row.lefts(m.spacingPx)
+            // A centred (height-capped) close-up row has margins that aren't any photo.
+            if (pos.x < item.row.offset || pos.x > lefts.last() + item.row.widths.last()) return null
             val c = lefts.indexOfLast { it <= pos.x }.coerceAtLeast(0)
             return m.snapshot.offsets[item.bucket] + item.row.start + c
         }
@@ -169,14 +182,18 @@ fun TimelineGrid(
         }
 
         fun switchDensity(to: Int) {
-            val from = GridDensity.entries[densityIndex]
-            val target = GridDensity.entries[to]
+            val from = densityIndex
             pendingAnchor = (hit(focal) ?: topAssetIndex()) to focal.y
             densityIndex = to
+            GridDensityPrefs.save(context, GridDensity.entries[to])
             // The new layout is (from/target) times the size of the old; rescale so nothing jumps, then settle to 1.
-            scale *= target.columns.toFloat() / from.columns
+            scale *= levelColumns[to] / levelColumns[from]
             haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
         }
+
+        /** Scale past which the pinch snaps one level closer (bigger cells), or one level out. */
+        fun zoomInAt(i: Int) = sqrt(levelColumns[i] / levelColumns[i - 1]) * PinchHysteresis
+        fun zoomOutAt(i: Int) = 1f / (sqrt(levelColumns[i + 1] / levelColumns[i]) * PinchHysteresis)
 
         // Apply the anchor in the same frame the new layout is measured.
         val anchor = pendingAnchor
@@ -237,9 +254,9 @@ fun TimelineGrid(
                             if (event.changes.count { it.pressed } >= 2) {
                                 if (!pinching) { pinching = true; settle[0]?.cancel() }
                                 focal = event.calculateCentroid(useCurrent = true).takeIf { it.isSpecified() } ?: focal
-                                scale = (scale * event.calculateZoom()).coerceIn(0.45f, 2.4f)
-                                if (scale > PinchIn && densityIndex > 0) switchDensity(densityIndex - 1)
-                                else if (scale < PinchOut && densityIndex < GridDensity.entries.lastIndex) switchDensity(densityIndex + 1)
+                                scale = (scale * event.calculateZoom()).coerceIn(0.4f, 2.5f)
+                                if (densityIndex > 0 && scale > zoomInAt(densityIndex)) switchDensity(densityIndex - 1)
+                                else if (densityIndex < GridDensity.entries.lastIndex && scale < zoomOutAt(densityIndex)) switchDensity(densityIndex + 1)
                             }
                             if (pinching) event.changes.forEach { it.consume() }
                         } while (event.changes.any { it.pressed })
@@ -328,6 +345,19 @@ fun TimelineGrid(
     }
 }
 
+/** The last pinched-to density, so the grid reopens where the user left it. Shares the small "ui" prefs file. */
+internal object GridDensityPrefs {
+    private const val KEY = "gridDensity"
+
+    fun load(context: Context): GridDensity? =
+        runCatching { context.getSharedPreferences("ui", Context.MODE_PRIVATE).getString(KEY, null) }.getOrNull()
+            ?.let { name -> GridDensity.entries.firstOrNull { it.name == name } }
+
+    fun save(context: Context, density: GridDensity) {
+        context.getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putString(KEY, density.name).apply()
+    }
+}
+
 private fun Offset.isSpecified() = x.isFinite() && y.isFinite()
 
 internal fun heightOf(item: GridItem, headerPx: Float): Float = when (item) {
@@ -342,19 +372,19 @@ private fun GridRow(item: GridItem.Row, selection: GridSelection, urls: MediaUrl
     val row = item.row
     val spacing = GridSpacing
     Row(
-        Modifier.fillMaxWidth().height(with(px) { row.height.toDp() }),
+        Modifier.fillMaxWidth().height(with(px) { row.height.toDp() }).padding(start = with(px) { row.offset.toDp() }),
         horizontalArrangement = Arrangement.spacedBy(spacing),
     ) {
         for (c in 0 until row.count) {
             val asset = item.assets[row.start + c]
-            GridCell(asset, row.widths[c], row.height, selection, urls, showBadges = !density.squares)
+            GridCell(asset, row.widths[c], row.height, selection, urls, showBadges = !density.squares, sharp = density.closeUp)
         }
     }
     Spacer(Modifier.height(spacing))
 }
 
 @Composable
-private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, selection: GridSelection, urls: MediaUrls, showBadges: Boolean) {
+private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, selection: GridSelection, urls: MediaUrls, showBadges: Boolean, sharp: Boolean) {
     val px = LocalDensity.current
     val selected by remember(asset.id) { derivedStateOf { asset.id in selection.ids } }
     val selecting by remember { derivedStateOf { selection.active } }
@@ -366,8 +396,8 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
     )
     val w = with(px) { widthPx.toDp() }
     val h = with(px) { heightPx.toDp() }
-    // Above ~180px the 250px thumbnail starts to look soft, so big cells get the preview rendition.
-    val url = if (widthPx > 360f || heightPx > 360f) urls.preview(asset.id) else urls.thumbnail(asset.id)
+    // Above ~180px the 250px thumbnail starts to look soft, so big cells (and every close-up level) get the preview rendition.
+    val url = if (sharp || widthPx > 360f || heightPx > 360f) urls.preview(asset.id) else urls.thumbnail(asset.id)
     Box(Modifier.size(w, h).background(if (selected) Brutal.Peach else Color.Transparent)) {
         AssetImage(
             url, asset.thumbhash, widthPx.toInt(), heightPx.toInt(),
