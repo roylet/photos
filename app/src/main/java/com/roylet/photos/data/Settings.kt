@@ -1,6 +1,7 @@
 package com.roylet.photos.data
 
 import android.content.Context
+import com.roylet.photos.net.ServerStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,11 +26,11 @@ data class ServerConfig(
     val mode: ConnectionMode = ConnectionMode.AUTO,
 )
 
-class Settings(context: Context) {
+class Settings(context: Context) : ServerStore {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     private val _server = MutableStateFlow(readServer())
-    val server: StateFlow<ServerConfig?> = _server.asStateFlow()
+    override val server: StateFlow<ServerConfig?> = _server.asStateFlow()
 
     fun saveServer(config: ServerConfig) {
         prefs.edit()
@@ -45,7 +46,8 @@ class Settings(context: Context) {
     }
 
     /** Applies [change] to the saved server, if there is one. */
-    fun updateServer(change: (ServerConfig) -> ServerConfig) {
+    @Synchronized
+    override fun updateServer(change: (ServerConfig) -> ServerConfig) {
         val current = _server.value ?: return
         saveServer(change(current))
     }

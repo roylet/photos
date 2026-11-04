@@ -98,6 +98,9 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
                         name = me.name.takeIf { it.isNotEmpty() },
                     ),
                 )
+                // Picks LAN vs public, learns the public URL if this was a LAN address, and
+                // starts looking for the server on this Wi-Fi in the background.
+                container.connection.onSignedIn()
                 onConnected()
             } catch (e: Exception) {
                 error = ImmichApi.describe(e)
