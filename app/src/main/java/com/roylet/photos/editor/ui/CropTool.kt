@@ -246,7 +246,7 @@ fun CropOverlay(session: EditorSession, recipe: State<Recipe>, modifier: Modifie
     }
 }
 
-private fun DrawScope.cropHandles(r: Rect) {
+internal fun DrawScope.cropHandles(r: Rect) {
     val len = 22.dp.toPx()
     val w = 4.dp.toPx()
     val sh = 2.dp.toPx()
@@ -273,7 +273,7 @@ private fun DrawScope.cropHandles(r: Rect) {
     }
 }
 
-private fun hitTest(crop: CropRect, b: Rect, p: Offset, corner: Float, edge: Float): CropMath.Handle? {
+internal fun hitTest(crop: CropRect, b: Rect, p: Offset, corner: Float, edge: Float): CropMath.Handle? {
     val l = b.left + crop.left * b.width
     val t = b.top + crop.top * b.height
     val r = b.left + crop.right * b.width

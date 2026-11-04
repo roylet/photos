@@ -5,6 +5,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
+ * Where the recipe tool panels (sliders, curve, HSL, filters) read and write a [Recipe]: the photo
+ * [History], or the video editor's colour part of its edit. Gestures coalesce into one undo step.
+ */
+interface RecipeEdits {
+    val recipe: Recipe
+    fun set(recipe: Recipe)
+    fun update(transform: (Recipe) -> Recipe) = set(transform(recipe))
+    fun beginGesture()
+    fun endGesture()
+}
+
+/**
  * Undo/redo for a [Recipe].
  *
  * Every [set]/[update] outside a gesture is one undo step. Between [beginGesture] and
@@ -12,7 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * net change becomes a single step when the gesture ends. Not thread-safe: call from one thread
  * (normally main).
  */
-class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) {
+class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) : RecipeEdits {
     private val undoStack = ArrayDeque<Recipe>()
     private val redoStack = ArrayDeque<Recipe>()
     private var gestureStart: Recipe? = null
@@ -25,25 +37,25 @@ class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) {
     val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
     val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
 
-    val recipe: Recipe get() = _current.value
+    override val recipe: Recipe get() = _current.value
     val inGesture: Boolean get() = gestureStart != null
 
-    fun set(recipe: Recipe) {
+    override fun set(recipe: Recipe) {
         val old = _current.value
         if (recipe == old) return
         if (gestureStart == null) push(old)
         _current.value = recipe
     }
 
-    fun update(transform: (Recipe) -> Recipe) = set(transform(_current.value))
+    override fun update(transform: (Recipe) -> Recipe) = set(transform(_current.value))
 
     /** Starts coalescing changes. Nested calls are ignored. */
-    fun beginGesture() {
+    override fun beginGesture() {
         if (gestureStart == null) gestureStart = _current.value
     }
 
     /** Ends coalescing; records one step if the recipe changed since [beginGesture]. */
-    fun endGesture() {
+    override fun endGesture() {
         val start = gestureStart ?: return
         gestureStart = null
         if (start != _current.value) push(start)

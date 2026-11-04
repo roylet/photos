@@ -47,6 +47,7 @@ import com.roylet.photos.editor.recipe.HslBand
 import com.roylet.photos.editor.recipe.Params
 import com.roylet.photos.editor.recipe.Presets
 import com.roylet.photos.editor.recipe.Recipe
+import com.roylet.photos.editor.recipe.RecipeEdits
 import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.BrutalDark
@@ -56,7 +57,10 @@ private fun hue(deg: Float, s: Float = 0.78f, v: Float = 0.95f) = Color.hsv(((de
 
 /** HSL: eight colour-band swatches, then Hue/Saturation/Luminance for the chosen band. */
 @Composable
-fun HslPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) {
+fun HslPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) = HslPanel(session.history, recipe, modifier)
+
+@Composable
+fun HslPanel(edits: RecipeEdits, recipe: State<Recipe>, modifier: Modifier) {
     var bandIndex by rememberSaveable { mutableIntStateOf(0) }
     val band = HslBand.entries[bandIndex]
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp)) {
@@ -75,7 +79,7 @@ fun HslPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) 
             Brush.horizontalGradient(listOf(Color.hsv(((h % 360f) + 360f) % 360f, 0.8f, 0.25f), c, Color.hsv(((h % 360f) + 360f) % 360f, 0.25f, 1f))),
         )
         androidx.compose.runtime.key(band) {
-            for ((p, track) in Params.hsl(band).zip(tracks)) SessionSlider(session, recipe, p, track)
+            for ((p, track) in Params.hsl(band).zip(tracks)) SessionSlider(edits, recipe, p, track)
         }
     }
 }
@@ -103,6 +107,12 @@ private fun Swatch(band: HslBand, selected: Boolean, edited: Boolean, onClick: (
 @Composable
 fun FiltersPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) {
     val thumbs by session.filterThumbs.collectAsState()
+    FiltersPanel(session.history, thumbs, recipe, modifier)
+}
+
+/** The filter strip over any [edits]; [thumbs] are keyed by preset id ("" = none). */
+@Composable
+fun FiltersPanel(edits: RecipeEdits, thumbs: Map<String, androidx.compose.ui.graphics.ImageBitmap>, recipe: State<Recipe>, modifier: Modifier) {
     val current by remember(recipe) { derivedStateOf { recipe.value.filter?.lutId.orEmpty() } }
     val entries = remember { listOf("" to "None") + Presets.all.map { it.id to it.name } }
     Column(modifier.padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -110,7 +120,7 @@ fun FiltersPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifi
         LazyRow(state = listState, contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.first }) { (id, name) ->
                 FilterThumb(name, thumbs[id], selected = id == current) {
-                    session.history.update { r ->
+                    edits.update { r ->
                         if (id.isEmpty()) r.copy(filter = null)
                         else r.copy(filter = Presets.byId(id)!!.filter(r.filter?.amount ?: 100f))
                     }
@@ -118,7 +128,7 @@ fun FiltersPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifi
             }
         }
         if (current.isNotEmpty()) {
-            Box(Modifier.padding(horizontal = 8.dp)) { SessionSlider(session, recipe, Params.filterAmount) }
+            Box(Modifier.padding(horizontal = 8.dp)) { SessionSlider(edits, recipe, Params.filterAmount) }
         } else {
             Text("Pick a look, then fine-tune its strength.", style = Type.Small, color = BrutalDark.MutedText, modifier = Modifier.padding(horizontal = 16.dp))
         }

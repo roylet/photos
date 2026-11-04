@@ -22,6 +22,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.editor.recipe.Recipe
+import com.roylet.photos.editor.recipe.RecipeEdits
 import com.roylet.photos.editor.recipe.SliderParam
 import com.roylet.photos.ui.theme.BrutalDark
 import com.roylet.photos.ui.theme.Type
@@ -85,31 +87,70 @@ fun EditorSlider(
     track: Brush? = null,
 ) {
     val value by remember(param, recipe) { derivedStateOf { param.get(recipe.value) } }
+    ValueSlider(
+        label = param.label,
+        value = value,
+        range = param.range,
+        default = param.default,
+        format = { formatValue(param, it) },
+        onBegin = onBegin,
+        onChange = { v -> onChange(param.set(recipe.value, v)) },
+        onEnd = onEnd,
+        onReset = onReset,
+        modifier = modifier,
+        track = track,
+    )
+}
+
+/**
+ * The editor slider over a plain value (the look and feel of [EditorSlider], for values that
+ * aren't in a [Recipe], e.g. video speed and volume). [zero] is where the fill starts and the
+ * detent sits (default: 0 for two-sided ranges, else the left end). [enabled] false dims it and
+ * ignores touches.
+ */
+@Composable
+fun ValueSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    default: Float,
+    format: (Float) -> String,
+    onBegin: () -> Unit,
+    onChange: (Float) -> Unit,
+    onEnd: () -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier,
+    track: Brush? = null,
+    zero: Float = if (range.start < 0f) 0f else range.start,
+    enabled: Boolean = true,
+) {
     var dragging by remember { mutableStateOf(false) }
     val reduced = rememberReducedMotion()
     val haptics = rememberHaptics()
+    val current by rememberUpdatedState(value)
+    val latestOnChange by rememberUpdatedState(onChange)
     // Undo/reset glide; drags follow the finger exactly.
     val shown by animateFloatAsState(value, if (dragging || reduced) snap() else tween(220), label = "value")
     val lift by animateFloatAsState(if (dragging) 1f else 0f, if (reduced) snap() else spring(dampingRatio = 0.6f, stiffness = 900f), label = "lift")
-    val lo = param.range.start
-    val hi = param.range.endInclusive
+    val lo = range.start
+    val hi = range.endInclusive
     val span = hi - lo
-    // Where the fill starts and the centre tick sits: 0 for two-sided sliders, the left end for one-sided ones.
-    val zero = if (lo < 0f) 0f else lo
-    val changed = abs(value - param.default) > 1e-4f
+    val changed = abs(value - default) > 1e-4f
 
     Column(
         modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "${param.label} ${formatValue(param, value)}" }
-            .pointerInput(param) { detectTapGestures(onDoubleTap = { onReset(); haptics.tick() }) }
-            .pointerInput(param, recipe) {
+            .semantics { contentDescription = "$label ${format(value)}" }
+            .then(if (!enabled) Modifier.graphicsLayer { alpha = 0.38f } else Modifier)
+            .pointerInput(label, enabled) { if (enabled) detectTapGestures(onDoubleTap = { onReset(); haptics.tick() }) }
+            .pointerInput(label, range, enabled) {
+                if (!enabled) return@pointerInput
                 var raw = 0f
                 var last = 0f
                 detectHorizontalDragGestures(
                     onDragStart = {
                         dragging = true
-                        raw = param.get(recipe.value)
+                        raw = current
                         last = raw
                         onBegin()
                     },
@@ -125,16 +166,16 @@ fun EditorSlider(
                         val crossed = (out == zero && last != zero) || sign(out - zero) * sign(last - zero) < 0f
                         if (crossed) haptics.tick()
                         last = out
-                        onChange(param.set(recipe.value, out))
+                        latestOnChange(out)
                     }
                 }
             }
             .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(param.label.uppercase(), style = Type.Label, color = if (changed) BrutalDark.Text else BrutalDark.MutedText, modifier = Modifier.weight(1f))
+            Text(label.uppercase(), style = Type.Label, color = if (changed) BrutalDark.Text else BrutalDark.MutedText, modifier = Modifier.weight(1f))
             Text(
-                formatValue(param, shown),
+                format(shown),
                 style = Type.Label.copy(fontSize = Type.Label.fontSize * 1.1f),
                 color = if (changed || dragging) BrutalDark.Orange else BrutalDark.MutedText,
                 modifier = Modifier.graphicsLayer {
@@ -182,20 +223,29 @@ fun EditorSlider(
 
 /** A scrolling column of [EditorSlider]s wired to the session's history. */
 @Composable
-fun SliderPanel(session: EditorSession, recipe: State<Recipe>, params: List<SliderParam>, modifier: Modifier = Modifier) {
+fun SliderPanel(session: EditorSession, recipe: State<Recipe>, params: List<SliderParam>, modifier: Modifier = Modifier) =
+    SliderPanel(session.history, recipe, params, modifier)
+
+/** A scrolling column of [EditorSlider]s wired to [edits] (the photo history or a video edit's colour). */
+@Composable
+fun SliderPanel(edits: RecipeEdits, recipe: State<Recipe>, params: List<SliderParam>, modifier: Modifier = Modifier) {
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        for (p in params) SessionSlider(session, recipe, p)
+        for (p in params) SessionSlider(edits, recipe, p)
     }
 }
 
 @Composable
-fun SessionSlider(session: EditorSession, recipe: State<Recipe>, param: SliderParam, track: Brush? = null) {
+fun SessionSlider(session: EditorSession, recipe: State<Recipe>, param: SliderParam, track: Brush? = null) =
+    SessionSlider(session.history, recipe, param, track)
+
+@Composable
+fun SessionSlider(edits: RecipeEdits, recipe: State<Recipe>, param: SliderParam, track: Brush? = null) {
     EditorSlider(
         param, recipe,
-        onBegin = { session.history.beginGesture() },
-        onChange = { session.history.set(it) },
-        onEnd = { session.history.endGesture() },
-        onReset = { session.history.set(param.reset(session.history.recipe)) },
+        onBegin = { edits.beginGesture() },
+        onChange = { edits.set(it) },
+        onEnd = { edits.endGesture() },
+        onReset = { edits.set(param.reset(edits.recipe)) },
         track = track,
     )
 }

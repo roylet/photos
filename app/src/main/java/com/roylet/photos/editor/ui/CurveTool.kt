@@ -36,6 +36,7 @@ import com.roylet.photos.editor.recipe.CurveMath
 import com.roylet.photos.editor.recipe.CurvePoint
 import com.roylet.photos.editor.recipe.Curves
 import com.roylet.photos.editor.recipe.Recipe
+import com.roylet.photos.editor.recipe.RecipeEdits
 import com.roylet.photos.ui.components.DarkChip
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.theme.BrutalDark
@@ -80,7 +81,10 @@ object CurveEdit {
 }
 
 @Composable
-fun CurvePanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) {
+fun CurvePanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) = CurvePanel(session.history, recipe, modifier)
+
+@Composable
+fun CurvePanel(edits: RecipeEdits, recipe: State<Recipe>, modifier: Modifier) {
     var channelIndex by rememberSaveable { mutableIntStateOf(0) }
     val channel = CurveChannel.entries[channelIndex]
     val curves by remember(recipe) { derivedStateOf { recipe.value.curves } }
@@ -91,16 +95,16 @@ fun CurvePanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier
             }
             Spacer(Modifier.weight(1f))
             DarkIconButton(Icons.Rounded.RestartAlt, "Reset ${channel.label} curve", {
-                session.history.update { it.copy(curves = channel.set(it.curves, Curves.IDENTITY)) }
+                edits.update { it.copy(curves = channel.set(it.curves, Curves.IDENTITY)) }
             }, enabled = !CurveMath.isIdentity(channel.get(curves)))
         }
-        CurveGraph(session, curves, channel, Modifier.fillMaxWidth().weight(1f))
+        CurveGraph(edits, curves, channel, Modifier.fillMaxWidth().weight(1f))
         Text("TAP TO ADD · DRAG TO SHAPE · DRAG OFF TO REMOVE", style = Type.Tiny, color = BrutalDark.MutedText, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
 }
 
 @Composable
-private fun CurveGraph(session: EditorSession, curves: Curves, channel: CurveChannel, modifier: Modifier) {
+private fun CurveGraph(edits: RecipeEdits, curves: Curves, channel: CurveChannel, modifier: Modifier) {
     val haptics = rememberHaptics()
     var active by remember { mutableIntStateOf(-1) }
     val ch by rememberUpdatedState(channel)
@@ -115,10 +119,10 @@ private fun CurveGraph(session: EditorSession, curves: Curves, channel: CurveCha
                 val down = awaitFirstDown()
                 down.consume()
                 val c = ch
-                val start = CurveMath.normalize(c.get(session.history.recipe.curves))
+                val start = CurveMath.normalize(c.get(edits.recipe.curves))
                 val hit = start.indices.minByOrNull { (toView(start[it]) - down.position).getDistance() }
                     ?.takeIf { (toView(start[it]) - down.position).getDistance() < 28.dp.toPx() }
-                session.history.beginGesture()
+                edits.beginGesture()
                 var points: List<CurvePoint>
                 var index: Int
                 if (hit != null) {
@@ -130,7 +134,7 @@ private fun CurveGraph(session: EditorSession, curves: Curves, channel: CurveCha
                     haptics.tick()
                 }
                 fun commit(list: List<CurvePoint>) {
-                    session.history.update { it.copy(curves = c.set(it.curves, list)) }
+                    edits.update { it.copy(curves = c.set(it.curves, list)) }
                 }
                 commit(points)
                 active = index
@@ -156,7 +160,7 @@ private fun CurveGraph(session: EditorSession, curves: Curves, channel: CurveCha
                     }
                 } finally {
                     active = -1
-                    session.history.endGesture()
+                    edits.endGesture()
                 }
             }
         },

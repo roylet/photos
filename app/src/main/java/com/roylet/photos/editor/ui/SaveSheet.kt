@@ -52,7 +52,14 @@ import com.roylet.photos.ui.theme.Type
 
 /** The SAVE sheet: two big brutal choices. Slides up with a slight overshoot. */
 @Composable
-fun SaveSheet(visible: Boolean, onDismiss: () -> Unit, onSave: (SaveMode, Boolean) -> Unit) {
+fun SaveSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (SaveMode, Boolean) -> Unit,
+    subtitle: String = "Exports a full-resolution JPEG to Immich",
+    /** Extra content under the title (the video editor's export settings row). */
+    extra: (@Composable () -> Unit)? = null,
+) {
     val reduced = rememberReducedMotion()
     var group by rememberSaveable { mutableStateOf(true) }
     Box(Modifier.fillMaxSize()) {
@@ -68,13 +75,20 @@ fun SaveSheet(visible: Boolean, onDismiss: () -> Unit, onSave: (SaveMode, Boolea
             enter = slideInVertically(motion(reduced, spring(dampingRatio = 0.72f, stiffness = 420f))) { it } + fadeIn(motion(reduced, tween(120))),
             exit = slideOutVertically(motion(reduced, tween(200))) { it } + fadeOut(motion(reduced, tween(200))),
         ) {
-            SaveSheetContent(group, onGroupChange = { group = it }, onSave = onSave, onDismiss = onDismiss)
+            SaveSheetContent(group, onGroupChange = { group = it }, onSave = onSave, onDismiss = onDismiss, subtitle = subtitle, extra = extra)
         }
     }
 }
 
 @Composable
-internal fun SaveSheetContent(group: Boolean, onGroupChange: (Boolean) -> Unit, onSave: (SaveMode, Boolean) -> Unit, onDismiss: () -> Unit) {
+internal fun SaveSheetContent(
+    group: Boolean,
+    onGroupChange: (Boolean) -> Unit,
+    onSave: (SaveMode, Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    subtitle: String = "Exports a full-resolution JPEG to Immich",
+    extra: (@Composable () -> Unit)? = null,
+) {
     Column(
         Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 10.dp)
             .brutalDark(shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp), shadow = 0.dp)
@@ -88,9 +102,10 @@ internal fun SaveSheetContent(group: Boolean, onGroupChange: (Boolean) -> Unit, 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("SAVE EDIT", style = Type.Headline, color = BrutalDark.Text)
-                Text("Exports a full-resolution JPEG to Immich", style = Type.Small, color = BrutalDark.MutedText)
+                Text(subtitle, style = Type.Small, color = BrutalDark.MutedText)
             }
         }
+        extra?.invoke()
         ChoiceCard(
             title = "Save as copy",
             body = "Keeps the original untouched. The copy joins the same albums.",
