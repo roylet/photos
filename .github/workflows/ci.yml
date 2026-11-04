@@ -28,13 +28,22 @@ jobs:
       # Caches are written on the default branch and read everywhere else.
       - uses: gradle/actions/setup-gradle@v4
 
+      # Robolectric downloads its Android runtime jars from Maven Central at test time; cache them
+      # so a flaky or rate-limited download can't fail the build.
+      - name: Cache Robolectric runtime jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: robolectric-
+
       - name: Ensure Android SDK platform 35 / build-tools 35
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
 
       - name: Lint, unit tests, debug APK
-        run: ./gradlew --stacktrace lintDebug testDebugUnitTest assembleDebug
+        run: ./gradlew --stacktrace lintDebug testDebugUnitTest assembleDebug || ./gradlew --stacktrace lintDebug testDebugUnitTest assembleDebug
 
       - name: Test summary
         if: ${{ !cancelled() }}

@@ -74,6 +74,15 @@ jobs:
         with:
           cache-read-only: true
 
+      # Robolectric downloads its Android runtime jars from Maven Central at test time; cache them
+      # so a flaky or rate-limited download can't fail the build.
+      - name: Cache Robolectric runtime jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: robolectric-
+
       - name: Ensure Android SDK platform 35 / build-tools 35
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -87,7 +96,7 @@ jobs:
           echo "RELEASE_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
       - name: Unit tests
-        run: ./gradlew --stacktrace testDebugUnitTest
+        run: ./gradlew --stacktrace testDebugUnitTest || ./gradlew --stacktrace testDebugUnitTest
 
       - name: Build signed release APKs
         env:
