@@ -1,6 +1,7 @@
 package com.roylet.photos.data
 
 import android.content.Context
+import com.roylet.photos.net.ServerStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,13 +24,20 @@ data class ServerConfig(
     val name: String? = null,
     /** User override for the automatic LAN/public switch. */
     val mode: ConnectionMode = ConnectionMode.AUTO,
+    /**
+     * Hash of the server's unauthenticated self-description (version/config/features), cached from
+     * the public URL. A LAN address must match it before it's ever sent the API key.
+     */
+    val fingerprint: String? = null,
+    /** [localUrl] has passed the full check (fingerprint, then `/users/me` id) at least once. */
+    val localVerified: Boolean = false,
 )
 
-class Settings(context: Context) {
+class Settings(context: Context) : ServerStore {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     private val _server = MutableStateFlow(readServer())
-    val server: StateFlow<ServerConfig?> = _server.asStateFlow()
+    override val server: StateFlow<ServerConfig?> = _server.asStateFlow()
 
     fun saveServer(config: ServerConfig) {
         prefs.edit()
@@ -40,17 +48,24 @@ class Settings(context: Context) {
             .putString(KEY_EMAIL, config.email)
             .putString(KEY_NAME, config.name)
             .putString(KEY_MODE, config.mode.name)
+            .putString(KEY_FINGERPRINT, config.fingerprint)
+            .putBoolean(KEY_LOCAL_VERIFIED, config.localVerified)
             .apply()
         _server.value = config
     }
 
     /** Applies [change] to the saved server, if there is one. */
-    fun updateServer(change: (ServerConfig) -> ServerConfig) {
+    @Synchronized
+    override fun updateServer(change: (ServerConfig) -> ServerConfig) {
         val current = _server.value ?: return
         saveServer(change(current))
     }
 
-    fun updateLocalUrl(localUrl: String?) = updateServer { it.copy(localUrl = localUrl?.trim()?.takeIf { url -> url.isNotEmpty() }) }
+    /** Sets an unverified LAN address; the connection manager verifies it before sending it the key. */
+    fun updateLocalUrl(localUrl: String?) = updateServer {
+        val url = localUrl?.trim()?.takeIf { u -> u.isNotEmpty() }
+        it.copy(localUrl = url, localVerified = it.localVerified && url == it.localUrl)
+    }
 
     fun updateMode(mode: ConnectionMode) = updateServer { it.copy(mode = mode) }
 
@@ -70,6 +85,8 @@ class Settings(context: Context) {
             email = prefs.getString(KEY_EMAIL, null),
             name = prefs.getString(KEY_NAME, null),
             mode = prefs.getString(KEY_MODE, null)?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() } ?: ConnectionMode.AUTO,
+            fingerprint = prefs.getString(KEY_FINGERPRINT, null),
+            localVerified = prefs.getBoolean(KEY_LOCAL_VERIFIED, false),
         )
     }
 
@@ -81,6 +98,8 @@ class Settings(context: Context) {
         const val KEY_EMAIL = "email"
         const val KEY_NAME = "name"
         const val KEY_MODE = "connectionMode"
-        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE)
+        const val KEY_FINGERPRINT = "serverFingerprint"
+        const val KEY_LOCAL_VERIFIED = "localVerified"
+        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED)
     }
 }
