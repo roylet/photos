@@ -51,7 +51,11 @@ class TimelineRepository(
         if (_status.value == Status.Idle) refresh()
     }
 
-    /** Re-fetches the month list and drops cached months (pull-to-refresh, server switch). */
+    /**
+     * Re-fetches the month list and drops cached months (pull-to-refresh, server switch). With
+     * [keepLoaded], months already on screen stay visible while they're re-fetched in the
+     * background (so an edit, delete or restore shows up without the grid going blank).
+     */
     fun refresh(keepLoaded: Boolean = false) {
         val gen = ++generation
         _status.value = Status.Loading
@@ -65,6 +69,8 @@ class TimelineRepository(
                     _status.value = Status.Ready
                     // Warm the first months so the grid's first frame has real cells.
                     buckets.take(1 + prefetch).forEach { load(it.key) }
+                    // Kept months may be out of date (that's why we're refreshing): fetch them again.
+                    keep.keys.forEach { revalidate(it, gen) }
                 }
                 .onFailure { e -> if (gen == generation) _status.value = Status.Failed(e.message ?: e.javaClass.simpleName) }
         }
@@ -108,6 +114,14 @@ class TimelineRepository(
             // With an immediate dispatcher the fetch may already be done (and have removed itself).
             if (!job.isCompleted) inFlight[key] = job
             return job
+        }
+    }
+
+    private fun revalidate(key: String, gen: Int) {
+        scope.launch {
+            val assets = runCatching { source.bucket(filter, key) }.getOrNull() ?: return@launch
+            if (gen != generation) return@launch
+            _snapshot.update { s -> if (s.buckets.none { it.key == key }) s else TimelineSnapshot(s.buckets, s.loaded + (key to assets)) }
         }
     }
 

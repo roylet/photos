@@ -178,6 +178,22 @@ class TimelineDataTest {
         assertFalse(repo.snapshot.value.indexOf(id) >= 0)
     }
 
+    @Test fun refreshKeepingLoadedMonthsRefetchesThem() = runTest {
+        var version = 0
+        val source = object : TimelineSource {
+            override suspend fun buckets(filter: TimelineFilter) = listOf(TimeBucket("2025-01-01", 1))
+            override suspend fun bucket(filter: TimelineFilter, key: String) = listOf(asset("v$version"))
+        }
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val repo = TimelineRepository(source, TimelineFilter.Timeline, scope)
+        repo.start(); scope.advanceUntilIdle()
+        assertEquals("v0", repo.snapshot.value.assetAt(0)?.id)
+        // E.g. an edit replaced the photo: the month's contents changed on the server.
+        version = 1
+        repo.refresh(keepLoaded = true); scope.advanceUntilIdle()
+        assertEquals("v1", repo.snapshot.value.assetAt(0)?.id)
+    }
+
     @Test fun awaitBucketWaitsForTheFetch() = runTest {
         val gate = CompletableDeferred<Unit>()
         val source = FakeSource(listOf(TimeBucket("2025-01-01", 1)), gate)
