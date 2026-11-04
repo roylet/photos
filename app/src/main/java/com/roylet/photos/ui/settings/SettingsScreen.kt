@@ -23,6 +23,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AutoMode
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.BrightnessAuto
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Person
@@ -64,6 +67,7 @@ import com.roylet.photos.ui.components.NoticeTone
 import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.SectionLabel
 import com.roylet.photos.ui.components.Tag
+import com.roylet.photos.data.ThemeMode
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
@@ -76,6 +80,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
     val activeUrl by container.connection.activeUrl.collectAsState()
     val scan by container.connection.scan.collectAsState()
     val check by container.connection.check.collectAsState()
+    val theme by container.uiPrefs.themeMode.collectAsState()
     SettingsContent(
         server = server,
         state = state,
@@ -88,6 +93,8 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
         onSaveLocal = container.connection::setLocalUrl,
         onScan = container.connection::rescan,
         onSignOut = container.settings::signOut,
+        theme = theme,
+        onTheme = container.uiPrefs::setThemeMode,
     )
 }
 
@@ -108,6 +115,9 @@ fun SettingsContent(
     onSaveLocal: suspend (String?) -> LocalUrlResult,
     onScan: () -> Unit,
     onSignOut: () -> Unit,
+    /** The Appearance choice; switching it re-themes the whole app at once. */
+    theme: ThemeMode = ThemeMode.System,
+    onTheme: (ThemeMode) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Settings", onBack = onBack, actions = { ConnectionChip(state) })
@@ -216,6 +226,23 @@ fun SettingsContent(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+
+            Spacer(Modifier.height(4.dp))
+            SectionLabel("Appearance")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("System", selected = theme == ThemeMode.System, onClick = { onTheme(ThemeMode.System) }, icon = Icons.Rounded.BrightnessAuto)
+                Chip("Light", selected = theme == ThemeMode.Light, onClick = { onTheme(ThemeMode.Light) }, icon = Icons.Rounded.LightMode)
+                Chip("Dark", selected = theme == ThemeMode.Dark, onClick = { onTheme(ThemeMode.Dark) }, icon = Icons.Rounded.DarkMode)
+            }
+            Text(
+                when (theme) {
+                    ThemeMode.System -> "Follows your phone's dark theme setting."
+                    ThemeMode.Light -> "Cream paper, always."
+                    ThemeMode.Dark -> "Dark paper, always. Photos and the editor are always dark."
+                },
+                style = Type.Small,
+                color = Palette.mutedInk,
+            )
 
             Spacer(Modifier.height(4.dp))
             SectionLabel("Account")
