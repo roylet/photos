@@ -274,7 +274,7 @@ fun TimelineGrid(
                         onTap = { pos ->
                             val i = hit(pos) ?: return@detectTapGestures
                             val asset = currentModel.snapshot.assetAt(i) ?: return@detectTapGestures
-                            if (selection.active) {
+                            if (selection.selecting) {
                                 haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
                                 selection.toggle(asset.id)
                             } else open(i, asset)
@@ -388,7 +388,7 @@ private fun GridRow(item: GridItem.Row, selection: GridSelection, urls: MediaUrl
 private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, selection: GridSelection, urls: MediaUrls, showBadges: Boolean, sharp: Boolean) {
     val px = LocalDensity.current
     val selected by remember(asset.id) { derivedStateOf { asset.id in selection.ids } }
-    val selecting by remember { derivedStateOf { selection.active } }
+    val selecting by remember { derivedStateOf { selection.selecting } }
     val reduced = reducedMotion()
     val cellScale by animateFloatAsState(
         if (selected) 0.86f else 1f,
@@ -476,7 +476,7 @@ private fun PendingMonth(item: GridItem.Pending, load: () -> Unit) {
 
 @Composable
 private fun MonthHeader(bucket: TimeBucket, count: Int, selection: GridSelection, assets: () -> List<TimelineAsset>?, compact: Boolean) {
-    val selecting by remember { derivedStateOf { selection.active } }
+    val selecting by remember { derivedStateOf { selection.selecting } }
     Row(
         Modifier.fillMaxWidth().height(HeaderHeight).background(Palette.paper).padding(start = 14.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

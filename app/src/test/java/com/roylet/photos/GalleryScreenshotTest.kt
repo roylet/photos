@@ -115,6 +115,20 @@ class GalleryScreenshotTest {
         }
     }
 
+    /** New album from the Albums tab: the timeline in pick mode with three photos chosen. */
+    @Test fun albumPicker() = albumPicker("gallery-12-album-picker", dark = false)
+
+    @Test fun albumPickerDark() = albumPicker("gallery-12-album-picker-dark", dark = true)
+
+    private fun albumPicker(name: String, dark: Boolean) {
+        val repo = FakeGallery.repository(loadAll = true)
+        val first = FakeGallery.assetsOf(FakeGallery.buckets[0].key)
+        val selection = GridSelection(picking = true).apply { set(setOf(first[0].id, first[2].id, first[6].id)) }
+        shoot(name, dark = dark) {
+            com.roylet.photos.ui.albums.AlbumPhotoPicker("Beach day", repo, onAdd = {}, onSkip = {}, onBack = {}, selection = selection)
+        }
+    }
+
     /** The compact month overview (pinched all the way out). */
     @Test fun timelineMonths() = months("gallery-07-months", dark = false)
 

@@ -74,12 +74,18 @@ import com.roylet.photos.ui.components.reducedMotion
 import kotlin.math.max
 import kotlin.math.min
 
-/** Multi-select state for a grid: tap-to-toggle plus long-press-drag range selection. */
+/**
+ * Multi-select state for a grid: tap-to-toggle plus long-press-drag range selection.
+ *
+ * @param picking a photo picker: taps always toggle and the check rings show even with nothing chosen.
+ */
 @Stable
-class GridSelection {
+class GridSelection(val picking: Boolean = false) {
     var ids: Set<String> by mutableStateOf(emptySet())
         private set
     val active: Boolean get() = ids.isNotEmpty()
+    /** Whether cells show their check rings and taps toggle instead of opening the viewer. */
+    val selecting: Boolean get() = picking || active
 
     private var base: Set<String> = emptySet()
     private var anchor = -1
