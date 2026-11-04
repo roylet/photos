@@ -5,8 +5,18 @@ import com.roylet.photos.domain.timeline.JustifiedRow
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineSnapshot
 
-/** Pinch levels, from biggest cells to the compact month overview. */
-enum class GridDensity(val columns: Int, val squares: Boolean) {
+/**
+ * Pinch levels, from biggest cells to the compact month overview. [columns] is the number of typical
+ * photos per row on a phone (scaled up by width on bigger screens).
+ *
+ * @param closeUp the one- and two-up levels: rows hold at most [columns] photos, are capped at
+ *   [viewportCap] of the viewport height (so a portrait can't become a wall), and load the sharper
+ *   preview rendition instead of the thumbnail.
+ */
+enum class GridDensity(val columns: Int, val squares: Boolean, val closeUp: Boolean = false, val viewportCap: Float = 0f) {
+    /** One photo per row: a full-width feed. */
+    Feed(1, false, closeUp = true, viewportCap = 0.7f),
+    Duo(2, false, closeUp = true, viewportCap = 0.5f),
     Large(3, false),
     Medium(5, false),
     Small(7, false),
@@ -47,18 +57,29 @@ class GridLayoutCache {
     private var width = 0f
     private var density: GridDensity? = null
     private var columnScale = 1f
+    private var viewportHeight = 0f
     private val rows = HashMap<String, Pair<List<TimelineAsset>, List<JustifiedRow>>>()
 
     /**
      * @param columnScale widens the density on big screens (1 on a phone; e.g. 2.2 on a 900dp tablet),
      *   so "3 per row" means phone-sized cells rather than giant ones.
      */
-    fun build(snapshot: TimelineSnapshot, widthPx: Float, density: GridDensity, spacingPx: Float, columnScale: Float = 1f): GridModel {
-        if (widthPx != width || density != this.density || columnScale != this.columnScale) {
-            rows.clear(); width = widthPx; this.density = density; this.columnScale = columnScale
+    fun build(
+        snapshot: TimelineSnapshot,
+        widthPx: Float,
+        density: GridDensity,
+        spacingPx: Float,
+        columnScale: Float = 1f,
+        /** The grid's visible height; caps the close-up levels' row height. 0 = unknown (no cap beyond the default). */
+        viewportHeightPx: Float = 0f,
+    ): GridModel {
+        if (widthPx != width || density != this.density || columnScale != this.columnScale || viewportHeightPx != viewportHeight) {
+            rows.clear(); width = widthPx; this.density = density; this.columnScale = columnScale; viewportHeight = viewportHeightPx
         }
         val columns = columnsFor(density, columnScale)
         val target = targetHeight(widthPx, columns, spacingPx)
+        val maxPerRow = if (density.closeUp) columns else Int.MAX_VALUE
+        val maxHeight = maxRowHeight(density, target, viewportHeightPx)
         val items = ArrayList<GridItem>(snapshot.buckets.size * 4)
         val headers = IntArray(snapshot.buckets.size)
         snapshot.buckets.forEachIndexed { b, bucket ->
@@ -76,7 +97,7 @@ class GridLayoutCache {
                 val cached = rows[bucket.key]
                 val laid = if (cached != null && cached.first === assets) cached.second else {
                     val r = if (density.squares) JustifiedLayout.squares(assets.size, widthPx, columns, spacingPx)
-                    else JustifiedLayout.layout(FloatArray(assets.size) { assets[it].ratio }, widthPx, target, spacingPx)
+                    else JustifiedLayout.layout(FloatArray(assets.size) { assets[it].ratio }, widthPx, target, spacingPx, maxHeight, maxPerRow)
                     rows[bucket.key] = assets to r
                     r
                 }
@@ -89,8 +110,18 @@ class GridLayoutCache {
     companion object {
         fun columnsFor(density: GridDensity, columnScale: Float): Int = (density.columns * columnScale.coerceAtLeast(1f)).toInt().coerceAtLeast(1)
 
-        /** Row height that gives roughly [columns] typical (4:3-ish) photos per row. */
+        /** Row height that gives roughly [columns] typical (3:2-ish) photos per row. */
         fun targetHeight(widthPx: Float, columns: Int, spacingPx: Float): Float =
-            (widthPx - spacingPx * (columns - 1)) / columns * 0.8f
+            JustifiedLayout.targetHeight(widthPx, columns, spacingPx)
+
+        /**
+         * The tallest a row may get. Close-up levels let a pair of portraits grow past the target to
+         * fill the width, but never past [GridDensity.viewportCap] of the viewport.
+         */
+        fun maxRowHeight(density: GridDensity, target: Float, viewportHeightPx: Float): Float = when {
+            !density.closeUp -> target * 1.6f
+            viewportHeightPx > 0f -> viewportHeightPx * density.viewportCap
+            else -> target * 1.6f
+        }
     }
 }

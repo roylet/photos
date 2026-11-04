@@ -4,14 +4,18 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-/** One laid-out row: assets [start] until [start] + [widths].size, all [height] tall. Units are whatever the caller used (px). */
-class JustifiedRow(val start: Int, val height: Float, val widths: FloatArray) {
+/**
+ * One laid-out row: assets [start] until [start] + [widths].size, all [height] tall, the first cell
+ * [offset] from the left edge (non-zero only for a centred, height-capped row). Units are whatever
+ * the caller used (px).
+ */
+class JustifiedRow(val start: Int, val height: Float, val widths: FloatArray, val offset: Float = 0f) {
     val count: Int get() = widths.size
     val end: Int get() = start + widths.size
     /** x of each cell's left edge, given the [spacing] used for the layout. */
     fun lefts(spacing: Float): FloatArray {
         val out = FloatArray(widths.size)
-        var x = 0f
+        var x = offset
         for (i in widths.indices) { out[i] = x; x += widths[i] + spacing }
         return out
     }
@@ -22,6 +26,10 @@ class JustifiedRow(val start: Int, val height: Float, val widths: FloatArray) {
  * exactly fills [width]. Rows are built greedily, closing a row once it would be at least as wide as
  * the container at [targetHeight]. The last row stays at the target height (left-aligned) rather
  * than being blown up to full width.
+ *
+ * The close-up levels (one or two per row) also pass [maxPerRow], so a run of portraits can't pile
+ * four into a "two per row" view; such a row is scaled up to fill the width instead, capped at
+ * [maxHeight] (a fraction of the viewport) and centred when the cap leaves it narrower.
  *
  * Pure function of its inputs, so the grid can lay out one month at a time, on demand.
  */
@@ -37,8 +45,11 @@ object JustifiedLayout {
         spacing: Float = 0f,
         /** A row with too few images (e.g. one portrait) is capped at this height. */
         maxHeight: Float = targetHeight * 1.6f,
+        /** Close a row after this many images even if they don't reach the width at [targetHeight]. */
+        maxPerRow: Int = Int.MAX_VALUE,
     ): List<JustifiedRow> {
         require(width > 0 && targetHeight > 0) { "width and targetHeight must be positive" }
+        require(maxPerRow >= 1) { "maxPerRow must be at least 1" }
         val rows = ArrayList<JustifiedRow>(ratios.size / 3 + 1)
         var start = 0
         while (start < ratios.size) {
@@ -48,23 +59,35 @@ object JustifiedLayout {
                 sum += clamp(ratios[end])
                 end++
                 val n = end - start
-                if (sum * targetHeight + spacing * (n - 1) >= width) break
+                if (sum * targetHeight + spacing * (n - 1) >= width || n >= maxPerRow) break
             }
             val n = end - start
             val avail = width - spacing * (n - 1)
-            val full = sum * targetHeight + spacing * (n - 1) >= width
+            val full = sum * targetHeight + spacing * (n - 1) >= width || n >= maxPerRow
             val h = if (full) min(avail / sum, maxHeight) else min(targetHeight, avail / sum)
             val widths = FloatArray(n) { clamp(ratios[start + it]) * h }
+            var offset = 0f
             if (full && h < maxHeight) {
                 // Absorb float error so the row ends exactly at the container edge.
                 val drift = avail - widths.sum()
                 widths[n - 1] += drift
+            } else if (full && maxPerRow != Int.MAX_VALUE) {
+                // A capped close-up row (e.g. a tall portrait in the one-up feed) sits in the middle.
+                offset = ((avail - widths.sum()) / 2f).coerceAtLeast(0f)
             }
-            rows += JustifiedRow(start, h, widths)
+            rows += JustifiedRow(start, h, widths, offset)
             start = end
         }
         return rows
     }
+
+    /**
+     * The row height at which about [perRow] typical landscape photos (3:2 or 4:3) fill [width].
+     * It is sized for a 5:4 average, a little taller than either, so a row of them closes at
+     * [perRow] rather than spilling one extra in, and mixed portraits don't inflate the count much.
+     */
+    fun targetHeight(width: Float, perRow: Int, spacing: Float = 0f, typicalRatio: Float = 1.25f): Float =
+        (width - spacing * (perRow - 1)) / perRow / typicalRatio
 
     /** Uniform square cells, [columns] per row (the compact month view). */
     fun squares(count: Int, width: Float, columns: Int, spacing: Float = 0f): List<JustifiedRow> {
