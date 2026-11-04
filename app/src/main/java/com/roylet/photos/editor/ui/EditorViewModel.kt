@@ -118,7 +118,7 @@ class EditorViewModel(
         val dir = File(cacheDir, "editor/${source.id}-${Integer.toHexString(source.checksum.hashCode())}")
         val file = File(dir, safeName(source.originalFileName))
         if (!file.exists()) {
-            pruneCache(keep = dir)
+            withContext(Dispatchers.IO) { EditorCache.prune(dir.parentFile ?: cacheDir, keep = dir, protect = edits.pendingSourceFiles()) }
             val name = source.originalFileName
             _phase.value = EditorPhase.Loading("Downloading original", name, 0f)
             api.downloadOriginal(source.id, file, edited = source.isEdited) { done, total ->
@@ -158,10 +158,23 @@ class EditorViewModel(
         _saveJob.value = null
     }
 
-    private fun pruneCache(keep: File) {
-        val root = keep.parentFile ?: return
-        root.listFiles()?.filter { it != keep }?.sortedByDescending { it.lastModified() }?.drop(2)?.forEach { it.deleteRecursively() }
-    }
-
     private fun safeName(name: String) = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "photo" }
+}
+
+/** The editor's download cache: one folder per opened original, under `cacheDir/editor`. */
+internal object EditorCache {
+    /**
+     * Deletes all but the [keepRecent] newest folders in [root] besides [keep] — except folders
+     * holding a file in [protect] (the originals that queued or running saves still have to
+     * render from; see `EditSaveManager.pendingSourceFiles`).
+     */
+    fun prune(root: File, keep: File, protect: Set<File>, keepRecent: Int = 2) {
+        val busy = protect.map { it.absoluteFile }
+        fun inUse(dir: File): Boolean {
+            val d = dir.absoluteFile
+            return busy.any { f -> generateSequence(f.parentFile) { it.parentFile }.any { it == d } || f == d }
+        }
+        root.listFiles()?.filter { it != keep && !inUse(it) }?.sortedByDescending { it.lastModified() }?.drop(keepRecent)
+            ?.forEach { it.deleteRecursively() }
+    }
 }
