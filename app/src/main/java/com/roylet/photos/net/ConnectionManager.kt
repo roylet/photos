@@ -40,6 +40,12 @@ sealed interface ScanState {
 enum class LocalUrlResult {
     /** Saved, matched the fingerprint and the account: in use when it answers. */
     Verified,
+    /**
+     * Saved and in use: the account check passed, but some unauthenticated config field differs
+     * from the public address's (see [ConnectionManager.check] for which). Only for hand-entered
+     * addresses, which the user chose; the scan never sends the key to such a host.
+     */
+    VerifiedWithNote,
     /** Saved but not (yet) verified; it gets no API key until it is. */
     Unverified,
     /** Not saved: only RFC 1918 / link-local IPv4 addresses are accepted. */
@@ -59,6 +65,8 @@ interface NetworkEnvironment {
     fun online(): Boolean
     /** The Wi-Fi/ethernet network we're on, or null on mobile data / VPN / nothing. */
     fun lan(): LanInfo?
+    /** The default network in words ("Mobile data", "Wi-Fi + VPN"), for diagnostics. */
+    fun describe(): String = lan()?.label?.ifEmpty { "Wi-Fi" } ?: "No Wi-Fi or ethernet"
     /** Registers for default-network changes and app foregrounding. */
     fun observe(onNetworkChange: () -> Unit, onForeground: () -> Unit) {}
 }
@@ -99,6 +107,10 @@ class ConnectionManager(
 
     private val _scan = MutableStateFlow<ScanState>(ScanState.Idle)
     val scan: StateFlow<ScanState> = _scan.asStateFlow()
+
+    private val _check = MutableStateFlow<ConnectionCheck?>(null)
+    /** Step-by-step result of the last hand-entered local address check or user-started scan. */
+    val check: StateFlow<ConnectionCheck?> = _check.asStateFlow()
 
     private val lock = Any()
     private var evalJob: Job? = null
@@ -173,21 +185,126 @@ class ConnectionManager(
         launchScan(force = true)
     }
 
-    /** Saves a hand-entered LAN address (blank clears it) and verifies it as this account's server. */
+    /**
+     * Saves a hand-entered LAN address (blank clears it) and verifies it as this account's server,
+     * recording every step in [check]. A missing scheme means http, a missing port 2283.
+     *
+     * Unlike the automatic scan, a typed address that answers as Immich with the same *version*
+     * is sent the key for the `/users/me` check even if a config/feature field differs from the
+     * public address's: the user picked this host and it's an RFC 1918 address, and the id check
+     * is what proves it's the same account. The result is then [LocalUrlResult.VerifiedWithNote].
+     * A different version (or no Immich at all) never gets the key.
+     */
     suspend fun setLocalUrl(input: String?): LocalUrlResult {
-        val url = input?.trim()?.takeIf { it.isNotEmpty() }?.let(ImmichApi::normalizeOrigin)
-        if (url == null) {
+        val typed = input?.trim()?.takeIf { it.isNotEmpty() }
+        if (typed == null) {
             untrust()
-            store.updateServer { it.copy(localUrl = null, localVerified = false) }
+            store.updateServer { it.copy(localUrl = null, localVerified = false, localFingerprint = null) }
+            _check.value = null
             refresh()
             return LocalUrlResult.Cleared
         }
-        if (!scanner.allows(url)) return LocalUrlResult.NotLanAddress
-        store.updateServer { it.copy(localUrl = url, localVerified = it.localVerified && it.localUrl == url) }
-        val cfg = store.server.value ?: return LocalUrlResult.Unverified
-        val ok = verifyLocal(cfg.copy(localVerified = false), url, netKey())
+        val rec = CheckRecorder("Home network address: $typed") { _check.value = it }
+        deviceStep(rec)
+        val candidates = LanScanner.localCandidates(typed).filter(scanner::allows)
+        if (candidates.isEmpty()) {
+            rec.step(STEP_ADDRESS, StepStatus.Fail, "${ImmichApi.normalizeOrigin(typed)} isn't a home-network IP address (192.168.x.x, 10.x.x.x or 172.16-31.x.x)")
+            rec.finish(StepStatus.Fail, "Not saved.")
+            return LocalUrlResult.NotLanAddress
+        }
+        rec.step(STEP_ADDRESS, StepStatus.Pass, candidates.first() + if (candidates.size > 1) " (then ${candidates.drop(1).joinToString()})" else "")
+
+        rec.running(STEP_PING, "Waiting for /api/server/ping…")
+        var url: String? = null
+        val misses = mutableListOf<String>()
+        for (c in candidates) {
+            val p = scanner.pingProbe(c)
+            if (p.ok) {
+                url = c
+                rec.step(STEP_PING, StepStatus.Pass, "$c: ${p.detail}")
+                break
+            }
+            misses += "$c: ${p.detail}"
+        }
+        val saved = url ?: candidates.first()
+        store.updateServer { if (it.localUrl == saved) it else it.copy(localUrl = saved, localVerified = false, localFingerprint = null) }
+        if (url == null) {
+            rec.step(STEP_PING, StepStatus.Fail, misses.joinToString("; "))
+            rec.finish(StepStatus.Fail, "Saved, not verified: nothing answered as Immich. Check the IP and port, and that the phone can reach it.")
+            refresh()
+            return LocalUrlResult.Unverified
+        }
+        val cfg = store.server.value ?: return LocalUrlResult.Unverified.also { rec.finish(StepStatus.Fail, "Signed out.") }
+
+        rec.running(STEP_PUBLIC_FP, "Reading ${cfg.publicUrl}…")
+        val fresh = scanner.readFingerprint(cfg.publicUrl)
+        fresh.encoded?.let { fp -> store.updateServer { if (it.publicUrl == cfg.publicUrl && it.fingerprint != fp) it.copy(fingerprint = fp) else it } }
+        val publicFp = fresh.fields ?: Fingerprint.decode(cfg.fingerprint)
+        when {
+            fresh.fields != null -> rec.step(STEP_PUBLIC_FP, StepStatus.Pass, "${cfg.publicUrl}: ${describeFp(fresh.fields)}")
+            publicFp != null -> rec.step(STEP_PUBLIC_FP, StepStatus.Warn, "Couldn't read it now (${fresh.detail}); using the saved one: ${describeFp(publicFp)}")
+            else -> rec.step(STEP_PUBLIC_FP, StepStatus.Warn, "Couldn't read it (${fresh.detail}) and none is saved")
+        }
+
+        rec.running(STEP_FP, "Reading $url…")
+        val localRead = scanner.readFingerprint(url)
+        val localFp = localRead.fields
+        if (localFp == null) {
+            rec.step(STEP_FP, StepStatus.Fail, "$url: ${localRead.detail}")
+            rec.finish(StepStatus.Fail, "Saved, not verified, and not sent your key: it answers ping but not like Immich.")
+            refresh()
+            return LocalUrlResult.Unverified
+        }
+        val diff = publicFp?.let { Fingerprint.diff(it, localFp) }
+        var note: String? = null
+        when {
+            publicFp == null -> {
+                rec.step(STEP_FP, StepStatus.Warn, "Nothing to compare with (${describeFp(localFp)}). Checking your account because you entered this address.")
+                note = "the public address's fingerprint couldn't be read"
+            }
+            diff!!.isEmpty() -> rec.step(STEP_FP, StepStatus.Pass, "Matches the public address (${localFp.size} fields)")
+            diff.any(Fingerprint::isHard) -> {
+                rec.step(STEP_FP, StepStatus.Fail, "Different: ${Fingerprint.describeDiff(publicFp, localFp, diff)}")
+                rec.finish(StepStatus.Fail, "Saved, not verified, and not sent your key: it runs a different Immich version than your server.")
+                refresh()
+                return LocalUrlResult.Unverified
+            }
+            else -> {
+                rec.step(STEP_FP, StepStatus.Warn, "Different: ${Fingerprint.describeDiff(publicFp, localFp, diff)}. Checking your account because you entered this address.")
+                note = "its settings differ from the public address's (${diff.joinToString()})"
+            }
+        }
+
+        rec.running(STEP_USER, "GET /api/users/me with your key…")
+        val user = scanner.userCheck(url, cfg.apiKey, cfg.userId)
+        rec.step(STEP_USER, if (user.ok) StepStatus.Pass else StepStatus.Fail, "GET /api/users/me: ${user.detail}")
+        if (!user.ok || store.server.value?.userId != cfg.userId) {
+            rec.finish(StepStatus.Fail, "Saved, not verified: this isn't your account on this server.")
+            refresh()
+            return LocalUrlResult.Unverified
+        }
+        store.updateServer { if (it.localUrl == url) it.copy(localVerified = true, localFingerprint = localRead.encoded) else it }
+        trust(url, netKey())
         refresh()
-        return if (ok) LocalUrlResult.Verified else LocalUrlResult.Unverified
+        return if (note == null) {
+            rec.finish(StepStatus.Pass, "Verified: same server and account. In use whenever it answers.")
+            LocalUrlResult.Verified
+        } else {
+            rec.finish(StepStatus.Warn, "Verified by your account, in use whenever it answers. Note: $note.")
+            LocalUrlResult.VerifiedWithNote
+        }
+    }
+
+    private fun deviceStep(rec: CheckRecorder): LanInfo? {
+        val lan = env.lan()
+        if (lan == null) rec.step(STEP_DEVICE, StepStatus.Warn, "${env.describe()}: no Wi-Fi/ethernet IPv4 address found")
+        else rec.step(STEP_DEVICE, StepStatus.Pass, "${lan.label.ifEmpty { "LAN" }}: ${lan.address}/${lan.prefix}, gateway ${lan.gateway ?: "unknown"}")
+        return lan
+    }
+
+    private fun describeFp(f: Map<String, String>): String {
+        val v = listOf("major", "minor", "patch").mapNotNull { f["version.$it"] }.joinToString(".")
+        return "Immich v$v, ${f.size} fields"
     }
 
     /** Saves a hand-entered public address and returns whether it was verified as this account's server. */
@@ -255,27 +372,37 @@ class ConnectionManager(
         return fp
     }
 
+    /** The cached public fingerprint; one in an old format (a hash) counts as none and is re-read. */
     private suspend fun fingerprintOf(cfg: ServerConfig): String? =
-        store.server.value?.fingerprint ?: cfg.fingerprint ?: captureFingerprint(cfg.publicUrl)
+        (store.server.value?.fingerprint ?: cfg.fingerprint)?.takeIf { Fingerprint.decode(it) != null } ?: captureFingerprint(cfg.publicUrl)
 
     /** Is [local] answering and trusted on network [net]? Re-checks the fingerprint (no key) when not yet trusted here. */
     private suspend fun localUsable(cfg: ServerConfig, local: String, net: String): Boolean {
-        if (!scanner.allows(local) || !scanner.ping(local, localProbeMs)) return false
+        // On a LAN, one retry: the first packet after Wi-Fi power saving or a cold ARP cache is slow.
+        if (!scanner.allows(local) || !scanner.ping(local, localProbeMs, attempts = if (env.lan() != null) 2 else 1)) return false
         if (trustedLocal == local && trustedNet == net) return true
         return verifyLocal(cfg, local, net)
     }
 
     /**
-     * Fingerprint first (no key). Only if it matches, and only if this address has never passed
-     * before, the key-bearing `/users/me` check. On success, [local] is trusted on [net].
+     * Fingerprint first (no key): it must match the public one, or the one this address showed
+     * when it was verified. Only if it matches, and only if this address has never passed
+     * before, the key-bearing `/users/me` check (which then needs the public fingerprint). On
+     * success, [local] is trusted on [net].
      */
     private suspend fun verifyLocal(cfg: ServerConfig, local: String, net: String): Boolean {
         if (!scanner.allows(local)) return false
-        val fp = fingerprintOf(cfg) ?: return false
-        if (!scanner.matchesFingerprint(local, fp)) return false
-        if (!cfg.localVerified) {
-            if (!scanner.isSameServer(local, cfg.apiKey, cfg.userId)) return false
-            store.updateServer { if (it.localUrl == local) it.copy(localVerified = true) else it }
+        val publicFp = fingerprintOf(cfg)?.let(Fingerprint::decode)
+        val verified = cfg.localVerified && cfg.localUrl == local
+        val ownFp = cfg.localFingerprint?.takeIf { verified }?.let(Fingerprint::decode)
+        if (publicFp == null && ownFp == null) return false
+        val got = scanner.readFingerprint(local).fields ?: return false
+        val matchesPublic = publicFp != null && Fingerprint.diff(publicFp, got).isEmpty()
+        val matchesOwn = ownFp != null && Fingerprint.diff(ownFp, got).isEmpty()
+        if (!matchesPublic && !matchesOwn) return false
+        if (!verified) {
+            if (!matchesPublic || !scanner.isSameServer(local, cfg.apiKey, cfg.userId)) return false
+            store.updateServer { if (it.localUrl == local) it.copy(localVerified = true, localFingerprint = Fingerprint.encode(got)) else it }
         }
         trust(local, net)
         return true
@@ -310,12 +437,19 @@ class ConnectionManager(
         }
     }
 
-    /** Runs a LAN scan if allowed; returns the URL it found and saved. Public for tests. */
+    /**
+     * Runs a LAN scan if allowed; returns the URL it found and saved. A [force]d (user-started)
+     * scan records its steps in [check]. Public for tests.
+     */
     suspend fun scanNow(force: Boolean): String? {
         val cfg = store.server.value ?: return null
-        val lan = env.lan()
+        val rec = CheckRecorder("Network scan") { if (force) _check.value = it }
+        val lan = deviceStep(rec)
         if (lan == null) {
-            if (force) _scan.value = ScanState.NoLan
+            if (force) {
+                _scan.value = ScanState.NoLan
+                rec.finish(StepStatus.Fail, "Not on Wi-Fi or ethernet, so there's no network to scan.")
+            }
             return null
         }
         // Signed in by LAN address with no public one learned yet: the "public" URL already is the LAN.
@@ -325,26 +459,68 @@ class ConnectionManager(
         if (!force && lastScan[lan.key]?.let { now - it < scanInterval } == true) return null
         lastScan[lan.key] = now
 
-        val fp = fingerprintOf(cfg)
-        if (fp == null) {
+        val fp = if (force) captureFingerprint(cfg.publicUrl) ?: fingerprintOf(cfg) else fingerprintOf(cfg)
+        val expected = Fingerprint.decode(fp)
+        if (fp == null || expected == null) {
             _scan.value = ScanState.NeedsPublic
+            rec.step(STEP_PUBLIC_FP, StepStatus.Fail, "Couldn't read it from ${cfg.publicUrl}, and none is saved")
+            rec.finish(StepStatus.Fail, "Connect once via the public address first.")
             return null
         }
+        rec.step(STEP_PUBLIC_FP, StepStatus.Pass, describeFp(expected))
+        val gatewayOrigin = lan.gateway?.let { "http://$it:${scanner.port}" }
         val candidates = scanner.candidates(lan, listOfNotNull(cfg.localUrl))
+        val known = listOfNotNull(cfg.localUrl, gatewayOrigin).toSet()
         _scan.value = ScanState.Running(0, candidates.size)
-        val found = scanner.find(candidates, fp, cfg.apiKey, cfg.userId) { done, total -> _scan.value = ScanState.Running(done, total) }
+        rec.running(STEP_PING, "Probing ${candidates.size} addresses on port ${scanner.port}…")
+        val report = scanner.scan(candidates, fp, cfg.apiKey, cfg.userId, known) { done, total -> _scan.value = ScanState.Running(done, total) }
+        recordScan(rec, report, candidates.size)
+        val found = report.found
         if (found == null) {
             _scan.value = ScanState.NotFound
+            val hint = if (report.mismatched.isNotEmpty()) " If one of the Immich hosts above is yours, enter it as the home network address to check it with your account." else ""
+            rec.finish(StepStatus.Fail, "Didn't find your server.$hint")
             return null
         }
         _scan.value = ScanState.Found(found)
+        rec.finish(StepStatus.Pass, "Found $found.")
         // Don't save over a different signed-in server if the user switched accounts mid-scan.
         if (store.server.value?.userId == cfg.userId) {
-            store.updateServer { it.copy(localUrl = found, localVerified = true) }
+            store.updateServer { it.copy(localUrl = found, localVerified = true, localFingerprint = fp) }
             trust(found, lan.key)
             if (cfg.mode != ConnectionMode.REMOTE) set(found, ConnState.Home)
         }
         return found
+    }
+
+    private fun recordScan(rec: CheckRecorder, report: ScanReport, total: Int) {
+        val answered = report.answered
+        rec.step(
+            STEP_PING,
+            if (answered.isEmpty()) StepStatus.Fail else StepStatus.Pass,
+            if (answered.isEmpty()) "None of $total addresses answered as Immich on port ${scanner.port}"
+            else "${answered.size} of $total answered as Immich: ${answered.joinToString()}",
+        )
+        if (answered.isEmpty()) return
+        val fpOk = answered.filter { it !in report.mismatched }
+        rec.step(
+            STEP_FP,
+            if (fpOk.isEmpty()) StepStatus.Fail else StepStatus.Pass,
+            buildList {
+                if (fpOk.isNotEmpty()) add("Matches: ${fpOk.joinToString()}")
+                report.mismatched.forEach { (o, why) -> add("$o differs (not sent your key): $why") }
+            }.joinToString("; "),
+        )
+        val tried = fpOk
+        if (tried.isEmpty()) return
+        rec.step(
+            STEP_USER,
+            if (report.found != null) StepStatus.Pass else StepStatus.Fail,
+            buildList {
+                report.found?.let { add("$it: same user") }
+                report.userFailed.forEach { (o, why) -> add("$o: $why") }
+            }.joinToString("; ").ifEmpty { "Not checked" },
+        )
     }
 
     /** The LAN address failed mid-request: use public until the next re-probe. */
@@ -409,6 +585,12 @@ class ConnectionManager(
 
     private companion object {
         const val LOCAL_CONNECT_TIMEOUT_S = 2
+        const val STEP_DEVICE = "This device"
+        const val STEP_ADDRESS = "Address"
+        const val STEP_PING = "Ping"
+        const val STEP_PUBLIC_FP = "Public fingerprint"
+        const val STEP_FP = "Fingerprint"
+        const val STEP_USER = "Account check"
     }
 }
 
