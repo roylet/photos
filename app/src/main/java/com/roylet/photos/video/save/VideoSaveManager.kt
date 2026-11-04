@@ -16,7 +16,6 @@ import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -81,6 +80,7 @@ class VideoSaveManager(
     private val app = context.applicationContext
     private val _jobs = MutableStateFlow<Map<String, VideoSaveProgress>>(emptyMap())
     private val _lastReplace = MutableStateFlow<SaveResult?>(null)
+    private val cancelled: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
 
     val jobs: StateFlow<Map<String, VideoSaveProgress>> = _jobs.asStateFlow()
     val lastReplace: StateFlow<SaveResult?> = _lastReplace.asStateFlow()
@@ -112,6 +112,7 @@ class VideoSaveManager(
 
     /** Stops a save; its files are cleaned up and it reports as cancelled. Nothing on the server is touched. */
     fun cancel(jobId: String) {
+        cancelled += jobId
         WorkManager.getInstance(app).cancelUniqueWork(workName(jobId))
         finish(jobId)
         report(jobId, VideoSaveProgress.Failed("Cancelled", cancelled = true))
@@ -124,6 +125,8 @@ class VideoSaveManager(
         _lastReplace.compareAndSet(result, null)
         runCatching { onSaved(result) }
     }
+
+    internal fun isCancelled(jobId: String) = jobId in cancelled
 
     fun consumeLastReplace() { _lastReplace.value = null }
 
@@ -195,14 +198,14 @@ class VideoSaveWorker(context: Context, params: WorkerParameters) : CoroutineWor
             VideoSaveNotifications.finished(applicationContext, jobId, result, null)
             Result.success(workDataOf(KEY_NEW_ID to result.newAssetId))
         } catch (e: CancellationException) {
-            if (stopReason == WorkInfo.STOP_REASON_CANCELLED_BY_APP) {
+            if (manager.isCancelled(jobId)) {
                 manager.finish(jobId)
                 VideoSaveNotifications.cancel(applicationContext, jobId)
             }
             throw e
         } catch (e: Exception) {
             val message = ImmichApi.describe(e)
-            if (VideoSaveJob.isTransient(e) && runAttemptCount + 1 < MAX_ATTEMPTS) {
+            if (VideoSaveJob.isTransient(e) && runAttemptCount + 1 < MAX_ATTEMPTS && !manager.isCancelled(jobId)) {
                 manager.report(jobId, VideoSaveProgress.Running(VideoSaveStage.WAITING_FOR_NETWORK, 0f, message))
                 VideoSaveNotifications.update(applicationContext, id, jobId, VideoSaveStage.WAITING_FOR_NETWORK, 0f)
                 return Result.retry()
