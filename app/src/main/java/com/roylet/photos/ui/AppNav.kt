@@ -165,7 +165,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
     val viewer = rememberSaveable(saver = ViewerController.Saver) { ViewerController() }
     // A new account (or sign-out) starts the library caches afresh.
-    LaunchedEffect(server?.publicUrl, server?.userId) { container.albums.clear(); container.memories.clear(); container.search.reset() }
+    LaunchedEffect(server?.let { container.sessionKey() }) { container.albums.clear(); container.memories.clear(); container.search.reset() }
     // After "Replace original", offer to undo: restores the original from Trash and trashes the edit.
     val replaced by container.edits.lastReplace.collectAsState()
     LaunchedEffect(replaced) {

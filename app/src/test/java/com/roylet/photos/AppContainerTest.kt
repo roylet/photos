@@ -53,4 +53,15 @@ class AppContainerTest {
         container.settings.signOut()
         assertNull(container.settings.server.value)
     }
+
+    @Test fun `timelines survive a learned public url but not a new account`() {
+        val cfg = ServerConfig(publicUrl = "http://192.168.1.20:2283", apiKey = "k", userId = "u-1")
+        container.settings.saveServer(cfg)
+        val before = container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline)
+        // Signed in by LAN address; the connection manager then learns the public one.
+        container.settings.saveServer(cfg.copy(publicUrl = "https://photos.example.com", localUrl = "http://192.168.1.20:2283"))
+        org.junit.Assert.assertSame(before, container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline))
+        container.settings.saveServer(cfg.copy(userId = "u-2"))
+        org.junit.Assert.assertNotSame(before, container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline))
+    }
 }

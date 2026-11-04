@@ -64,7 +64,7 @@ class AppContainer(context: Context) {
         .build()
 
     /** Cached timelines (main, favourites, albums, ...) shared by the grid and the viewer. */
-    val timelines = TimelineRegistry(ImmichTimelineSource { api() }, session = { settings.server.value?.let { it.publicUrl + it.userId } })
+    val timelines = TimelineRegistry(ImmichTimelineSource { api() }, session = { sessionKey() })
 
     /** Albums, search, people, map, memories and sharing. Swappable so screenshots can use fake data. */
     var library: LibrarySource = ImmichLibrary({ api() }, userId = { settings.server.value?.userId })
@@ -101,6 +101,13 @@ class AppContainer(context: Context) {
 
     /** The Search tab's state, kept while switching tabs. */
     val search by lazy { SearchModel({ library }, timelines, uiPrefs, uiScope) }
+
+    /**
+     * Who is signed in, for dropping per-account caches. The user id alone: the public URL can
+     * change mid-session (learned from `externalDomain` after a LAN sign-in) for the same account,
+     * and dropping the timelines then would orphan the instances the screens hold.
+     */
+    fun sessionKey(): String? = settings.server.value?.let { it.userId.ifEmpty { it.publicUrl } }
 
     /**
      * The API for the saved server, or null when signed out. It's built on the public URL (the
