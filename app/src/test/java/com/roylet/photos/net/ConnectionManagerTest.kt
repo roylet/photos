@@ -273,6 +273,30 @@ class ConnectionManagerTest {
         assertEquals(KEY, req.getHeader("x-api-key"))
     }
 
+    @Test fun `an upload to a dead local address is sent to public instead`() = runBlocking {
+        val public = server()
+        val local = server()
+        val store = FakeStore(cfg(public.origin, local.origin))
+        val cm = manager(store)
+        cm.evaluate()
+        assertEquals(ConnState.Home, cm.state.value)
+        public.drain()
+        local.shutdown()
+
+        val body = object : okhttp3.RequestBody() {
+            override fun contentType() = null
+            override fun isOneShot() = true
+            override fun writeTo(sink: okio.BufferedSink) { sink.writeUtf8("bytes") }
+        }
+        // A fresh pool: the probes' pooled connection to the dead server would fail differently (EOF).
+        val http = AppContainer.serverClient(OkHttpClient(), cm)
+        val res = http.newCall(Request.Builder().url("${public.origin}/api/assets").post(body).build()).execute()
+        assertEquals("ok", res.use { it.body!!.string() })
+        val req = public.drain().single()
+        assertEquals("/api/assets", req.path)
+        assertEquals("bytes", req.body.readUtf8())
+    }
+
     @Test fun `requests for the lan address are sent to public when away`() = runBlocking {
         val public = server()
         val store = FakeStore(cfg(public.origin, DEAD))

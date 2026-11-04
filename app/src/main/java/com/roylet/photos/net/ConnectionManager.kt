@@ -397,7 +397,10 @@ class ConnectionManager(
         try {
             chain.withConnectTimeout(LOCAL_CONNECT_TIMEOUT_S, TimeUnit.SECONDS).proceed(req.newBuilder().url(target).build())
         } catch (e: IOException) {
-            val canRetry = cfg.mode != ConnectionMode.HOME && req.body?.isOneShot() != true && !chain.call().isCanceled()
+            // A failed connect means no byte of the body was sent, so even a one-shot body (uploads,
+            // edit saves) can go to the public address instead of failing the whole transfer.
+            val notSent = e is java.net.ConnectException || e is java.net.NoRouteToHostException
+            val canRetry = cfg.mode != ConnectionMode.HOME && (req.body?.isOneShot() != true || notSent) && !chain.call().isCanceled()
             if (!canRetry) throw e
             onLocalFailure(cfg.localUrl!!)
             chain.proceed(req.newBuilder().url(req.url.withOrigin(public)).build())
