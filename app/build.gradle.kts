@@ -1,9 +1,30 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// Release signing: environment variables (CI) win, then a gitignored keystore.properties at the
+// repo root (local). Keys: storeFile, storePassword, keyAlias, keyPassword.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.isFile) f.inputStream().use { load(it) }
+}
+fun signingValue(env: String, prop: String): String? =
+    System.getenv(env)?.takeIf { it.isNotBlank() } ?: keystoreProps.getProperty(prop)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("RELEASE_KEYSTORE_FILE", "storeFile")
+val releaseStorePassword = signingValue("RELEASE_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("RELEASE_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("RELEASE_KEY_PASSWORD", "keyPassword")
+val hasReleaseSigning = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null }
+
+// CI passes -PversionName=1.2.3 -PversionCode=123; local builds use the defaults.
+val appVersionName = providers.gradleProperty("versionName").orNull ?: "0.1.0"
+val appVersionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
 
 android {
     namespace = "com.roylet.photos"
@@ -13,8 +34,29 @@ android {
         applicationId = "com.roylet.photos"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    // One APK per ABI (MapLibre's native libs dominate the size) plus a universal APK.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
     }
 
     buildTypes {
@@ -22,9 +64,15 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key so `assembleRelease` produces an installable APK out of
-            // the box; swap in a real signingConfig before distributing.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) logger.warn(
+                    "w: Release signing not configured (RELEASE_KEYSTORE_* env vars or keystore.properties); " +
+                        "signing the release build with the debug key.",
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

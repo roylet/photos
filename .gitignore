@@ -11,3 +11,5 @@ build/
 *.aab
 *.keystore
 *.jks
+keystore.properties
+*.b64
