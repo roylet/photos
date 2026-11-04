@@ -4,6 +4,7 @@ import com.roylet.photos.editor.recipe.Recipe
 import com.roylet.photos.video.model.OutputCodec
 import com.roylet.photos.video.model.OutputQuality
 import com.roylet.photos.video.model.VideoEdit
+import com.roylet.photos.video.model.VideoGeometry
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -125,13 +126,9 @@ object CompositionPlanner {
         val clips = e.segments.map { ClipSpec(it.startMs, it.endMs.coerceAtMost(max(source.durationMs, it.startMs + 1))) }
 
         // Geometry: rotate, flip, crop (photo order), then size.
-        val effects = ArrayList<VideoEffectSpec>()
         val g = e.geometry
         val quarter = g.rotate90.mod(4)
-        if (quarter != 0) effects += VideoEffectSpec.Rotate(((4 - quarter) * 90).toFloat())
-        if (g.flipH || g.flipV) effects += VideoEffectSpec.Flip(g.flipH, g.flipV)
-        val c = g.crop.normalized()
-        if (!c.isFull) effects += VideoEffectSpec.Crop(2 * c.left - 1, 2 * c.right - 1, 1 - 2 * c.bottom, 1 - 2 * c.top)
+        val effects = ArrayList(geometryEffects(g))
         val (gw, gh) = g.outputSize(source.width, source.height)
         val target = e.output.resolution.shortSide
         val scale = if (target != null && min(gw, gh) > target) target.toFloat() / min(gw, gh) else 1f
@@ -178,6 +175,18 @@ object CompositionPlanner {
             longitude = source.longitude,
             trimOptimization = trimOnly,
         )
+    }
+
+    /** Rotate → flip → crop, as Media3 effect specs (no resize). Also used by the live preview. */
+    fun geometryEffects(geometry: VideoGeometry): List<VideoEffectSpec> {
+        val g = geometry.normalized()
+        val out = ArrayList<VideoEffectSpec>(3)
+        val quarter = g.rotate90.mod(4)
+        if (quarter != 0) out += VideoEffectSpec.Rotate(((4 - quarter) * 90).toFloat())
+        if (g.flipH || g.flipV) out += VideoEffectSpec.Flip(g.flipH, g.flipV)
+        val c = g.crop
+        if (!c.isFull) out += VideoEffectSpec.Crop(2 * c.left - 1, 2 * c.right - 1, 1 - 2 * c.bottom, 1 - 2 * c.top)
+        return out
     }
 
     /**

@@ -12,7 +12,7 @@ import kotlin.math.roundToLong
 /**
  * A video edit as pure data (no Android imports, so it can move to a KMP module with the photo
  * [Recipe]). The exporter ([com.roylet.photos.video.export.CompositionPlanner]) and the live
- * preview ([com.roylet.photos.video.VideoPreviewController]) both read it.
+ * preview ([com.roylet.photos.video.preview.VideoPreviewController]) both read it.
  *
  * Times are milliseconds. *Source* time is a position in the original file; *output* time is a
  * position in the edited result, i.e. the kept [segments] played back to back at [speed].
