@@ -49,6 +49,8 @@ data class SaveResult(
     val originalTrashed: Boolean = false,
     /** Immich already had this exact file. */
     val duplicate: Boolean = false,
+    /** [duplicate], and that asset existed (outside Trash) before this save, so undo must leave it alone. */
+    val preexisting: Boolean = false,
     /** A non-fatal problem worth telling the user about. */
     val warning: String? = null,
 )
@@ -116,6 +118,13 @@ class SaveFlow(private val api: ImmichApi) {
         if (newId == targetId) throw ImmichException("This edit is identical to the photo you opened, so there's nothing new to save.")
 
         val warnings = mutableListOf<String>()
+        // Immich answers "duplicate" even when its copy of this file is in Trash (e.g. the same edit
+        // saved before and undone). Bring it back, or a REPLACE would leave only trashed assets.
+        var preexisting = false
+        if (duplicate) {
+            val existing = api.assetInfo(newId)
+            if (existing.isTrashed) api.restoreFromTrash(listOf(newId)) else preexisting = true
+        }
         onProgress(SaveStage.LINKING, 0f)
         val replace = mode == SaveMode.REPLACE
         val copied = runCatching {
@@ -154,14 +163,18 @@ class SaveFlow(private val api: ImmichApi) {
             grouped = grouped,
             originalTrashed = trashed,
             duplicate = duplicate,
+            preexisting = preexisting,
             warning = warnings.firstOrNull(),
         )
     }
 
-    /** Undo for a REPLACE: bring the original back from Trash, then send the edit to Trash. */
+    /**
+     * Undo for a REPLACE: bring the original back from Trash, then send the edit to Trash (unless
+     * the "edit" was a photo the user already had, which the save didn't create).
+     */
     suspend fun undoReplace(result: SaveResult) {
         api.restoreFromTrash(listOf(result.targetId))
-        api.deleteAssets(listOf(result.newAssetId), force = false)
+        if (!result.preexisting) api.deleteAssets(listOf(result.newAssetId), force = false)
     }
 
     companion object {

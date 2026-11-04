@@ -196,13 +196,45 @@ class SaveFlowTest {
         assertEquals(2, server.requestCount)
     }
 
+    private fun newAssetJson(trashed: Boolean) = """{"id":"$new","type":"IMAGE","originalFileName":"IMG_1-edited.jpg",
+        "fileCreatedAt":"2024-05-01T10:00:00.000Z","fileModifiedAt":"2024-05-02T11:00:00.000Z","isTrashed":$trashed}"""
+
+    @Test fun `duplicate in trash is restored before the original is replaced`() = runTest {
+        server.enqueue(ok(assetJson()))
+        server.enqueue(ok("""{"id":"$new","status":"duplicate"}"""))
+        server.enqueue(ok(newAssetJson(trashed = true)))
+        server.enqueue(ok("""{"count":1}"""))
+        server.enqueue(ok(code = 204))
+        server.enqueue(ok(code = 204))
+        server.enqueue(ok("[]"))
+        val r = save(SaveMode.REPLACE)
+        take(); take()
+        assertEquals("GET /api/assets/$new", take().let { "${it.method} ${it.path}" })
+        take().let {
+            assertEquals("POST /api/trash/restore/assets", "${it.method} ${it.path}")
+            assertEquals(listOf(new), it.json()["ids"]!!.jsonArray.map { e -> e.jsonPrimitive.content })
+        }
+        assertEquals("PUT /api/assets/copy", take().let { "${it.method} ${it.path}" })
+        assertEquals("DELETE /api/assets", take().let { "${it.method} ${it.path}" })
+        assertTrue(r.originalTrashed && r.duplicate && !r.preexisting)
+    }
+
+    @Test fun `undo leaves a pre-existing duplicate alone`() = runTest {
+        server.enqueue(ok("""{"count":1}"""))
+        flow.undoReplace(SaveResult(new, old, SaveMode.REPLACE, originalTrashed = true, duplicate = true, preexisting = true))
+        assertEquals("POST /api/trash/restore/assets", take().let { "${it.method} ${it.path}" })
+        assertNull(server.takeRequest(200, TimeUnit.MILLISECONDS))
+    }
+
     @Test fun `duplicate of another asset still links it`() = runTest {
         server.enqueue(ok(assetJson()))
         server.enqueue(ok("""{"id":"$new","status":"duplicate"}"""))
+        server.enqueue(ok(newAssetJson(trashed = false)))
         server.enqueue(ok(code = 204))
         server.enqueue(ok("""{"id":"s1"}""", 201))
         server.enqueue(ok("[]"))
-        assertTrue(save(SaveMode.COPY).duplicate)
+        val r = save(SaveMode.COPY)
+        assertTrue(r.duplicate && r.preexisting)
     }
 
     @Test fun `edited filenames`() {
