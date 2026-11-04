@@ -144,7 +144,14 @@ fun Modifier.sharedAsset(id: String, inViewer: Boolean = false): Modifier {
     if (viewer != null) {
         if (viewer.focusId != id) return this
         val visible = if (inViewer) viewer.open else !viewer.open
-        return with(shared) { this@sharedAsset.sharedElementWithCallerManagedVisibility(rememberSharedContentState("asset:$id"), visible) }
+        // Both ends stay registered for as long as the viewer is open, which Compose treats as a match:
+        // without the isTransitionActive guard the page would be drawn in the overlay (above the
+        // viewer chrome, ignoring zoom) even when no morph is running.
+        return with(shared) {
+            this@sharedAsset.sharedElementWithCallerManagedVisibility(
+                rememberSharedContentState("asset:$id"), visible, renderInOverlayDuringTransition = isTransitionActive,
+            )
+        }
     }
     val anim = LocalNavAnimatedScope.current ?: return this
     return with(shared) { this@sharedAsset.sharedElement(rememberSharedContentState("asset:$id"), anim) }

@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
@@ -89,6 +90,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -327,8 +332,9 @@ private fun SystemBars(visible: Boolean) {
     }
 }
 
-/** Pinching an unzoomed photo below this scale closes the viewer. */
-private const val PINCH_CLOSE = 0.72f
+/** How far a photo page is zoomed in (0 = fitted, 1 = max); exposed for gesture tests. */
+internal val ZoomFractionKey = SemanticsPropertyKey<Float>("ZoomFraction")
+internal var SemanticsPropertyReceiver.viewerZoom by ZoomFractionKey
 
 /** Size of an image of [ratio] fitted inside [maxW]×[maxH]. */
 private fun fit(ratio: Float, maxW: Dp, maxH: Dp): Pair<Dp, Dp> {
@@ -348,7 +354,10 @@ private fun PhotoPage(
     onLiveEnded: () -> Unit,
     onPinchClose: () -> Unit = {},
 ) {
-    val zoom = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 8f))
+    // The zoom is applied by hand (not by `zoomable`) so it never moves the shared-element node: with
+    // the grid cell underneath registered as the same shared element, a transformed node is drawn
+    // through the shared-transition overlay at its untransformed bounds and the zoom never shows.
+    val zoom = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 8f), autoApplyTransformations = false)
     val pinchClose by rememberUpdatedState(onPinchClose)
     val zoomFraction = zoom.zoomFraction ?: 0f
     val zoomedIn = zoomFraction > 0.02f
@@ -363,51 +372,75 @@ private fun PhotoPage(
 
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val (w, h) = fit(asset.ratio, maxWidth, maxHeight)
+        val screenW = maxWidth
+        val screenH = maxHeight
         val px = LocalDensity.current
         LaunchedEffect(w, h) { zoom.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(with(px) { Size(w.toPx(), h.toPx()) })) }
         Box(
             Modifier.fillMaxSize()
-                // Pinching in on an unzoomed photo goes back to the grid (observed, not consumed, so zoom still works).
+                // Pinching in on an unzoomed photo goes back to the grid. Observed, never consumed,
+                // so telephoto still owns every pinch; see [PinchToClose].
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        val unzoomed = (zoom.zoomFraction ?: 0f) < 0.02f
-                        var total = 1f
+                        val pinch = PinchToClose(startedUnzoomed = (zoom.zoomFraction ?: 0f) < 0.02f)
                         do {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.count { it.pressed } >= 2) total *= event.calculateZoom()
+                            if (event.changes.count { it.pressed } >= 2) pinch.onZoom(event.calculateZoom())
                         } while (event.changes.any { it.pressed })
-                        if (unzoomed && total < PINCH_CLOSE) pinchClose()
+                        if (pinch.shouldClose(zoomFractionNow = zoom.zoomFraction ?: 0f)) pinchClose()
                     }
                 }
-                .zoomable(zoom, onClick = { onTap() }, onLongClick = { onLongPress() }),
+                .zoomable(zoom, onClick = { onTap() }, onLongClick = { onLongPress() })
+                .testTag("viewer-page-${asset.id}")
+                .semantics { viewerZoom = zoom.zoomFraction ?: 0f },
             contentAlignment = Alignment.Center,
         ) {
             val hash = remember(asset.thumbhash) { ThumbHashCache.get(asset.thumbhash) }
-            Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true).thumbHashBackground(hash, BrutalDark.Raised)) {
-                val wPx = with(px) { w.roundToPx() }
-                val hPx = with(px) { h.roundToPx() }
-                val preview = remember(asset.id, wPx, hPx) {
-                    ImageRequest.Builder(context).data(urls.preview(asset.id))
-                        // The grid's thumbnail is already in memory: show it instantly (and during the shared-element morph).
-                        .placeholderMemoryCacheKey(urls.thumbnail(asset.id))
-                        .size(wPx, hPx)
-                        .crossfade(if (reduced) 0 else 200)
-                        .build()
-                }
-                AsyncImage(preview, contentDescription = null, modifier = Modifier.fillMaxSize())
-                if (deep) {
-                    val full = remember(asset.id) {
-                        ImageRequest.Builder(context).data(urls.fullsize(asset.id))
-                            .placeholderMemoryCacheKey(urls.preview(asset.id))
-                            .size(4096, 4096)
-                            .crossfade(if (reduced) 0 else 200)
-                            .build()
+            // Untransformed: the morph's start/end bounds.
+            Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true)) {
+                // Screen-sized and centred, so telephoto's transformation (computed in the zoomable
+                // node's coordinates) applies unchanged.
+                Box(
+                    Modifier.requiredSize(screenW, screenH).graphicsLayer {
+                        val t = zoom.contentTransformation
+                        if (t.isSpecified) {
+                            scaleX = t.scale.scaleX
+                            scaleY = t.scale.scaleY
+                            rotationZ = t.rotationZ
+                            translationX = t.offset.x
+                            translationY = t.offset.y
+                            transformOrigin = t.transformOrigin
+                        }
+                    },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(w, h).testTag("viewer-photo-${asset.id}").thumbHashBackground(hash, BrutalDark.Raised)) {
+                        val wPx = with(px) { w.roundToPx() }
+                        val hPx = with(px) { h.roundToPx() }
+                        val preview = remember(asset.id, wPx, hPx) {
+                            ImageRequest.Builder(context).data(urls.preview(asset.id))
+                                // The grid's thumbnail is already in memory: show it instantly (and during the shared-element morph).
+                                .placeholderMemoryCacheKey(urls.thumbnail(asset.id))
+                                .size(wPx, hPx)
+                                .crossfade(if (reduced) 0 else 200)
+                                .build()
+                        }
+                        AsyncImage(preview, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        if (deep) {
+                            val full = remember(asset.id) {
+                                ImageRequest.Builder(context).data(urls.fullsize(asset.id))
+                                    .placeholderMemoryCacheKey(urls.preview(asset.id))
+                                    .size(4096, 4096)
+                                    .crossfade(if (reduced) 0 else 200)
+                                    .build()
+                            }
+                            AsyncImage(full, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        }
+                        if (playingLive && asset.livePhotoVideoId != null) {
+                            LivePhotoMotion(urls.video(asset.livePhotoVideoId), onLiveEnded)
+                        }
                     }
-                    AsyncImage(full, contentDescription = null, modifier = Modifier.fillMaxSize())
-                }
-                if (playingLive && asset.livePhotoVideoId != null) {
-                    LivePhotoMotion(urls.video(asset.livePhotoVideoId), onLiveEnded)
                 }
             }
         }
