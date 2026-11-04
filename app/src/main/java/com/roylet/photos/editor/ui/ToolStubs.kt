@@ -6,8 +6,6 @@ import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
 import com.roylet.photos.editor.recipe.Recipe
 
-@Composable fun CropPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) { Box(modifier) }
-@Composable fun CropOverlay(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) { Box(modifier) }
 @Composable fun CurvePanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) { Box(modifier) }
 @Composable fun HslPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) { Box(modifier) }
 @Composable fun FiltersPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifier) { Box(modifier) }

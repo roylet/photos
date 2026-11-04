@@ -3,6 +3,9 @@ package com.roylet.photos.editor.ui
 import android.graphics.Bitmap
 import android.graphics.RectF
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.roylet.photos.editor.cpu.ArgbImage
@@ -38,6 +41,9 @@ class EditorSession(
 
     /** Where the image is drawn inside the canvas, in canvas pixels. */
     val bounds = MutableStateFlow<RectF?>(null)
+
+    /** Crop aspect lock (UI state shared by the crop panel and overlay). */
+    var cropAspect by mutableStateOf(AspectPreset.FREE)
 
     /** Small previews of each built-in filter, keyed by preset id ("" = none). */
     val filterThumbs = MutableStateFlow<Map<String, ImageBitmap>>(emptyMap())
