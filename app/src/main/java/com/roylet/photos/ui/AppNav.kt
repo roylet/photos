@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -162,17 +163,17 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     val showBar = route in tabRoutes
 
     val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
-    val viewer = remember { ViewerController() }
+    val viewer = rememberSaveable(saver = ViewerController.Saver) { ViewerController() }
     // A new account (or sign-out) starts the library caches afresh.
     LaunchedEffect(server?.publicUrl, server?.userId) { container.albums.clear(); container.memories.clear(); container.search.reset() }
     // After "Replace original", offer to undo: restores the original from Trash and trashes the edit.
     val replaced by container.edits.lastReplace.collectAsState()
-    val undoScope = rememberCoroutineScope()
     LaunchedEffect(replaced) {
         val result = replaced ?: return@LaunchedEffect
         container.edits.consumeLastReplace()
         container.snackbar.show("Original moved to Trash", actionLabel = "Undo", tone = SnackTone.Success) {
-            undoScope.launch {
+            // The app scope, so the undo finishes even if this screen goes away meanwhile.
+            container.uiScope.launch {
                 try {
                     container.edits.undoReplace(result)
                     container.timelines.invalidateAll()

@@ -12,6 +12,8 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -24,8 +26,11 @@ import com.roylet.photos.immich.AssetDto
 import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.theme.PhotosTheme
 
-/** One opening of the viewer: what to show and the screen that opened it. */
-class ViewerRequest(val filter: TimelineFilter, val startIndex: Int, val startId: String, val owner: NavBackStackEntry?)
+/**
+ * One opening of the viewer: what to show and the screen that opened it. The screen is kept by
+ * its back-stack entry id (stable across activity recreation), not the entry object.
+ */
+class ViewerRequest(val filter: TimelineFilter, val startIndex: Int, val startId: String, val ownerId: String?)
 
 /**
  * The full-screen viewer runs as an overlay *above* the screen that opened it rather than as a
@@ -54,7 +59,7 @@ class ViewerController {
 
     fun open(filter: TimelineFilter, index: Int, id: String, owner: NavBackStackEntry?) {
         if (open) return
-        request = ViewerRequest(filter, index, id, owner)
+        request = ViewerRequest(filter, index, id, owner?.id)
         this.index = index
         focusId = id
         pendingOpen = true
@@ -70,6 +75,28 @@ class ViewerController {
     internal fun showNow() { if (pendingOpen) { pendingOpen = false; open = true } }
 
     internal fun finished() { if (!open && !pendingOpen) request = null }
+
+    companion object {
+        /** Keeps an open viewer open across rotation and other activity recreation. */
+        val Saver: Saver<ViewerController, Any> = listSaver<ViewerController, Any>(
+            save = { c ->
+                val r = c.request
+                if (r == null || !(c.open || c.pendingOpen)) emptyList()
+                else listOf(r.filter.encode(), r.startIndex, r.startId, r.ownerId.orEmpty(), c.index, c.focusId ?: r.startId)
+            },
+            restore = { v ->
+                ViewerController().apply {
+                    if (v.size == 6) {
+                        val ownerId = (v[3] as String).ifEmpty { null }
+                        request = ViewerRequest(TimelineFilter.decode(v[0] as String), v[1] as Int, v[2] as String, ownerId)
+                        index = v[4] as Int
+                        focusId = v[5] as String
+                        open = true
+                    }
+                }
+            },
+        )
+    }
 }
 
 /** The app's viewer controller; null outside AppNav (the grid then falls back to nav-based transitions). */
@@ -95,7 +122,7 @@ fun ViewerOverlay(
         withFrameNanos { }
         controller.showNow()
     }
-    if (req.owner != null && currentEntry?.id != req.owner.id) return
+    if (req.ownerId != null && currentEntry?.id != req.ownerId) return
     val visible = remember(req) { MutableTransitionState(false) }
     visible.targetState = controller.open
     LaunchedEffect(visible.currentState, visible.isIdle, controller.open) {
@@ -114,7 +141,7 @@ fun ViewerOverlay(
                 onIndexChange = { i ->
                     controller.moveTo(i, timeline.snapshot.value.assetAt(i)?.id)
                     // The grid underneath scrolls along, so the close morph lands on the right cell.
-                    req.owner?.savedStateHandle?.set(REVEAL_KEY, i)
+                    if (req.ownerId != null) currentEntry?.savedStateHandle?.set(REVEAL_KEY, i)
                 },
                 loadDetails = loadDetails,
             )
