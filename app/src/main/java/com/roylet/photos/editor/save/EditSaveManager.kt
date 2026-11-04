@@ -9,7 +9,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.NetworkType
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
@@ -34,6 +37,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /** Everything a save job needs, persisted to a file so WorkManager can rerun it after process death. */
 @Serializable
@@ -47,7 +51,17 @@ data class SaveJobSpec(
     val recipeJson: String,
     val mode: SaveMode,
     val group: Boolean,
+    /** Progress so far, rewritten after every step so a retry resumes (see [SaveCheckpoint]). */
+    val checkpoint: SaveCheckpoint = SaveCheckpoint(),
 )
+
+/** What one run of a save job ended with; [EditSaveWorker] maps it to a WorkManager result. */
+sealed interface SaveOutcome {
+    data class Saved(val result: SaveResult) : SaveOutcome
+    /** A transient failure; the spec (with its checkpoint) is kept for the next attempt. */
+    data class Retry(val message: String) : SaveOutcome
+    data class Failed(val message: String) : SaveOutcome
+}
 
 /** Live state of one save, for the in-app progress panel. */
 sealed interface SaveProgress {
@@ -70,6 +84,8 @@ class EditSaveManager(
     private val api: () -> ImmichApi?,
     /** Called once per finished save (from the worker's thread), e.g. to refresh cached timelines. */
     private val onSaved: (SaveResult) -> Unit = {},
+    /** Renders [Recipe] over the original at full resolution into a JPEG (GPU); swappable for tests. */
+    private val render: (source: File, recipe: Recipe, out: File) -> Unit = ::renderJpeg,
 ) {
     private val app = context.applicationContext
     private val _jobs = MutableStateFlow<Map<String, SaveProgress>>(emptyMap())
@@ -89,19 +105,38 @@ class EditSaveManager(
         mode: SaveMode,
         group: Boolean,
     ): String {
-        val jobId = UUID.randomUUID().toString()
-        val spec = SaveJobSpec(jobId, targetId, renderSourceId, source.path, SaveFlow.editedFilename(originalFilename),
-            recipe.toJson(), mode, group)
-        specFile(jobId).apply { parentFile?.mkdirs() }.writeText(ImmichApi.json.encodeToString(SaveJobSpec.serializer(), spec))
-        report(jobId, SaveProgress.Running(SaveStage.QUEUED, 0f))
-        val request = OneTimeWorkRequestBuilder<EditSaveWorker>()
-            .setInputData(workDataOf(EditSaveWorker.KEY_JOB_ID to jobId))
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .addTag("edit-save")
-            .build()
-        WorkManager.getInstance(app).enqueueUniqueWork("edit-save-$jobId", ExistingWorkPolicy.KEEP, request)
+        val jobId = createJob(targetId, renderSourceId, source, originalFilename, recipe, mode, group)
+        WorkManager.getInstance(app).enqueueUniqueWork("edit-save-$jobId", ExistingWorkPolicy.KEEP, request(jobId))
         return jobId
     }
+
+    /** Writes the job spec (what survives process death) and reports it queued; [enqueue] then schedules it. */
+    internal fun createJob(
+        targetId: String,
+        renderSourceId: String,
+        source: File,
+        originalFilename: String,
+        recipe: Recipe,
+        mode: SaveMode,
+        group: Boolean,
+    ): String {
+        val jobId = UUID.randomUUID().toString()
+        writeSpec(SaveJobSpec(jobId, targetId, renderSourceId, source.path, SaveFlow.editedFilename(originalFilename),
+            recipe.toJson(), mode, group))
+        report(jobId, SaveProgress.Running(SaveStage.QUEUED, 0f))
+        return jobId
+    }
+
+    /**
+     * Source files that queued or running saves still need (their specs are deleted once a job
+     * finishes for good), so the editor's cache pruning can leave them alone.
+     */
+    fun pendingSourceFiles(): Set<File> =
+        File(app.filesDir, "edit-save").listFiles { f -> f.isFile && f.name.endsWith(".json") }.orEmpty()
+            .mapNotNullTo(HashSet()) { f ->
+                runCatching { ImmichApi.json.decodeFromString(SaveJobSpec.serializer(), f.readText()).sourcePath }
+                    .getOrNull()?.let { File(it).absoluteFile }
+            }
 
     /** Undo a REPLACE: restores the original from Trash and sends the edit to Trash. */
     suspend fun undoReplace(result: SaveResult) {
@@ -119,6 +154,14 @@ class EditSaveManager(
         ImmichApi.json.decodeFromString(SaveJobSpec.serializer(), specFile(jobId).readText())
     }.getOrNull()
 
+    /** Atomically (temp file + rename) rewrites the spec, so a crash mid-write never loses the checkpoint. */
+    private fun writeSpec(spec: SaveJobSpec) {
+        val f = specFile(spec.jobId).apply { parentFile?.mkdirs() }
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        tmp.writeText(ImmichApi.json.encodeToString(SaveJobSpec.serializer(), spec))
+        if (!tmp.renameTo(f)) { f.writeText(tmp.readText()); tmp.delete() }
+    }
+
     internal fun report(jobId: String, progress: SaveProgress) {
         _jobs.update { it + (jobId to progress) }
         if (progress is SaveProgress.Done) {
@@ -128,42 +171,92 @@ class EditSaveManager(
         }
     }
 
-    /** Runs one job: render, then [SaveFlow]. Called by the worker. */
-    internal suspend fun run(jobId: String, onProgress: (SaveStage, Float) -> Unit): SaveResult {
-        val spec = readSpec(jobId) ?: throw ImmichException("This save was lost; please save again.")
-        val api = api() ?: throw ImmichException("Not signed in")
-        val sourceFile = File(spec.sourcePath)
-        if (!sourceFile.exists()) throw ImmichException("The downloaded original was cleared from the cache; open the editor again.")
-        onProgress(SaveStage.RENDERING, 0f)
-        val out = File(app.cacheDir, "edit-save/$jobId/${spec.filename}")
-        val recipe = Recipe.fromJson(spec.recipeJson)
-        var stopped = false
-        try {
-            val source = SourceLoader.load(sourceFile, proxyLongEdge = 1024)
-            try {
-                EditExporter.export(source, recipe, out)
-            } finally {
-                source.proxy.recycle()
-            }
-            onProgress(SaveStage.RENDERING, 1f)
-            return SaveFlow(api).run(spec.targetId, spec.renderSourceId, out, spec.filename, recipe, spec.mode, spec.group, onProgress)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // WorkManager stopped the job (constraints, quota, system pressure) and will run it again:
-            // keep the spec so the rerun can find it.
-            stopped = true
-            throw e
-        } finally {
-            out.parentFile?.deleteRecursively()
-            if (!stopped) specFile(jobId).delete()
+    /**
+     * One attempt at a job, reporting progress and the outcome. Transient failures (network,
+     * timeouts, 408/429/5xx) give [SaveOutcome.Retry] until [finalAttempt]; everything else, and
+     * the last attempt, ends the job.
+     */
+    internal suspend fun execute(jobId: String, finalAttempt: Boolean, onProgress: (SaveStage, Float) -> Unit = { _, _ -> }): SaveOutcome = try {
+        val result = run(jobId, finalAttempt) { stage, f ->
+            report(jobId, SaveProgress.Running(stage, f))
+            onProgress(stage, f)
+        }
+        report(jobId, SaveProgress.Done(result))
+        SaveOutcome.Saved(result)
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        val message = ImmichApi.describe(e)
+        if (!finalAttempt && SaveErrors.isTransient(e)) {
+            report(jobId, SaveProgress.Running(SaveStage.WAITING, 0f))
+            SaveOutcome.Retry(message)
+        } else {
+            report(jobId, SaveProgress.Failed(message))
+            SaveOutcome.Failed(message)
         }
     }
+
+    /** Runs one attempt: render (unless a checkpoint says it's done), then [SaveFlow]. */
+    internal suspend fun run(jobId: String, finalAttempt: Boolean = true, onProgress: (SaveStage, Float) -> Unit): SaveResult {
+        var spec = readSpec(jobId) ?: throw ImmichException("This save was lost; please save again.")
+        val api = api() ?: throw ImmichException("Not signed in")
+        val out = File(app.cacheDir, "edit-save/$jobId/${spec.filename}")
+        val recipe = Recipe.fromJson(spec.recipeJson)
+        var keep = false
+        try {
+            // Once uploaded, neither the original nor the rendered file is needed again.
+            if (spec.checkpoint.newAssetId == null && !(spec.checkpoint.rendered && out.isFile)) {
+                val sourceFile = File(spec.sourcePath)
+                if (!sourceFile.exists()) throw ImmichException("The downloaded original was cleared from the cache; open the editor again.")
+                onProgress(SaveStage.RENDERING, 0f)
+                try {
+                    out.parentFile?.mkdirs()
+                    render(sourceFile, recipe, out)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    throw SaveRenderException("Couldn't render the edit (${e.message ?: e.javaClass.simpleName}).", e)
+                }
+                spec = spec.copy(checkpoint = spec.checkpoint.copy(rendered = true))
+                writeSpec(spec)
+            }
+            onProgress(SaveStage.RENDERING, 1f)
+            return SaveFlow(api).run(
+                spec.targetId, spec.renderSourceId, out, spec.filename, recipe, spec.mode, spec.group, onProgress,
+                checkpoint = spec.checkpoint,
+                onCheckpoint = { cp -> spec = spec.copy(checkpoint = cp); writeSpec(spec) },
+                finalAttempt = finalAttempt,
+            )
+        } catch (e: Exception) {
+            // WorkManager stopped the job (constraints, quota, system pressure) or it will be retried:
+            // keep the spec and the rendered file so the next run resumes.
+            keep = e is kotlinx.coroutines.CancellationException || (!finalAttempt && SaveErrors.isTransient(e))
+            throw e
+        } finally {
+            if (!keep) {
+                out.parentFile?.deleteRecursively()
+                specFile(jobId).delete()
+            }
+        }
+    }
+
+    /** The WorkManager request for [jobId]: expedited, needs a network, exponential backoff on retry. */
+    internal fun request(jobId: String) = OneTimeWorkRequestBuilder<EditSaveWorker>()
+        .setInputData(workDataOf(EditSaveWorker.KEY_JOB_ID to jobId))
+        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, RETRY_BACKOFF_SECONDS, TimeUnit.SECONDS)
+        .addTag("edit-save")
+        .build()
 
     private fun specFile(jobId: String) = File(app.filesDir, "edit-save/$jobId.json")
 
     companion object {
+        /** Attempts before a transient failure is reported as final (10 s, 20 s, 40 s, 80 s, 160 s apart). */
+        const val MAX_ATTEMPTS = 6
+        const val RETRY_BACKOFF_SECONDS = 10L
+
         /** Overall progress across stages, for one progress bar. */
         fun overall(stage: SaveStage, fraction: Float): Float = when (stage) {
-            SaveStage.QUEUED -> 0f
+            SaveStage.QUEUED, SaveStage.WAITING -> 0f
             SaveStage.RENDERING -> 0.25f * fraction
             SaveStage.UPLOADING -> 0.25f + 0.6f * fraction
             SaveStage.LINKING -> 0.87f
@@ -186,24 +279,26 @@ class EditSaveWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (jobId.isEmpty()) return Result.failure()
         runCatching { setForeground(getForegroundInfo()) }
         var lastPost = 0L
-        return try {
-            val result = manager.run(jobId) { stage, f ->
-                manager.report(jobId, SaveProgress.Running(stage, f))
-                val now = System.currentTimeMillis()
-                if (now - lastPost > 700) {
-                    lastPost = now
-                    SaveNotifications.update(applicationContext, jobId, stage, f)
-                }
+        val finalAttempt = runAttemptCount >= EditSaveManager.MAX_ATTEMPTS - 1
+        return when (val outcome = manager.execute(jobId, finalAttempt) { stage, f ->
+            val now = System.currentTimeMillis()
+            if (now - lastPost > 700) {
+                lastPost = now
+                SaveNotifications.update(applicationContext, jobId, stage, f)
             }
-            manager.report(jobId, SaveProgress.Done(result))
-            SaveNotifications.finished(applicationContext, jobId, result, null)
-            Result.success(workDataOf(KEY_NEW_ID to result.newAssetId))
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            val message = ImmichApi.describe(e)
-            manager.report(jobId, SaveProgress.Failed(message))
-            SaveNotifications.finished(applicationContext, jobId, null, message)
-            Result.failure()
+        }) {
+            is SaveOutcome.Saved -> {
+                SaveNotifications.finished(applicationContext, jobId, outcome.result, null)
+                Result.success(workDataOf(KEY_NEW_ID to outcome.result.newAssetId))
+            }
+            is SaveOutcome.Retry -> {
+                SaveNotifications.update(applicationContext, jobId, SaveStage.WAITING, 0f)
+                Result.retry()
+            }
+            is SaveOutcome.Failed -> {
+                SaveNotifications.finished(applicationContext, jobId, null, outcome.message)
+                Result.failure()
+            }
         }
     }
 
@@ -239,7 +334,7 @@ object SaveNotifications {
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .setProgress(100, pct, stage == SaveStage.QUEUED)
+            .setProgress(100, pct, stage == SaveStage.QUEUED || stage == SaveStage.WAITING)
             .setSubText("$pct%")
             .setContentIntent(open(context))
             .build()
@@ -277,4 +372,14 @@ object SaveNotifications {
     )
 
     private fun id(jobId: String) = 20_000 + (jobId.hashCode() and 0x7FFF) * 2
+}
+
+/** The production render: decode the original, GPU-render the recipe at full resolution, write the JPEG. */
+private fun renderJpeg(sourceFile: File, recipe: Recipe, out: File) {
+    val source = SourceLoader.load(sourceFile, proxyLongEdge = 1024)
+    try {
+        EditExporter.export(source, recipe, out)
+    } finally {
+        source.proxy.recycle()
+    }
 }
