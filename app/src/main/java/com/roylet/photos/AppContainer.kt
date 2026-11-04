@@ -2,6 +2,9 @@ package com.roylet.photos
 
 import android.content.Context
 import coil3.ImageLoader
+import coil3.disk.DiskCache
+import coil3.memory.MemoryCache
+import okio.Path.Companion.toOkioPath
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
@@ -57,6 +60,10 @@ class AppContainer(context: Context) {
     val http: OkHttpClient = serverClient(ImmichApi.defaultClient, connection)
 
     val imageLoader: ImageLoader = ImageLoader.Builder(app)
+        // A quarter of the app's memory holds roughly a dozen full-screen viewer previews next to
+        // the grid's thumbnails. The disk cache keeps swiped-past and prefetched previews across sessions.
+        .memoryCache { MemoryCache.Builder().maxSizePercent(app, 0.25).build() }
+        .diskCache { DiskCache.Builder().directory(app.cacheDir.resolve("image_cache").toOkioPath()).maxSizeBytes(512L * 1024 * 1024).build() }
         .components {
             add(OkHttpNetworkFetcherFactory(callFactory = { http }))
             add(VideoFrameDecoder.Factory())
