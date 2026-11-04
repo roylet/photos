@@ -47,9 +47,6 @@ data class AssetCopyRequest(
 
 @Serializable data class StackCreateRequest(val assetIds: List<String>)
 @Serializable data class StackCreated(val id: String, val primaryAssetId: String = "")
-@Serializable data class AssetDeleteRequest(val ids: List<String>, val force: Boolean)
-@Serializable data class BulkIds(val ids: List<String>)
-@Serializable data class TrashCount(val count: Int = 0)
 @Serializable data class MetadataItem(val key: String, val value: JsonObject)
 @Serializable data class MetadataUpsert(val items: List<MetadataItem>)
 @Serializable data class MetadataEntry(val key: String, val value: JsonObject, val updatedAt: String = "")
@@ -110,10 +107,8 @@ suspend fun ImmichApi.copyAsset(request: AssetCopyRequest) = send(put("/assets/c
 suspend fun ImmichApi.createStack(assetIds: List<String>): StackCreated =
     call(post("/stacks", StackCreateRequest(assetIds)))
 
-// `DELETE /assets` (deleteAssets) lives in LibraryApi.kt; force=false moves assets to Trash.
-
-suspend fun ImmichApi.restoreFromTrash(ids: List<String>): TrashCount =
-    call(post("/trash/restore/assets", BulkIds(ids)))
+// `DELETE /assets` (deleteAssets) and `POST /trash/restore/assets` (restoreAssets) live in
+// LibraryApi.kt; force=false moves assets to Trash.
 
 /** `PUT /assets/{id}/metadata` with one key. Needs `asset.update`. */
 suspend fun ImmichApi.putMetadata(id: String, key: String, value: JsonObject) {

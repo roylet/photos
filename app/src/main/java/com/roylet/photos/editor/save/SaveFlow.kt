@@ -10,7 +10,7 @@ import com.roylet.photos.immich.copyAsset
 import com.roylet.photos.immich.createStack
 import com.roylet.photos.immich.deleteAssets
 import com.roylet.photos.immich.putMetadata
-import com.roylet.photos.immich.restoreFromTrash
+import com.roylet.photos.immich.restoreAssets
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -123,7 +123,7 @@ class SaveFlow(private val api: ImmichApi) {
         var preexisting = false
         if (duplicate) {
             val existing = api.assetInfo(newId)
-            if (existing.isTrashed) api.restoreFromTrash(listOf(newId)) else preexisting = true
+            if (existing.isTrashed) api.restoreAssets(listOf(newId)) else preexisting = true
         }
         onProgress(SaveStage.LINKING, 0f)
         val replace = mode == SaveMode.REPLACE
@@ -173,7 +173,7 @@ class SaveFlow(private val api: ImmichApi) {
      * the "edit" was a photo the user already had, which the save didn't create).
      */
     suspend fun undoReplace(result: SaveResult) {
-        api.restoreFromTrash(listOf(result.targetId))
+        api.restoreAssets(listOf(result.targetId))
         if (!result.preexisting) api.deleteAssets(listOf(result.newAssetId), force = false)
     }
 

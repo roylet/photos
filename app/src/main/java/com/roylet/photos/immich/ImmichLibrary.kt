@@ -114,7 +114,7 @@ class ImmichLibrary(
         val api = requireApi()
         val name = runCatching { api.asset(id).originalFileName }.getOrNull()?.takeIf { it.isNotBlank() } ?: "$id.jpg"
         // One folder per asset keeps the original file name without clashes.
-        return api.downloadOriginal(id, File(File(dir, id), safeName(name)), onProgress)
+        return api.downloadOriginal(id, File(File(dir, id), safeName(name)), edited = true, onProgress = onProgress)
     }
 
     private fun AlbumDto.toAlbum(): Album {

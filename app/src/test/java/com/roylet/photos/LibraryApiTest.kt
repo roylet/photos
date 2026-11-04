@@ -186,7 +186,7 @@ class LibraryApiTest {
         val bytes = ByteArray(300_000) { (it % 7).toByte() }
         server.enqueue(MockResponse().setBody(okio.Buffer().write(bytes)))
         var last = 0L
-        val f = api.downloadOriginal("x-1", tmp.root.resolve("x.jpg")) { done, _ -> last = done }
+        val f = api.downloadOriginal("x-1", tmp.root.resolve("x.jpg"), edited = true) { done, _ -> last = done }
         assertEquals("/api/assets/x-1/original?edited=true", server.takeRequest().path)
         assertEquals(bytes.size.toLong(), f.length())
         assertEquals(bytes.size.toLong(), last)

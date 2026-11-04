@@ -2,18 +2,12 @@ package com.roylet.photos.immich
 
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.Visibility
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
-import java.io.File
-import java.io.IOException
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
-import kotlin.coroutines.coroutineContext
 
 /*
  * Library endpoints (Immich v3.4): shared links, visibility, trash, search, people, map,
@@ -103,40 +97,8 @@ suspend fun ImmichApi.memories(forDay: LocalDate): List<MemoryDto> =
 
 /* ---- Downloads ---- */
 
-/**
- * Streams asset [id]'s original (Immich's edited rendition if there is one) into [dest] through
- * the shared client, reporting (bytes so far, total or -1). Cancellable between chunks; a
- * partial file is deleted on failure.
- */
-suspend fun ImmichApi.downloadOriginal(id: String, dest: File, onProgress: (Long, Long) -> Unit = { _, _ -> }): File = withContext(Dispatchers.IO) {
-    val res = client().newCall(authed(Request.Builder().url(originalUrl(id)).get())).await()
-    try {
-        res.use {
-            if (!it.isSuccessful) throw ImmichApi.httpError(it.code, it.body?.string().orEmpty())
-            val body = it.body ?: throw IOException("Empty download")
-            val total = body.contentLength()
-            dest.parentFile?.mkdirs()
-            body.byteStream().use { input ->
-                dest.outputStream().use { out ->
-                    val buf = ByteArray(128 * 1024)
-                    var done = 0L
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        done += n
-                        onProgress(done, total)
-                    }
-                }
-            }
-        }
-        dest
-    } catch (e: Throwable) {
-        dest.delete()
-        throw e
-    }
-}
+// `GET /assets/{id}/original` streaming (downloadOriginal) lives in EditApi.kt; pass
+// `edited = true` for Immich's edited rendition when there is one.
 
 /* ---- Mapping ---- */
 
