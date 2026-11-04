@@ -45,6 +45,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -166,8 +168,6 @@ fun ViewerScreen(
     var chrome by rememberSaveable { mutableStateOf(initialChrome) }
     var info by rememberSaveable { mutableStateOf(initialInfo) }
     val zoomed = remember { mutableStateMapOf<Int, Boolean>() }
-    var message by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(message) { if (message != null) { delay(3000); message = null } }
     var liveFor by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = info) { info = false }
@@ -242,7 +242,11 @@ fun ViewerScreen(
         val enter = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { -it / 2 }
         val exit = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { -it / 2 }
         AnimatedVisibility(chrome && !info, Modifier.align(Alignment.TopCenter).graphicsLayer { alpha = chromeAlpha }, enter = enter, exit = exit) {
-            TopBar(current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } })
+            TopBar(
+                current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
+                archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE,
+                onArchive = { current?.let { actions.archive(listOf(it.id), timeline) } },
+            )
         }
         val enterB = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 }
         val exitB = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 2 }
@@ -254,14 +258,8 @@ fun ViewerScreen(
                     onFavorite = {
                         val a = current ?: return@ActionBar
                         val fav = !a.isFavorite
-                        timeline.setFavorite(listOf(a.id), fav)
                         if (fav) haptics.performHapticFeedback(HapticFeedbackType.ToggleOn)
-                        scope.launch {
-                            runCatching { actions.setFavorite(listOf(a.id), fav) }.onFailure {
-                                timeline.setFavorite(listOf(a.id), !fav)
-                                message = "Couldn't update favourite"
-                            }
-                        }
+                        actions.favorite(listOf(a.id), fav, timeline)
                     },
                     onShare = { current?.let { actions.share(listOf(it.id), timeline) } },
                     onAddToAlbum = { current?.let { actions.addToAlbum(listOf(it.id), timeline) } },
@@ -291,10 +289,6 @@ fun ViewerScreen(
             }
         }
 
-        val msg = message
-        AnimatedVisibility(msg != null, Modifier.align(Alignment.BottomCenter).padding(bottom = 150.dp), enter = fadeIn() + slideInVertically(spring(dampingRatio = 0.5f)) { it }, exit = fadeOut()) {
-            Text(msg ?: "", style = Type.Label, color = BrutalDark.Text, modifier = Modifier.brutalDark(BrutalDark.Raised).padding(horizontal = 16.dp, vertical = 12.dp))
-        }
     }
 }
 
@@ -434,7 +428,7 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
 }
 
 @Composable
-private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit) {
+private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit, archived: Boolean, onArchive: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(BrutalDark.Canvas)
             .drawBehind { drawLine(BrutalDark.Raised, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
@@ -461,7 +455,13 @@ private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolea
                     Spacer(Modifier.width(6.dp))
                     Text("LIVE", style = Type.Label, color = ink)
                 }
+                Spacer(Modifier.width(8.dp))
             }
+            DarkIconButton(
+                if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
+                if (archived) "Unarchive" else "Archive",
+                onArchive,
+            )
         } else Spacer(Modifier.weight(1f))
     }
 }

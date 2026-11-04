@@ -29,7 +29,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +41,20 @@ import com.roylet.photos.ui.components.SquareIconButton
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.launch
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Unarchive
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import com.roylet.photos.domain.timeline.Visibility
+import com.roylet.photos.ui.components.reducedMotion
 import kotlin.math.max
 import kotlin.math.min
 
@@ -115,16 +128,61 @@ fun SelectionTopBar(count: Int, onClose: () -> Unit, actions: @Composable RowSco
     }
 }
 
-/** Stub selection actions (favourite, add to album, share, delete) wired to [LocalAssetActions]. */
+/** Whether every one of [ids] is a favourite in [timeline]'s loaded months. */
+@Composable
+internal fun allFavorite(ids: List<String>, timeline: TimelineRepository?): Boolean {
+    val snapshot = timeline?.snapshot?.collectAsState()?.value ?: return false
+    return remember(ids, snapshot) {
+        val want = ids.toHashSet()
+        var found = 0
+        var all = true
+        snapshot.loaded.values.forEach { list -> list.forEach { if (it.id in want) { found++; if (!it.isFavorite) all = false } } }
+        all && found > 0
+    }
+}
+
+/** The selection bar's actions: favourite, add to album, share, archive and delete, wired to [LocalAssetActions]. */
 @Composable
 fun RowScope.DefaultSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current) {
-    val co = rememberCoroutineScope()
-    SquareIconButton(Icons.Rounded.FavoriteBorder, "Favourite", {
-        val ids = scope.ids
-        scope.timeline?.setFavorite(ids, true)
-        co.launch { runCatching { actions.setFavorite(ids, true) }.onFailure { scope.timeline?.setFavorite(ids, false) } }
-    })
+    val allFav = allFavorite(scope.ids, scope.timeline)
+    val unarchive = scope.timeline?.filter?.visibility == Visibility.ARCHIVE
+    FavoritePopButton(allFav, onClick = { actions.favorite(scope.ids, !allFav, scope.timeline) })
     SquareIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", { actions.addToAlbum(scope.ids, scope.timeline) })
     SquareIconButton(Icons.Rounded.Share, "Share", { actions.share(scope.ids, scope.timeline) })
-    SquareIconButton(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline) }, fill = Brutal.Card)
+    SquareIconButton(if (unarchive) Icons.Rounded.Unarchive else Icons.Rounded.Archive, if (unarchive) "Unarchive" else "Archive", {
+        actions.archive(scope.ids, scope.timeline); scope.clear()
+    })
+    SquareIconButton(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() }, fill = Brutal.Card)
+}
+
+/** Heart button for the light selection bar: pops (overshoot + an orange burst ring) when turned on. */
+@Composable
+fun FavoritePopButton(favorite: Boolean, onClick: () -> Unit) {
+    val reduced = reducedMotion()
+    val pop = remember { Animatable(1f) }
+    val ring = remember { Animatable(1f) }
+    var last by remember { mutableStateOf(favorite) }
+    LaunchedEffect(favorite) {
+        if (favorite != last && favorite && !reduced) {
+            launch { pop.snapTo(0.6f); pop.animateTo(1f, spring(dampingRatio = 0.32f, stiffness = 700f)) }
+            launch { ring.snapTo(0f); ring.animateTo(1f, tween(420)) }
+        }
+        last = favorite
+    }
+    Box(contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(43.dp).drawBehind {
+                val t = ring.value
+                if (t < 1f) drawCircle(Brutal.Ink.copy(alpha = 1f - t), radius = size.minDimension * (0.4f + 0.7f * t), style = Stroke(3.dp.toPx() * (1f - t) + 1f))
+            },
+        )
+        Box(Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }) {
+            SquareIconButton(
+                if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                if (favorite) "Unfavourite" else "Favourite",
+                onClick,
+                fill = if (favorite) Brutal.Yellow else Brutal.Card,
+            )
+        }
+    }
 }

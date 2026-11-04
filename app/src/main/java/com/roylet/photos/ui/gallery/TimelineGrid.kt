@@ -116,7 +116,7 @@ fun TimelineGrid(
     topContent: (@Composable () -> Unit)? = null,
 ) {
     val snapshot by timeline.snapshot.collectAsState()
-    LaunchedEffect(timeline) { timeline.start() }
+    LaunchedEffect(timeline) { timeline.startOrRefresh() }
     val urls = LocalMediaUrls.current
     val haptics = LocalHapticFeedback.current
     val reduced = reducedMotion()

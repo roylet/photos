@@ -52,7 +52,15 @@ import com.roylet.photos.immich.asset
 import com.roylet.photos.ui.components.BrutalButton
 import com.roylet.photos.ui.components.EmptyState
 import com.roylet.photos.ui.gallery.FakeMediaUrls
-import com.roylet.photos.ui.gallery.ImmichAssetActions
+import com.roylet.photos.ui.actions.ActionSheets
+import com.roylet.photos.ui.actions.LocalLibraryActions
+import com.roylet.photos.ui.components.BrutalSnackbarHost
+import com.roylet.photos.ui.components.LocalSnackbar
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.Alignment
 import com.roylet.photos.ui.gallery.ImmichMediaUrls
 import com.roylet.photos.ui.gallery.LocalAssetActions
 import com.roylet.photos.ui.gallery.LocalMediaHttpClient
@@ -118,18 +126,36 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     }
     val showBar = route in tabRoutes
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Brutal.Paper)) {
-        val wide = maxWidth >= WideBreakpoint
-        if (wide) {
-            Row(Modifier.fillMaxSize()) {
-                if (showBar) BrutalRail(Tabs, route, selectTab, header = { AppMark() })
-                Host(container, nav, server != null, Modifier.weight(1f))
+    val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
+    // A new account (or sign-out) starts the library caches afresh.
+    LaunchedEffect(server?.publicUrl, server?.userId) { container.albums.clear(); container.memories.clear() }
+    CompositionLocalProvider(
+        LocalMediaUrls provides urls,
+        LocalMediaHttpClient provides container.http,
+        LocalAssetActions provides container.actions,
+        LocalLibraryActions provides container.actions,
+        LocalSnackbar provides container.snackbar,
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Brutal.Paper)) {
+            val wide = maxWidth >= WideBreakpoint
+            if (wide) {
+                Row(Modifier.fillMaxSize()) {
+                    if (showBar) BrutalRail(Tabs, route, selectTab, header = { AppMark() })
+                    Host(container, nav, server != null, Modifier.weight(1f))
+                }
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    Host(container, nav, server != null, Modifier.weight(1f))
+                    if (showBar) BrutalTabBar(Tabs, route, selectTab)
+                }
             }
-        } else {
-            Column(Modifier.fillMaxSize()) {
-                Host(container, nav, server != null, Modifier.weight(1f))
-                if (showBar) BrutalTabBar(Tabs, route, selectTab)
-            }
+            ActionSheets(container.actions)
+            BrutalSnackbarHost(
+                container.snackbar,
+                Modifier.align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(start = 16.dp, end = 16.dp, bottom = if (route == Routes.VIEWER) 150.dp else if (showBar && !wide) 84.dp else 16.dp),
+            )
         }
     }
 }
@@ -144,16 +170,8 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.isViewer() =
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun Host(container: AppContainer, nav: NavHostController, signedIn: Boolean, modifier: Modifier) {
-    val server by container.settings.server.collectAsState()
-    val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
-    val actions = remember(container) { ImmichAssetActions { container.api() } }
     SharedTransitionLayout(modifier) {
-    CompositionLocalProvider(
-        LocalSharedTransitionScope provides this,
-        LocalMediaUrls provides urls,
-        LocalMediaHttpClient provides container.http,
-        LocalAssetActions provides actions,
-    ) {
+    CompositionLocalProvider(LocalSharedTransitionScope provides this) {
     NavHost(
         navController = nav,
         startDestination = if (signedIn) Routes.TIMELINE else Routes.CONNECT,

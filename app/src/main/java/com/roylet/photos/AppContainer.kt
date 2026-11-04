@@ -21,6 +21,14 @@ import com.roylet.photos.upload.NetworkMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.MainScope
+import com.roylet.photos.data.UiPrefs
+import com.roylet.photos.immich.ImmichException
+import com.roylet.photos.immich.setFavorite
+import com.roylet.photos.ui.actions.AndroidShareLauncher
+import com.roylet.photos.ui.actions.LibraryActions
+import com.roylet.photos.ui.components.SnackbarController
+import java.io.File
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -64,6 +72,30 @@ class AppContainer(context: Context) {
 
     /** Today's memories for the carousel above the timeline. */
     val memories = MemoryStore({ library })
+
+    /** Small UI memories (last share option, album sort, recent searches). */
+    val uiPrefs = UiPrefs(app)
+
+    /** The app-wide snackbar (see LocalSnackbar). */
+    val snackbar = SnackbarController()
+
+    /** Main-thread scope for user actions that should finish even if their screen goes away. */
+    val uiScope: CoroutineScope = MainScope()
+
+    /** What the viewer and selection bars do (favourite, albums, share, archive, trash). */
+    val actions: LibraryActions by lazy {
+        LibraryActions(
+            library = { library },
+            albums = albums,
+            snackbar = snackbar,
+            scope = uiScope,
+            favoriteCall = { ids, fav -> (api() ?: throw ImmichException("Not signed in")).setFavorite(ids, fav) },
+            launcher = AndroidShareLauncher(app),
+            prefs = uiPrefs,
+            shareDir = File(app.cacheDir, "share"),
+            timelines = timelines,
+        )
+    }
 
     /**
      * The API for the saved server, or null when signed out. It's built on the public URL (the
