@@ -6,7 +6,11 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
 import com.roylet.photos.domain.timeline.TimelineRegistry
+import com.roylet.photos.domain.library.AlbumStore
+import com.roylet.photos.domain.library.LibrarySource
+import com.roylet.photos.domain.library.MemoryStore
 import com.roylet.photos.immich.ImmichApi
+import com.roylet.photos.immich.ImmichLibrary
 import com.roylet.photos.immich.ImmichTimelineSource
 import com.roylet.photos.net.AndroidNetworkEnvironment
 import com.roylet.photos.net.ApiKeyGuard
@@ -51,6 +55,15 @@ class AppContainer(context: Context) {
 
     /** Cached timelines (main, favourites, albums, ...) shared by the grid and the viewer. */
     val timelines = TimelineRegistry(ImmichTimelineSource { api() }, session = { settings.server.value?.let { it.publicUrl + it.userId } })
+
+    /** Albums, search, people, map, memories and sharing. Swappable so screenshots can use fake data. */
+    var library: LibrarySource = ImmichLibrary({ api() }, userId = { settings.server.value?.userId })
+
+    /** The album list shared by the Albums tab, album pages and the add-to-album sheet. */
+    val albums = AlbumStore({ library })
+
+    /** Today's memories for the carousel above the timeline. */
+    val memories = MemoryStore({ library })
 
     /**
      * The API for the saved server, or null when signed out. It's built on the public URL (the

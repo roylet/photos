@@ -115,6 +115,7 @@ data class AssetDto(
     val isArchived: Boolean = false,
     val isTrashed: Boolean = false,
     val isEdited: Boolean = false,
+    val visibility: String? = null,
     val width: Int? = null,
     val height: Int? = null,
     val duration: JsonElement? = null,
