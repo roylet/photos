@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.baselineprofile)
 }
 
 // Release signing: environment variables (CI) win, then a gitignored keystore.properties at the
@@ -88,6 +89,7 @@ android {
     buildFeatures {
         compose = true
     }
+
     testOptions {
         unitTests.isReturnDefaultValues = true
         unitTests.isIncludeAndroidResources = true
@@ -97,6 +99,14 @@ android {
             it.systemProperty("screenshotDir", layout.buildDirectory.dir("screenshots").get().asFile.absolutePath)
         }
     }
+}
+
+baselineProfile {
+    // Generation needs a device: never as part of an ordinary build (CI, assembleRelease).
+    automaticGenerationDuringBuild = false
+    // Saved to src/main/generated/baselineProfiles (committed) and used by every variant.
+    saveInSrc = true
+    mergeIntoMain = true
 }
 
 dependencies {
@@ -125,6 +135,10 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.maplibre.android)
+    // Installs the bundled baseline profile on devices without Play's cloud profiles.
+    implementation(libs.androidx.profileinstaller)
+    // Regenerate with ./gradlew :app:generateBaselineProfile (needs a device or emulator; see README).
+    baselineProfile(project(":baselineprofile"))
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 

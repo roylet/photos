@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -308,6 +309,7 @@ fun TimelineGrid(
                 contentPadding = contentPadding,
                 modifier = Modifier
                     .fillMaxSize()
+                    .testTag("timeline-grid")
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale

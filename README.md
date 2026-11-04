@@ -65,6 +65,24 @@ from a gitignored `keystore.properties` in the repo root. Without either, releas
 signed with the debug key (Gradle prints a warning). `-PversionName=` and `-PversionCode=` override
 the version.
 
+### Baseline Profile
+
+Release builds ship a Baseline Profile (ahead-of-time compiled hot paths; `profileinstaller`
+installs it on sideloaded installs) from
+`app/src/main/generated/baselineProfiles/baseline-prof.txt`. The committed one is a hand-written
+starter covering the app's own timeline, viewer and editor classes. To record a real one, connect
+a device or emulator (API 29+; a userdebug/rooted image or API 33+ works best), open Photos once
+and sign in to your server, then:
+
+```bash
+./gradlew :app:generateBaselineProfile
+```
+
+It runs the `:baselineprofile` module's generator (cold start, timeline scroll, opening the viewer
+and paging, opening the editor) and overwrites the file above; commit the result. Ordinary builds
+(`assembleRelease`, CI) never run it and need no device. Avoid `./gradlew build`, which also
+assembles `:baselineprofile` and so asks for a device.
+
 ## Releasing
 
 ```bash
@@ -95,6 +113,7 @@ app/src/main/java/com/roylet/photos/
                  components/ (the brutalist kit) and theme/
   upload/        network monitor (and later the save/upload worker)
   util/          formatting helpers
+baselineprofile/ Baseline Profile generator (UiAutomator journeys; needs a device)
 ```
 
 Fonts: Archivo by Omnibus-Type, SIL Open Font License 1.1.
