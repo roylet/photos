@@ -71,7 +71,7 @@ import com.roylet.photos.ui.gallery.GridSelection
 import com.roylet.photos.ui.gallery.LocalMediaUrls
 import com.roylet.photos.ui.gallery.SelectionScope
 import com.roylet.photos.ui.gallery.SelectionTopBar
-import com.roylet.photos.ui.gallery.DefaultSelectionActions
+import com.roylet.photos.ui.gallery.defaultSelectionActions
 import com.roylet.photos.ui.gallery.TimelineGrid
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
@@ -99,9 +99,10 @@ fun SearchScreen(
 
     Column(modifier.fillMaxSize().background(Palette.paper)) {
         if (selection.active && timeline != null) {
-            SelectionTopBar(selection.ids.size, onClose = selection::clear) {
-                DefaultSelectionActions(SelectionScope(selection.ids.toList(), timeline, selection::clear))
-            }
+            SelectionTopBar(
+                selection.ids.size, onClose = selection::clear,
+                actions = defaultSelectionActions(SelectionScope(selection.ids.toList(), timeline, selection::clear)),
+            )
         } else {
             ScreenHeader("Search", subtitle = done?.let { "${Format.plural(it.count, "result")} for “${it.query.label}”" }, below = {
                 SearchField(

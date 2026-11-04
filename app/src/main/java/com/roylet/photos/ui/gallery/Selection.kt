@@ -35,6 +35,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.key
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import com.roylet.photos.ui.components.BrutalShape
 import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.domain.timeline.TimelineSnapshot
 import com.roylet.photos.ui.components.SquareIconButton
@@ -99,34 +114,119 @@ class GridSelection {
 /** What a selection-actions slot gets: the chosen ids and the timeline they came from. */
 class SelectionScope(val ids: List<String>, val timeline: TimelineRepository?, val clear: () -> Unit)
 
+/**
+ * One button of the selection bar. When the bar is short of room, actions with [primary] = false
+ * move into the ⋯ menu first (then primaries, last first), so the count keeps reading "6 selected".
+ *
+ * @param content a custom button (e.g. the popping heart); [icon] and [label] are still used in the menu.
+ */
+@Immutable
+class SelectionAction(
+    val icon: ImageVector,
+    val label: String,
+    val onClick: () -> Unit,
+    val primary: Boolean = true,
+    val fill: Color? = null,
+    val content: (@Composable () -> Unit)? = null,
+)
+
+/** Which actions get a button of their own; the rest go into the overflow menu. */
+internal data class SelectionBarPlan(val inline: List<Int>, val overflow: List<Int>)
+
+/**
+ * Picks the inline buttons for a bar [availablePx] wide (what's left after the close button and the
+ * count text). Keeps the original order; drops secondaries from the end first, then primaries from
+ * the end, and reserves one slot for the ⋯ button whenever anything is dropped.
+ */
+internal fun planSelectionBar(primary: List<Boolean>, availablePx: Float, buttonPx: Float, gapPx: Float): SelectionBarPlan {
+    fun width(n: Int) = if (n <= 0) 0f else n * buttonPx + (n - 1) * gapPx
+    val all = primary.indices.toList()
+    if (width(all.size) <= availablePx) return SelectionBarPlan(all, emptyList())
+    val dropOrder = all.filter { !primary[it] }.reversed() + all.filter { primary[it] }.reversed()
+    val inline = all.toMutableList()
+    for (i in dropOrder) {
+        if (width(inline.size + 1) <= availablePx) break
+        inline.remove(i)
+    }
+    return SelectionBarPlan(inline, all - inline.toSet())
+}
+
+private val BarButton = 43.dp // SquareIconButton: 40dp plus its 3dp shadow
+private val BarGap = 2.dp
+
 /** Top bar shown instead of the screen header while assets are selected. */
 @Composable
-fun SelectionTopBar(count: Int, onClose: () -> Unit, actions: @Composable RowScope.() -> Unit) {
+fun SelectionTopBar(count: Int, onClose: () -> Unit, actions: List<SelectionAction>) {
     val rule = Palette.border
-    Row(
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .background(Brutal.Orange)
             .windowInsetsPadding(WindowInsets.statusBars)
             .drawBehind { drawLine(rule, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        SquareIconButton(Icons.Rounded.Close, "Clear selection", onClose)
-        Spacer(Modifier.width(12.dp))
-        AnimatedContent(
-            targetState = count,
-            transitionSpec = {
-                val up = targetState > initialState
-                (slideInVertically(tween(160)) { if (up) it else -it } + fadeIn(tween(160))) togetherWith
-                    (slideOutVertically(tween(160)) { if (up) -it else it } + fadeOut(tween(120)))
-            },
-            label = "count",
-            modifier = Modifier.weight(1f),
-        ) { n ->
-            Text("$n selected", style = Type.Headline, color = Brutal.Ink, maxLines = 1)
+        val density = LocalDensity.current
+        val measurer = rememberTextMeasurer()
+        val label = "$count selected"
+        val textPx = remember(label, measurer) { measurer.measure(label, Type.Headline, maxLines = 1).size.width.toFloat() }
+        val plan = with(density) {
+            val available = constraints.maxWidth - (BarButton + 12.dp + 8.dp).toPx() - textPx
+            remember(actions.map { it.primary }, available) {
+                planSelectionBar(actions.map { it.primary }, available, BarButton.toPx(), BarGap.toPx())
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SquareIconButton(Icons.Rounded.Close, "Clear selection", onClose)
+            Spacer(Modifier.width(12.dp))
+            AnimatedContent(
+                targetState = count,
+                transitionSpec = {
+                    val up = targetState > initialState
+                    (slideInVertically(tween(160)) { if (up) it else -it } + fadeIn(tween(160))) togetherWith
+                        (slideOutVertically(tween(160)) { if (up) -it else it } + fadeOut(tween(120)))
+                },
+                label = "count",
+                modifier = Modifier.weight(1f),
+            ) { n ->
+                Text("$n selected", style = Type.Headline, color = Brutal.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(BarGap), verticalAlignment = Alignment.CenterVertically) {
+                plan.inline.forEach { i ->
+                    val a = actions[i]
+                    key(a.label) {
+                        a.content?.invoke() ?: SquareIconButton(a.icon, a.label, a.onClick, fill = a.fill ?: Palette.card)
+                    }
+                }
+                if (plan.overflow.isNotEmpty()) SelectionOverflow(plan.overflow.map { actions[it] })
+            }
+        }
+    }
+}
+
+/** The ⋯ button and its menu of the actions that didn't fit. */
+@Composable
+private fun SelectionOverflow(actions: List<SelectionAction>) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        SquareIconButton(Icons.Rounded.MoreHoriz, "More actions", { open = true })
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            shape = BrutalShape,
+            containerColor = Palette.card,
+            border = BorderStroke(2.dp, Palette.border),
+        ) {
+            actions.forEach { a ->
+                DropdownMenuItem(
+                    text = { Text(a.label.uppercase(), style = Type.Label) },
+                    leadingIcon = { Icon(a.icon, null) },
+                    onClick = { open = false; a.onClick() },
+                    colors = MenuDefaults.itemColors(textColor = Palette.ink, leadingIconColor = Palette.ink),
+                )
+            }
+        }
     }
 }
 
@@ -143,18 +243,28 @@ internal fun allFavorite(ids: List<String>, timeline: TimelineRepository?): Bool
     }
 }
 
-/** The selection bar's actions: favourite, add to album, share, archive and delete, wired to [LocalAssetActions]. */
+/**
+ * The selection bar's actions: favourite, add to album, share, archive and delete, wired to
+ * [LocalAssetActions]. Add-to-album and archive are the first to move into the ⋯ menu.
+ */
 @Composable
-fun RowScope.DefaultSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current) {
+fun defaultSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current): List<SelectionAction> {
     val allFav = allFavorite(scope.ids, scope.timeline)
     val unarchive = scope.timeline?.filter?.visibility == Visibility.ARCHIVE
-    FavoritePopButton(allFav, onClick = { actions.favorite(scope.ids, !allFav, scope.timeline) })
-    SquareIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", { actions.addToAlbum(scope.ids, scope.timeline) })
-    SquareIconButton(Icons.Rounded.Share, "Share", { actions.share(scope.ids, scope.timeline) })
-    SquareIconButton(if (unarchive) Icons.Rounded.Unarchive else Icons.Rounded.Archive, if (unarchive) "Unarchive" else "Archive", {
-        actions.archive(scope.ids, scope.timeline); scope.clear()
-    })
-    SquareIconButton(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() }, fill = Palette.card)
+    val toggleFav = { actions.favorite(scope.ids, !allFav, scope.timeline) }
+    return listOf(
+        SelectionAction(
+            if (allFav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (allFav) "Unfavourite" else "Favourite", toggleFav,
+            content = { FavoritePopButton(allFav, onClick = toggleFav) },
+        ),
+        SelectionAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", { actions.addToAlbum(scope.ids, scope.timeline) }, primary = false),
+        SelectionAction(Icons.Rounded.Share, "Share", { actions.share(scope.ids, scope.timeline) }),
+        SelectionAction(
+            if (unarchive) Icons.Rounded.Unarchive else Icons.Rounded.Archive, if (unarchive) "Unarchive" else "Archive",
+            { actions.archive(scope.ids, scope.timeline); scope.clear() }, primary = false,
+        ),
+        SelectionAction(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() }),
+    )
 }
 
 /** Heart button for the light selection bar: pops (overshoot + an orange burst ring) when turned on. */

@@ -29,6 +29,7 @@ import com.roylet.photos.ui.gallery.AssetActions
 import com.roylet.photos.ui.gallery.GridSelection
 import com.roylet.photos.ui.gallery.LocalAssetActions
 import com.roylet.photos.ui.gallery.SelectionScope
+import com.roylet.photos.ui.gallery.SelectionAction
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
@@ -72,7 +73,7 @@ fun TrashScreen(
                     SquareIconButton(Icons.Rounded.DeleteForever, "Empty trash", { confirmEmpty = true }, fill = Palette.red)
                 }
             },
-            selectionActions = { scope -> TrashSelectionActions(scope) { confirmDelete = scope } },
+            selectionActions = { scope -> trashSelectionActions(scope) { confirmDelete = scope } },
             topContent = {
                 Notice(
                     "Items in Trash are deleted for good after ${days ?: 30} days.",
@@ -99,7 +100,7 @@ fun TrashScreen(
 }
 
 @Composable
-private fun RowScope.TrashSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current, onDelete: () -> Unit) {
-    SquareIconButton(Icons.Rounded.RestoreFromTrash, "Restore", { actions.restore(scope.ids, scope.timeline); scope.clear() })
-    SquareIconButton(Icons.Rounded.DeleteForever, "Delete for good", onDelete, fill = Palette.red)
-}
+private fun trashSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current, onDelete: () -> Unit): List<SelectionAction> = listOf(
+    SelectionAction(Icons.Rounded.RestoreFromTrash, "Restore", { actions.restore(scope.ids, scope.timeline); scope.clear() }),
+    SelectionAction(Icons.Rounded.DeleteForever, "Delete for good", onDelete, fill = Palette.red),
+)

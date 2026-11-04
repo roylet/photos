@@ -16,6 +16,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import com.roylet.photos.ui.gallery.SelectionAction
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
@@ -102,7 +105,7 @@ fun AlbumDetailScreen(
                     SquareIconButton(Icons.Rounded.MoreVert, "Album options", { menu = true })
                 }
             },
-            selectionActions = { scope -> AlbumSelectionActions(scope, albumId) },
+            selectionActions = { scope -> albumSelectionActions(scope, albumId) },
             topContent = album?.let { a -> { AlbumHeader(a) } },
         )
 
@@ -136,13 +139,21 @@ fun AlbumDetailScreen(
 }
 
 @Composable
-private fun RowScope.AlbumSelectionActions(scope: SelectionScope, albumId: String, actions: AssetActions = LocalAssetActions.current) {
+private fun albumSelectionActions(scope: SelectionScope, albumId: String, actions: AssetActions = LocalAssetActions.current): List<SelectionAction> {
     val allFav = allFavorite(scope.ids, scope.timeline)
-    FavoritePopButton(allFav, onClick = { actions.favorite(scope.ids, !allFav, scope.timeline) })
-    SquareIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to another album", { actions.addToAlbum(scope.ids, scope.timeline) })
-    SquareIconButton(Icons.Rounded.Share, "Share", { actions.share(scope.ids, scope.timeline) })
-    if (scope.ids.size == 1) SquareIconButton(Icons.Rounded.Wallpaper, "Set as album cover", { actions.setAlbumCover(albumId, scope.ids.single()); scope.clear() })
-    SquareIconButton(Icons.Rounded.RemoveCircleOutline, "Remove from album", { actions.removeFromAlbum(albumId, scope.ids, scope.timeline); scope.clear() })
+    val toggleFav = { actions.favorite(scope.ids, !allFav, scope.timeline) }
+    return listOfNotNull(
+        SelectionAction(
+            if (allFav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (allFav) "Unfavourite" else "Favourite", toggleFav,
+            content = { FavoritePopButton(allFav, onClick = toggleFav) },
+        ),
+        SelectionAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to another album", { actions.addToAlbum(scope.ids, scope.timeline) }, primary = false),
+        SelectionAction(Icons.Rounded.Share, "Share", { actions.share(scope.ids, scope.timeline) }),
+        if (scope.ids.size == 1) {
+            SelectionAction(Icons.Rounded.Wallpaper, "Set as album cover", { actions.setAlbumCover(albumId, scope.ids.single()); scope.clear() }, primary = false)
+        } else null,
+        SelectionAction(Icons.Rounded.RemoveCircleOutline, "Remove from album", { actions.removeFromAlbum(albumId, scope.ids, scope.timeline); scope.clear() }),
+    )
 }
 
 /** Description, dates and owner/sharing badges above the album's photos. */
