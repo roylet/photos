@@ -45,6 +45,7 @@ import com.roylet.photos.AppContainer
 import com.roylet.photos.data.ConnectionMode
 import com.roylet.photos.data.ServerConfig
 import com.roylet.photos.net.ConnState
+import com.roylet.photos.net.LocalUrlResult
 import com.roylet.photos.net.ScanState
 import com.roylet.photos.ui.components.BrutalButton
 import com.roylet.photos.ui.components.BrutalCard
@@ -94,8 +95,8 @@ fun SettingsContent(
     onMode: (ConnectionMode) -> Unit,
     /** Saves the address; returns whether it was verified as this account's server. */
     onSavePublic: suspend (String) -> Boolean,
-    /** Saves (or, with null, clears) the LAN address; returns whether it was verified. */
-    onSaveLocal: suspend (String?) -> Boolean?,
+    /** Saves (or, with null, clears) the LAN address and verifies it. */
+    onSaveLocal: suspend (String?) -> LocalUrlResult,
     onScan: () -> Unit,
     onSignOut: () -> Unit,
 ) {
@@ -121,7 +122,10 @@ fun SettingsContent(
                     active = state != ConnState.Offline && activeUrl == server.publicUrl,
                     placeholder = "https://photos.example.com",
                     hint = "Works from anywhere.",
-                    onSave = { onSavePublic(it ?: server.publicUrl) },
+                    onSave = {
+                        if (onSavePublic(it ?: server.publicUrl)) SaveOutcome(true, "Verified: same server and account.")
+                        else SaveOutcome(false, "Saved, but couldn't confirm it's your server from here.")
+                    },
                     allowClear = false,
                 )
                 Spacer(Modifier.height(16.dp))
@@ -134,7 +138,14 @@ fun SettingsContent(
                     active = state == ConnState.Home && activeUrl == server.localUrl,
                     placeholder = "http://192.168.1.20:2283",
                     hint = if (scan is ScanState.Found && scan.url == server.localUrl) "Found automatically on this network." else "Used whenever it answers. Found automatically on Wi-Fi.",
-                    onSave = onSaveLocal,
+                    onSave = {
+                        when (onSaveLocal(it)) {
+                            LocalUrlResult.Verified -> SaveOutcome(true, "Verified: same server and account.")
+                            LocalUrlResult.Unverified -> SaveOutcome(false, "Saved, but not verified yet. It won't be used (or sent your key) until it matches your server.")
+                            LocalUrlResult.NotLanAddress -> SaveOutcome(false, "Not saved: use a home network IP address like 192.168.x.x or 10.x.x.x.")
+                            LocalUrlResult.Cleared -> null
+                        }
+                    },
                     allowClear = true,
                 )
             }
@@ -149,7 +160,7 @@ fun SettingsContent(
             Text(
                 when (server.mode) {
                     ConnectionMode.AUTO -> "Uses your home network address whenever it answers, and the public one everywhere else."
-                    ConnectionMode.HOME -> "Always uses the home network address, even if it stops answering."
+                    ConnectionMode.HOME -> "Always uses the home network address once it's verified on this network, even if it stops answering."
                     ConnectionMode.REMOTE -> "Always uses the public address, even at home."
                 },
                 style = Type.Small,
@@ -175,6 +186,7 @@ fun SettingsContent(
                     is ScanState.Found -> Notice("Found your server at ${scan.url}", NoticeTone.Success, Icons.Rounded.CheckCircle)
                     ScanState.NotFound -> Notice("Didn't find your server on this network. Check it's on port 2283, or enter the address above.", NoticeTone.Warning, Icons.Rounded.WarningAmber)
                     ScanState.NoLan -> Notice("Connect to Wi-Fi to scan your home network.", NoticeTone.Info, Icons.Rounded.WarningAmber)
+                    ScanState.NeedsPublic -> Notice("Connect once via the public address first, so the app can recognise your server on the LAN.", NoticeTone.Info, Icons.Rounded.WarningAmber)
                     ScanState.Idle -> {}
                 }
                 if (scan !is ScanState.Idle) Spacer(Modifier.height(12.dp))
@@ -212,6 +224,8 @@ fun SettingsContent(
     }
 }
 
+private class SaveOutcome(val ok: Boolean, val message: String)
+
 @Composable
 private fun UrlField(
     tag: String,
@@ -222,13 +236,13 @@ private fun UrlField(
     active: Boolean,
     placeholder: String,
     hint: String,
-    onSave: suspend (String?) -> Boolean?,
+    onSave: suspend (String?) -> SaveOutcome?,
     allowClear: Boolean,
 ) {
     var editing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<Boolean?>(null) }
+    var result by remember { mutableStateOf<SaveOutcome?>(null) }
     val scope = rememberCoroutineScope()
 
     fun save(text: String?) {
@@ -268,9 +282,5 @@ private fun UrlField(
             }
         }
     }
-    when (result) {
-        true -> Text("Verified: same server and account.", style = Type.Small, color = Brutal.Green, modifier = Modifier.padding(top = 4.dp))
-        false -> Text("Saved, but couldn't confirm it's your server from here.", style = Type.Small, color = Brutal.Red, modifier = Modifier.padding(top = 4.dp))
-        null -> {}
-    }
+    result?.let { Text(it.message, style = Type.Small, color = if (it.ok) Brutal.Green else Brutal.Red, modifier = Modifier.padding(top = 4.dp)) }
 }

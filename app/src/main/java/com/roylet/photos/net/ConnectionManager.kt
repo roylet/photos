@@ -32,6 +32,19 @@ sealed interface ScanState {
     data object NotFound : ScanState
     /** Not on Wi-Fi or ethernet, so there's no LAN to scan. */
     data object NoLan : ScanState
+    /** No server fingerprint yet (the public URL hasn't been reached), so no host can be trusted. */
+    data object NeedsPublic : ScanState
+}
+
+/** Outcome of saving a hand-entered LAN address. */
+enum class LocalUrlResult {
+    /** Saved, matched the fingerprint and the account: in use when it answers. */
+    Verified,
+    /** Saved but not (yet) verified; it gets no API key until it is. */
+    Unverified,
+    /** Not saved: only RFC 1918 / link-local IPv4 addresses are accepted. */
+    NotLanAddress,
+    Cleared,
 }
 
 /** Where the saved server lives; [com.roylet.photos.data.Settings] in the app, a fake in tests. */
@@ -46,21 +59,26 @@ interface NetworkEnvironment {
     fun online(): Boolean
     /** The Wi-Fi/ethernet network we're on, or null on mobile data / VPN / nothing. */
     fun lan(): LanInfo?
-    /** Calls [onChange] whenever the default network changes or the app comes to the foreground. */
-    fun observe(onChange: () -> Unit) {}
+    /** Registers for default-network changes and app foregrounding. */
+    fun observe(onNetworkChange: () -> Unit, onForeground: () -> Unit) {}
 }
 
 /**
  * Keeps the app pointed at the fastest working address for the signed-in server.
  *
- * - [activeUrl] is the LAN address (`localUrl`) when it answers within ~800 ms, otherwise the
- *   public one. It's re-evaluated on network changes and app foreground (see [start]).
+ * - [activeUrl] is the LAN address (`localUrl`) when it answers within ~800 ms *and is trusted on
+ *   the current network*, otherwise the public one. Re-evaluated on network changes and app
+ *   foreground (see [start]).
+ * - Trust: the API key only goes to the public URL, or to a `localUrl` that has passed the full
+ *   check once (unauthenticated fingerprint match, then `/users/me` id) and has re-matched the
+ *   fingerprint, without the key, since the last network change. Only RFC 1918 / link-local
+ *   addresses are scanned or accepted as `localUrl`.
  * - [interceptor] rewrites every request aimed at the server (either address) to [activeUrl],
  *   so Coil, ExoPlayer, uploads and the API switch together. If the LAN address stops answering
  *   mid-request, it flips to public and retries that request once.
  * - When on Wi-Fi without a working `localUrl`, it scans the LAN in the background (at most once
- *   per network per [scanInterval]) and saves what it finds. If the user signed in with a LAN
- *   address, the public one is learned from the server's `externalDomain`.
+ *   per network per [scanInterval]). If the user signed in with a LAN address, the public one is
+ *   learned from the server's `externalDomain`.
  */
 class ConnectionManager(
     private val store: ServerStore,
@@ -89,9 +107,13 @@ class ConnectionManager(
     private val lastScan = ConcurrentHashMap<String, Long>()
     private var learnedPublicFor: String? = null
 
+    /** The local origin trusted with the key on network [trustedNet]; cleared on any network change. */
+    @Volatile private var trustedLocal: String? = null
+    @Volatile private var trustedNet: String? = null
+
     /** Hooks up network/foreground callbacks and settings changes. Call once, from the app. */
     fun start() {
-        env.observe(::refresh)
+        env.observe(onNetworkChange = ::onNetworkChange, onForeground = ::refresh)
         scope.launch {
             store.server.map { it?.let { c -> Triple(c.publicUrl, c.localUrl, c.mode) } }
                 .distinctUntilChanged()
@@ -112,6 +134,32 @@ class ConnectionManager(
         }
     }
 
+    /**
+     * The default network changed: stop trusting the LAN address at once (a different network
+     * can have a different device at the same IP) and re-check it, without the key, before reuse.
+     */
+    fun onNetworkChange() {
+        untrust()
+        refresh()
+    }
+
+    private fun untrust() {
+        synchronized(lock) {
+            val wasLocal = trustedLocal != null && _activeUrl.value == trustedLocal
+            trustedLocal = null
+            trustedNet = null
+            val cfg = store.server.value
+            if (wasLocal && cfg != null) set(cfg.publicUrl, ConnState.Checking)
+        }
+    }
+
+    private fun trust(local: String, net: String) {
+        trustedLocal = local
+        trustedNet = net
+    }
+
+    private fun netKey(): String = env.lan()?.key ?: "no-lan"
+
     /** Scans the LAN now, ignoring the rate limit. */
     fun rescan() {
         launchScan(force = true)
@@ -120,20 +168,26 @@ class ConnectionManager(
     /** Call right after signing in: picks an address, learns the public URL and looks for the LAN server. */
     fun onSignedIn() {
         learnedPublicFor = null
+        untrust()
         refresh()
         launchScan(force = true)
     }
 
-    /**
-     * Saves a hand-entered LAN address (blank clears it) and returns whether it was verified as
-     * this account's server; null when cleared.
-     */
-    suspend fun setLocalUrl(input: String?): Boolean? {
+    /** Saves a hand-entered LAN address (blank clears it) and verifies it as this account's server. */
+    suspend fun setLocalUrl(input: String?): LocalUrlResult {
         val url = input?.trim()?.takeIf { it.isNotEmpty() }?.let(ImmichApi::normalizeOrigin)
-        store.updateServer { it.copy(localUrl = url) }
-        val cfg = store.server.value ?: return null
+        if (url == null) {
+            untrust()
+            store.updateServer { it.copy(localUrl = null, localVerified = false) }
+            refresh()
+            return LocalUrlResult.Cleared
+        }
+        if (!scanner.allows(url)) return LocalUrlResult.NotLanAddress
+        store.updateServer { it.copy(localUrl = url, localVerified = it.localVerified && it.localUrl == url) }
+        val cfg = store.server.value ?: return LocalUrlResult.Unverified
+        val ok = verifyLocal(cfg.copy(localVerified = false), url, netKey())
         refresh()
-        return url?.let { scanner.isSameServer(it, cfg.apiKey, cfg.userId) }
+        return if (ok) LocalUrlResult.Verified else LocalUrlResult.Unverified
     }
 
     /** Saves a hand-entered public address and returns whether it was verified as this account's server. */
@@ -142,7 +196,9 @@ class ConnectionManager(
         store.updateServer { it.copy(publicUrl = url) }
         val cfg = store.server.value ?: return false
         refresh()
-        return scanner.isSameServer(url, cfg.apiKey, cfg.userId)
+        val ok = scanner.isSameServer(url, cfg.apiKey, cfg.userId)
+        if (ok) captureFingerprint(url)
+        return ok
     }
 
     fun setMode(mode: ConnectionMode) {
@@ -158,27 +214,71 @@ class ConnectionManager(
             return
         }
         if (!env.online()) {
-            set(if (cfg.mode == ConnectionMode.HOME) cfg.localUrl ?: cfg.publicUrl else cfg.publicUrl, ConnState.Offline)
+            set(cfg.publicUrl, ConnState.Offline)
             return
         }
+        val net = netKey()
+        if (trustedNet != net) untrust()
         if (_state.value == ConnState.Offline) _state.value = ConnState.Checking
         val local = cfg.localUrl
         var localWorks = false
         when (cfg.mode) {
-            ConnectionMode.REMOTE -> setReachable(cfg.publicUrl, ConnState.Remote)
-            ConnectionMode.HOME -> if (local != null) setReachable(local, ConnState.Home) else setReachable(cfg.publicUrl, ConnState.Remote)
+            ConnectionMode.REMOTE -> useRemote(cfg)
+            ConnectionMode.HOME -> {
+                localWorks = local != null && localUsable(cfg, local, net)
+                // Forced home, but an unverified LAN address never gets the key: show offline.
+                if (localWorks) set(local!!, ConnState.Home) else set(cfg.publicUrl, ConnState.Offline)
+            }
             ConnectionMode.AUTO -> {
-                localWorks = local != null && scanner.ping(local, localProbeMs)
-                if (localWorks) set(local!!, ConnState.Home) else setReachable(cfg.publicUrl, ConnState.Remote)
+                localWorks = local != null && localUsable(cfg, local, net)
+                if (localWorks) set(local!!, ConnState.Home) else useRemote(cfg)
             }
         }
         maybeLearnPublicUrl(cfg)
         if (cfg.mode == ConnectionMode.AUTO && !localWorks) launchScan(force = false)
     }
 
-    private suspend fun setReachable(url: String, ifUp: ConnState) {
-        _activeUrl.value = url
-        set(url, if (scanner.ping(url)) ifUp else ConnState.Offline)
+    private suspend fun useRemote(cfg: ServerConfig) {
+        _activeUrl.value = cfg.publicUrl
+        if (scanner.ping(cfg.publicUrl)) {
+            set(cfg.publicUrl, ConnState.Remote)
+            captureFingerprint(cfg.publicUrl)
+        } else {
+            set(cfg.publicUrl, ConnState.Offline)
+        }
+    }
+
+    /** Refreshes the cached fingerprint from the public URL (it changes when the server is upgraded). */
+    private suspend fun captureFingerprint(publicUrl: String): String? {
+        val fp = scanner.fingerprint(publicUrl) ?: return null
+        store.updateServer { if (it.publicUrl == publicUrl && it.fingerprint != fp) it.copy(fingerprint = fp) else it }
+        return fp
+    }
+
+    private suspend fun fingerprintOf(cfg: ServerConfig): String? =
+        store.server.value?.fingerprint ?: cfg.fingerprint ?: captureFingerprint(cfg.publicUrl)
+
+    /** Is [local] answering and trusted on network [net]? Re-checks the fingerprint (no key) when not yet trusted here. */
+    private suspend fun localUsable(cfg: ServerConfig, local: String, net: String): Boolean {
+        if (!scanner.allows(local) || !scanner.ping(local, localProbeMs)) return false
+        if (trustedLocal == local && trustedNet == net) return true
+        return verifyLocal(cfg, local, net)
+    }
+
+    /**
+     * Fingerprint first (no key). Only if it matches, and only if this address has never passed
+     * before, the key-bearing `/users/me` check. On success, [local] is trusted on [net].
+     */
+    private suspend fun verifyLocal(cfg: ServerConfig, local: String, net: String): Boolean {
+        if (!scanner.allows(local)) return false
+        val fp = fingerprintOf(cfg) ?: return false
+        if (!scanner.matchesFingerprint(local, fp)) return false
+        if (!cfg.localVerified) {
+            if (!scanner.isSameServer(local, cfg.apiKey, cfg.userId)) return false
+            store.updateServer { if (it.localUrl == local) it.copy(localVerified = true) else it }
+        }
+        trust(local, net)
+        return true
     }
 
     private fun set(url: String, state: ConnState) {
@@ -193,7 +293,13 @@ class ConnectionManager(
         learnedPublicFor = cfg.publicUrl
         val external = scanner.externalDomain(cfg.publicUrl)?.let(ImmichApi::normalizeOrigin) ?: return
         if (external == cfg.publicUrl || external.toHttpUrlOrNull() == null) return
-        store.updateServer { it.copy(publicUrl = external, localUrl = it.localUrl ?: it.publicUrl) }
+        val oldPublic = cfg.publicUrl
+        store.updateServer {
+            // The address the user signed in with is proven (the key came from it), so it can
+            // become the local URL, as long as it's an address we'd accept as one.
+            if (it.localUrl == null && scanner.allows(oldPublic)) it.copy(publicUrl = external, localUrl = oldPublic, localVerified = true)
+            else it.copy(publicUrl = external)
+        }
         refresh()
     }
 
@@ -219,9 +325,14 @@ class ConnectionManager(
         if (!force && lastScan[lan.key]?.let { now - it < scanInterval } == true) return null
         lastScan[lan.key] = now
 
+        val fp = fingerprintOf(cfg)
+        if (fp == null) {
+            _scan.value = ScanState.NeedsPublic
+            return null
+        }
         val candidates = scanner.candidates(lan, listOfNotNull(cfg.localUrl))
         _scan.value = ScanState.Running(0, candidates.size)
-        val found = scanner.find(candidates, cfg.apiKey, cfg.userId) { done, total -> _scan.value = ScanState.Running(done, total) }
+        val found = scanner.find(candidates, fp, cfg.apiKey, cfg.userId) { done, total -> _scan.value = ScanState.Running(done, total) }
         if (found == null) {
             _scan.value = ScanState.NotFound
             return null
@@ -229,7 +340,8 @@ class ConnectionManager(
         _scan.value = ScanState.Found(found)
         // Don't save over a different signed-in server if the user switched accounts mid-scan.
         if (store.server.value?.userId == cfg.userId) {
-            store.updateServer { it.copy(localUrl = found) }
+            store.updateServer { it.copy(localUrl = found, localVerified = true) }
+            trust(found, lan.key)
             if (cfg.mode != ConnectionMode.REMOTE) set(found, ConnState.Home)
         }
         return found
@@ -248,6 +360,20 @@ class ConnectionManager(
         }
     }
 
+    val signedIn: Boolean get() = store.server.value != null
+
+    /**
+     * The API key to send to [url], or null if it must not get one: only the public address, or
+     * the local address while it's trusted on the current network.
+     */
+    fun apiKeyFor(url: HttpUrl): String? {
+        val cfg = store.server.value ?: return null
+        val public = cfg.publicUrl.toHttpUrlOrNull()
+        if (public != null && public.host == url.host && public.port == url.port) return cfg.apiKey
+        val local = trustedLocal?.takeIf { it == cfg.localUrl && cfg.localVerified }?.toHttpUrlOrNull() ?: return null
+        return if (local.host == url.host && local.port == url.port) cfg.apiKey else null
+    }
+
     /**
      * Application interceptor for the shared client: rewrites scheme/host/port of requests aimed
      * at the server (its public or local address) to [activeUrl]. Must run before the API key
@@ -261,10 +387,11 @@ class ConnectionManager(
         val local = cfg.localUrl?.toHttpUrlOrNull()
         if (!req.url.sameOrigin(public) && (local == null || !req.url.sameOrigin(local))) return@Interceptor chain.proceed(req)
 
-        // A stale activeUrl (e.g. from before the settings changed) falls back to public.
-        val active = _activeUrl.value.toHttpUrlOrNull()?.takeIf { it.sameOrigin(public) || (local != null && it.sameOrigin(local)) } ?: public
+        // Only a trusted local address is ever a target; anything else (stale, untrusted) goes public.
+        val trusted = trustedLocal?.takeIf { it == cfg.localUrl }?.toHttpUrlOrNull()
+        val active = _activeUrl.value.toHttpUrlOrNull()?.takeIf { it.sameOrigin(public) || (trusted != null && it.sameOrigin(trusted)) } ?: public
         val target = req.url.withOrigin(active)
-        val toLocal = local != null && active.sameOrigin(local) && !local.sameOrigin(public)
+        val toLocal = trusted != null && active.sameOrigin(trusted) && !trusted.sameOrigin(public)
         if (!toLocal) return@Interceptor chain.proceed(req.newBuilder().url(target).build())
 
         try {
@@ -287,31 +414,24 @@ private fun HttpUrl.sameOrigin(other: HttpUrl) = host == other.host && port == o
 private fun HttpUrl.withOrigin(origin: HttpUrl): HttpUrl =
     if (sameOrigin(origin)) this else newBuilder().scheme(origin.scheme).host(origin.host).port(origin.port).build()
 
-/** True if [url] points at the signed-in server's public or local address. */
-fun isServerHost(url: HttpUrl, cfg: ServerConfig?): Boolean {
-    if (cfg == null) return false
-    return listOfNotNull(cfg.publicUrl, cfg.localUrl).mapNotNull { it.toHttpUrlOrNull() }.any { it.host == url.host && it.port == url.port }
-}
-
-/** Adds the API key as `x-api-key` to requests for the signed-in server only. */
-class ApiKeyInterceptor(private val config: () -> ServerConfig?) : Interceptor {
+/** Adds the API key as `x-api-key` to requests for the server's trusted addresses only. */
+class ApiKeyInterceptor(private val connection: ConnectionManager) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
-        val cfg = config()
-        if (cfg == null || req.header("x-api-key") != null || req.header("Authorization") != null || !isServerHost(req.url, cfg)) return chain.proceed(req)
-        return chain.proceed(req.newBuilder().header("x-api-key", cfg.apiKey).build())
+        if (req.header("x-api-key") != null || req.header("Authorization") != null) return chain.proceed(req)
+        val key = connection.apiKeyFor(req.url) ?: return chain.proceed(req)
+        return chain.proceed(req.newBuilder().header("x-api-key", key).build())
     }
 }
 
 /**
  * Network interceptor (sees every hop, including redirects, which OkHttp follows with custom
- * headers intact): strips the API key from anything not going to the signed-in server.
+ * headers intact): strips the API key from anything that isn't a trusted server address.
  */
-class ApiKeyGuard(private val config: () -> ServerConfig?) : Interceptor {
+class ApiKeyGuard(private val connection: ConnectionManager) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
-        val cfg = config()
-        if (cfg == null || req.header("x-api-key") == null || isServerHost(req.url, cfg)) return chain.proceed(req)
+        if (!connection.signedIn || req.header("x-api-key") == null || connection.apiKeyFor(req.url) != null) return chain.proceed(req)
         return chain.proceed(req.newBuilder().removeHeader("x-api-key").build())
     }
 }

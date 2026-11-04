@@ -18,6 +18,8 @@ class FakeImmich(
     host: String = "127.0.0.1",
     port: Int = 0,
     var externalDomain: String = "",
+    /** Changes the unauthenticated fingerprint: a different "server". */
+    var loginPageMessage: String = "Welcome to the family photos",
 ) {
     val server = MockWebServer()
 
@@ -28,7 +30,11 @@ class FakeImmich(
                 "/api/users/me" ->
                     if (request.getHeader("x-api-key") == apiKey) MockResponse().setBody("""{"id":"$userId","email":"me@example.com"}""")
                     else MockResponse().setResponseCode(401).setBody("""{"message":"Invalid API key"}""")
-                "/api/server/config" -> MockResponse().setBody("""{"externalDomain":"$externalDomain","loginPageMessage":""}""")
+                "/api/server/config" -> MockResponse().setBody(
+                    """{"externalDomain":"$externalDomain","loginPageMessage":"$loginPageMessage","oauthButtonText":"Login with OAuth","trashDays":30,"maintenanceMode":false}""",
+                )
+                "/api/server/version" -> MockResponse().setBody("""{"major":2,"minor":4,"patch":1,"prerelease":null}""")
+                "/api/server/features" -> MockResponse().setBody("""{"trash":true,"map":true,"oauth":false,"passwordLogin":true,"smartSearch":true}""")
                 else -> MockResponse().setBody("ok")
             }
         }
@@ -60,6 +66,10 @@ class FakeEnv(var online: Boolean = true, var lan: LanInfo? = null) : NetworkEnv
     override fun online() = online
     override fun lan() = lan
 }
+
+/** Like the real default, but loopback test servers count as LAN addresses. */
+fun testScanner(port: Int = LanScanner.IMMICH_PORT) =
+    LanScanner(port = port, allowHost = { Subnet.isLanAddress(it) || it.startsWith("127.") || it == "localhost" })
 
 /** An origin nothing listens on: connections are refused at once. */
 const val DEAD = "http://127.0.0.1:1"

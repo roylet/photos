@@ -68,7 +68,7 @@ class SettingsScreenshotTest {
     @Composable
     private fun Settings(server: ServerConfig, state: ConnState, active: String, scan: ScanState) = SettingsContent(
         server = server, state = state, activeUrl = active, scan = scan,
-        onBack = {}, onMode = {}, onSavePublic = { true }, onSaveLocal = { true }, onScan = {}, onSignOut = {},
+        onBack = {}, onMode = {}, onSavePublic = { true }, onSaveLocal = { com.roylet.photos.net.LocalUrlResult.Verified }, onScan = {}, onSignOut = {},
     )
 
     @Test fun settingsHome() = shoot("10-settings-home") {

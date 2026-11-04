@@ -21,17 +21,17 @@ class AndroidNetworkEnvironment(context: Context) : NetworkEnvironment {
 
     override fun lan(): LanInfo? = cm.lanInfo()
 
-    override fun observe(onChange: () -> Unit) {
+    override fun observe(onNetworkChange: () -> Unit, onForeground: () -> Unit) {
         // Not onCapabilitiesChanged: it fires on every signal-strength change. A new network or
         // new addresses are what matter here.
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = onChange()
-            override fun onLost(network: Network) = onChange()
-            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = onChange()
+            override fun onAvailable(network: Network) = onNetworkChange()
+            override fun onLost(network: Network) = onNetworkChange()
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = onNetworkChange()
         })
         Handler(Looper.getMainLooper()).post {
             ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-                override fun onStart(owner: LifecycleOwner) = onChange()
+                override fun onStart(owner: LifecycleOwner) = onForeground()
             })
         }
     }

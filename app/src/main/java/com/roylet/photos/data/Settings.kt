@@ -24,6 +24,13 @@ data class ServerConfig(
     val name: String? = null,
     /** User override for the automatic LAN/public switch. */
     val mode: ConnectionMode = ConnectionMode.AUTO,
+    /**
+     * Hash of the server's unauthenticated self-description (version/config/features), cached from
+     * the public URL. A LAN address must match it before it's ever sent the API key.
+     */
+    val fingerprint: String? = null,
+    /** [localUrl] has passed the full check (fingerprint, then `/users/me` id) at least once. */
+    val localVerified: Boolean = false,
 )
 
 class Settings(context: Context) : ServerStore {
@@ -41,6 +48,8 @@ class Settings(context: Context) : ServerStore {
             .putString(KEY_EMAIL, config.email)
             .putString(KEY_NAME, config.name)
             .putString(KEY_MODE, config.mode.name)
+            .putString(KEY_FINGERPRINT, config.fingerprint)
+            .putBoolean(KEY_LOCAL_VERIFIED, config.localVerified)
             .apply()
         _server.value = config
     }
@@ -52,7 +61,11 @@ class Settings(context: Context) : ServerStore {
         saveServer(change(current))
     }
 
-    fun updateLocalUrl(localUrl: String?) = updateServer { it.copy(localUrl = localUrl?.trim()?.takeIf { url -> url.isNotEmpty() }) }
+    /** Sets an unverified LAN address; the connection manager verifies it before sending it the key. */
+    fun updateLocalUrl(localUrl: String?) = updateServer {
+        val url = localUrl?.trim()?.takeIf { u -> u.isNotEmpty() }
+        it.copy(localUrl = url, localVerified = it.localVerified && url == it.localUrl)
+    }
 
     fun updateMode(mode: ConnectionMode) = updateServer { it.copy(mode = mode) }
 
@@ -72,6 +85,8 @@ class Settings(context: Context) : ServerStore {
             email = prefs.getString(KEY_EMAIL, null),
             name = prefs.getString(KEY_NAME, null),
             mode = prefs.getString(KEY_MODE, null)?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() } ?: ConnectionMode.AUTO,
+            fingerprint = prefs.getString(KEY_FINGERPRINT, null),
+            localVerified = prefs.getBoolean(KEY_LOCAL_VERIFIED, false),
         )
     }
 
@@ -83,6 +98,8 @@ class Settings(context: Context) : ServerStore {
         const val KEY_EMAIL = "email"
         const val KEY_NAME = "name"
         const val KEY_MODE = "connectionMode"
-        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE)
+        const val KEY_FINGERPRINT = "serverFingerprint"
+        const val KEY_LOCAL_VERIFIED = "localVerified"
+        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED)
     }
 }

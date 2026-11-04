@@ -11,7 +11,6 @@ import com.roylet.photos.net.ApiKeyGuard
 import com.roylet.photos.net.ApiKeyInterceptor
 import com.roylet.photos.net.ConnectionManager
 import com.roylet.photos.net.LanScanner
-import com.roylet.photos.net.ServerStore
 import com.roylet.photos.upload.NetworkMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +38,7 @@ class AppContainer(context: Context) {
     val connection = ConnectionManager(settings, scanner, AndroidNetworkEnvironment(app), appScope)
 
     /** The one OkHttp client shared by the API, Coil, ExoPlayer and uploads. See [serverClient]. */
-    val http: OkHttpClient = serverClient(ImmichApi.defaultClient, connection, settings)
+    val http: OkHttpClient = serverClient(ImmichApi.defaultClient, connection)
 
     val imageLoader: ImageLoader = ImageLoader.Builder(app)
         .components {
@@ -59,15 +58,16 @@ class AppContainer(context: Context) {
          * Builds the shared client. Order matters:
          * 1. the connection manager rewrites requests for the server to the active address (and
          *    retries once on public if the LAN address drops);
-         * 2. the API key is added as `x-api-key` for the server's hosts only (public or local), so
-         *    keys never appear in URLs and never go to third parties such as map tile hosts;
+         * 2. the API key is added as `x-api-key` only for the public address, or the local one
+         *    while it's verified on the current network, so keys never appear in URLs and never go
+         *    to third parties (map tile hosts, other devices on the Wi-Fi);
          * 3. a network interceptor strips the key from any hop to another host, e.g. a redirect.
          */
-        fun serverClient(base: OkHttpClient, connection: ConnectionManager, settings: ServerStore): OkHttpClient =
+        fun serverClient(base: OkHttpClient, connection: ConnectionManager): OkHttpClient =
             base.newBuilder()
                 .addInterceptor(connection.interceptor)
-                .addInterceptor(ApiKeyInterceptor { settings.server.value })
-                .addNetworkInterceptor(ApiKeyGuard { settings.server.value })
+                .addInterceptor(ApiKeyInterceptor(connection))
+                .addNetworkInterceptor(ApiKeyGuard(connection))
                 .readTimeout(60, TimeUnit.SECONDS)
                 .build()
     }
