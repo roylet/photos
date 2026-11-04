@@ -101,6 +101,17 @@ android {
     }
 }
 
+// Model classes the compiler can't infer as stable are listed in compose-stability.conf.
+// ./gradlew :app:compileReleaseKotlin -PcomposeReports writes Compose compiler stability reports
+// and metrics to app/build/compose_reports and app/build/compose_metrics.
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose-stability.conf"))
+    if (project.hasProperty("composeReports")) {
+        reportsDestination = layout.buildDirectory.dir("compose_reports")
+        metricsDestination = layout.buildDirectory.dir("compose_metrics")
+    }
+}
+
 baselineProfile {
     // Generation needs a device: never as part of an ordinary build (CI, assembleRelease).
     automaticGenerationDuringBuild = false
