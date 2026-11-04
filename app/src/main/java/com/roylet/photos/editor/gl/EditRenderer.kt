@@ -12,7 +12,10 @@ import com.roylet.photos.editor.recipe.RenderParams
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import android.util.Log
 import java.lang.ref.WeakReference
+import kotlin.math.max
+import kotlin.math.roundToInt
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
@@ -39,6 +42,10 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
         val panX: Float = 0f,
         val panY: Float = 0f,
         val background: Int = 0xFF000000.toInt(),
+        /** 0 = the edit, 1 = the original; in between, a crossfade (hold-to-compare). */
+        val compareMix: Float = 0f,
+        /** Render at reduced resolution (a gesture is in flight). */
+        val draft: Boolean = false,
     )
 
     @Volatile private var state = State()
@@ -53,6 +60,16 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
     private var viewH = 0
     private var lastRecipe: Recipe? = null
     private var lastParams: RenderParams? = null
+    private var compositor: PreviewCompositor? = null
+    private val originalParams by lazy { RenderParams.from(Recipe(), lutResolver) }
+
+    /**
+     * Debug aid: when true each frame ends with `glFinish()` and the average draft / full frame
+     * times are logged (tag `EditGl`) every 60 frames. `GlPreview` turns it on when
+     * `adb shell setprop log.tag.EditGl DEBUG` is set.
+     */
+    @Volatile var measureFrames = false
+    private val frameTimes = FrameTimes()
 
     private val _imageBounds = MutableStateFlow<RectF?>(null)
 
@@ -77,13 +94,34 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
     fun setSource(bitmap: Bitmap, fullWidth: Int = bitmap.width, fullHeight: Int = bitmap.height) {
         val soft = bitmap.toSoftwareArgb()
         update { State(soft, it.sourceVersion + 1, fullWidth, fullHeight, it.recipe, it.showOriginal,
-            it.cropMode, it.zoom, it.panX, it.panY, it.background) }
+            it.cropMode, it.zoom, it.panX, it.panY, it.background, it.compareMix, it.draft) }
     }
 
-    fun setRecipe(recipe: Recipe) = update { it.copy(recipe = recipe) }
+    /**
+     * Sets the recipe. [draft] renders this frame at reduced resolution (long edge ≤ [DRAFT_EDGE]);
+     * pass it while a gesture is in flight and call [setDraft] `(false)` shortly after it ends.
+     */
+    fun setRecipe(recipe: Recipe, draft: Boolean = false) = update { it.copy(recipe = recipe, draft = draft) }
+
+    /** Leaves (or enters) draft quality. Returns false (and asks for no frame) when unchanged. */
+    fun setDraft(draft: Boolean): Boolean {
+        if (state.draft == draft) return false
+        update { it.copy(draft = draft) }
+        return true
+    }
+
+    internal val isDraft: Boolean get() = state.draft
+    internal val compareMix: Float get() = state.compareMix
 
     /** Hold-to-compare: draw the untouched source (no geometry, no colour). */
-    fun setShowOriginal(show: Boolean) = update { it.copy(showOriginal = show) }
+    fun setShowOriginal(show: Boolean) = setCompareMix(if (show) 1f else 0f)
+
+    /** Crossfade between the edit (0) and the untouched original (1); animate it for hold-to-compare. */
+    fun setCompareMix(mix: Float) {
+        val m = mix.coerceIn(0f, 1f)
+        if (state.compareMix == m) return
+        update { it.copy(compareMix = m, showOriginal = m >= 1f) }
+    }
 
     /**
      * Crop tool mode: draw the whole frame (rotation, flips, straighten and perspective applied,
@@ -103,11 +141,13 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
     private fun State.copy(
         recipe: Recipe = this.recipe, showOriginal: Boolean = this.showOriginal, cropMode: Boolean = this.cropMode,
         zoom: Float = this.zoom, panX: Float = this.panX, panY: Float = this.panY, background: Int = this.background,
-    ) = State(source, sourceVersion, fullWidth, fullHeight, recipe, showOriginal, cropMode, zoom, panX, panY, background)
+        compareMix: Float = this.compareMix, draft: Boolean = this.draft,
+    ) = State(source, sourceVersion, fullWidth, fullHeight, recipe, showOriginal, cropMode, zoom, panX, panY, background, compareMix, draft)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         // A new context: everything from the old one is gone.
         pipeline = GlPipeline()
+        compositor = null
         uploadedVersion = -1
         blurVersion = -1
     }
@@ -122,8 +162,7 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
         val bg = s.background
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glViewport(0, 0, viewW, viewH)
-        GLES30.glClearColor((bg shr 16 and 0xFF) / 255f, (bg shr 8 and 0xFF) / 255f, (bg and 0xFF) / 255f, 1f)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        clear(bg)
         val p = pipeline ?: return
         val src = s.source ?: return
         if (src.isRecycled || viewW == 0 || viewH == 0) return
@@ -131,9 +170,50 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
             p.uploadSource(src)
             uploadedVersion = s.sourceVersion
         }
-        val recipe = if (s.showOriginal) Recipe() else s.recipe
-        val params = if (recipe == lastRecipe) lastParams!! else RenderParams.from(recipe, lutResolver).also {
-            lastRecipe = recipe; lastParams = it
+        val started = if (measureFrames) System.nanoTime() else 0L
+        val mix = s.compareMix
+        val scale = if (s.draft) draftScale(viewW, viewH) else 1f
+        if (scale >= 1f && (mix <= 0f || mix >= 1f)) {
+            // The common case: straight to the screen.
+            drawScene(p, s, original = mix >= 1f, report = true)
+        } else {
+            val c = compositor ?: PreviewCompositor().also { compositor = it }
+            val w = max(1, (viewW * scale).roundToInt())
+            val h = max(1, (viewH * scale).roundToInt())
+            if (mix < 1f) {
+                c.edit.bind(w, h); clear(bg)
+                drawScene(p, s, original = false, report = mix < 0.5f)
+            }
+            if (mix > 0f) {
+                // The original is cheap (no colour work), so it is never drafted.
+                c.original.bind(w, h); clear(bg)
+                drawScene(p, s, original = true, report = mix >= 0.5f)
+            }
+            c.present(viewW, viewH, mix)
+        }
+        if (measureFrames) {
+            GLES30.glFinish()
+            frameTimes.add(draft = scale < 1f, nanos = System.nanoTime() - started)
+        }
+    }
+
+    private fun clear(bg: Int) {
+        GLES30.glClearColor((bg shr 16 and 0xFF) / 255f, (bg shr 8 and 0xFF) / 255f, (bg and 0xFF) / 255f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+    }
+
+    /**
+     * Draws the edit (or the untouched [original]) into the bound framebuffer, which may be the
+     * screen or a smaller offscreen target: the placement is computed in view pixels and only the
+     * viewport changes, so a draft frame shows exactly the same picture, just softer.
+     */
+    private fun drawScene(p: GlPipeline, s: State, original: Boolean, report: Boolean) {
+        val src = s.source ?: return
+        val recipe = if (original) Recipe() else s.recipe
+        val params = when {
+            original -> originalParams
+            recipe == lastRecipe -> lastParams!!
+            else -> RenderParams.from(recipe, lutResolver).also { lastRecipe = recipe; lastParams = it }
         }
         if ((params.clarity != 0f || params.dehaze != 0f) && blurVersion != s.sourceVersion) {
             p.uploadBlur(BlurMath.blurredCopy(src.toArgbImage()))
@@ -143,7 +223,7 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
         val fw = if (s.fullWidth > 0) s.fullWidth else src.width
         val fh = if (s.fullHeight > 0) s.fullHeight else src.height
         val g = recipe.geometry.normalized()
-        val ignoreCrop = s.cropMode && !s.showOriginal
+        val ignoreCrop = s.cropMode && !original
         val aspect = GeometryMath.outputAspect(g, fw, fh, ignoreCrop)
         val m = GeometryMath.outputToSource(g, fw, fh, ignoreCrop)
 
@@ -158,13 +238,38 @@ class EditRenderer(private val lutResolver: LutResolver = LutResolver.Default) :
         p.draw(params, m.toColumnMajor(), floatArrayOf(0f, 0f, 1f, 1f), clip, floatArrayOf(0f, 0f, 1f, 1f),
             RenderParams.grainScale(aspect))
 
+        if (!report) return
         val cx = viewW / 2f + s.panX
         val cy = viewH / 2f + s.panY
         val bounds = RectF(cx - dw / 2f, cy - dh / 2f, cx + dw / 2f, cy + dh / 2f)
         if (_imageBounds.value != bounds) _imageBounds.value = bounds
     }
 
+    /** Rolling averages of draft and full frames, for [measureFrames]. */
+    private class FrameTimes {
+        private var draftSum = 0L; private var draftN = 0
+        private var fullSum = 0L; private var fullN = 0
+
+        fun add(draft: Boolean, nanos: Long) {
+            if (draft) { draftSum += nanos; draftN++ } else { fullSum += nanos; fullN++ }
+            if (draftN + fullN >= 60) {
+                Log.d("EditGl", "preview frame: draft %.2f ms (%d), full %.2f ms (%d)".format(
+                    if (draftN > 0) draftSum / 1e6 / draftN else 0.0, draftN, if (fullN > 0) fullSum / 1e6 / fullN else 0.0, fullN))
+                draftSum = 0; draftN = 0; fullSum = 0; fullN = 0
+            }
+        }
+    }
+
     companion object {
+        /** Long edge, in pixels, of the preview while a gesture is in flight. */
+        const val DRAFT_EDGE = 1024
+
+        /** Scale (≤ 1) of a draft frame for a [viewW]×[viewH] view: its long edge becomes at most [edge]. */
+        fun draftScale(viewW: Int, viewH: Int, edge: Int = DRAFT_EDGE): Float {
+            val long = max(viewW, viewH)
+            return if (long <= edge) 1f else edge.toFloat() / long
+        }
+
         /**
          * Renders [recipe] over the full-resolution [source] offscreen, in FBO tiles of at most
          * [maxTileSize] (and `GL_MAX_TEXTURE_SIZE`) so neither the source nor the output has to

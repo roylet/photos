@@ -1,6 +1,8 @@
 package com.roylet.photos.editor
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
@@ -82,6 +84,16 @@ class EditorScreenshotTest {
 
     @Test fun light() = shoot("editor-01-light") {
         EditorWorkspace(session(edited), {}, { _, _ -> }, null, initialTool = EditorTool.LIGHT)
+    }
+
+    /** Hold-to-compare halfway through its crossfade: the cropped edit fading into the full original. */
+    @Test fun compareFade() {
+        val s = session(edited.copy(geometry = Geometry(crop = CropRect(0.15f, 0.1f, 0.85f, 0.9f))))
+        shoot("editor-12-compare-fade") {
+            androidx.compose.foundation.layout.Box(
+                androidx.compose.ui.Modifier.fillMaxSize().background(com.roylet.photos.ui.theme.BrutalDark.Canvas),
+            ) { com.roylet.photos.editor.ui.StaticPreview(s, compareMix = 0.5f) }
+        }
     }
 
     @Test fun crop() {
