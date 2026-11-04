@@ -43,7 +43,8 @@ internal fun Modifier.dragToDismiss(
             if (!dragging) {
                 total += delta
                 if (total.getDistance() > slop) {
-                    if (total.y > 0 && abs(total.y) > abs(total.x) * 1.4f) {
+                    // enabled() again: a child (the video scrub bar) may have taken the gesture on down.
+                    if (total.y > 0 && abs(total.y) > abs(total.x) * 1.4f && enabled()) {
                         dragging = true
                         onDrag(total)
                         change.consume()

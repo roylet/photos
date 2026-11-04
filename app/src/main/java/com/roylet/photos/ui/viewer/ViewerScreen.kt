@@ -177,6 +177,8 @@ fun ViewerScreen(
     var info by rememberSaveable { mutableStateOf(initialInfo) }
     val zoomed = remember { mutableStateMapOf<Int, Boolean>() }
     var liveFor by remember { mutableStateOf<String?>(null) }
+    // Shared by the video pages; only the settled page shows controls.
+    val scrub = remember { ScrubController() }
 
     BackHandler(enabled = info) { info = false }
     SystemBars(visible = chrome || info)
@@ -196,7 +198,7 @@ fun ViewerScreen(
         Box(
             Modifier.fillMaxSize()
                 .dragToDismiss(
-                    enabled = { zoomed[pager.currentPage] != true && !info },
+                    enabled = { zoomed[pager.currentPage] != true && !info && !scrub.scrubbing },
                     onDrag = { d -> scope.launch { dismiss.snapTo(dismiss.value + d) } },
                     onRelease = { v ->
                         val y = dismiss.value.y
@@ -229,7 +231,7 @@ fun ViewerScreen(
                 } else {
                     val isCurrent = page == pager.settledPage
                     if (asset.isVideo) {
-                        VideoPage(asset, urls, isCurrent, chrome, onTap = { chrome = !chrome })
+                        VideoPage(asset, urls, isCurrent, chrome, scrub, onTap = { chrome = !chrome })
                     } else {
                         PhotoPage(
                             asset, urls, isCurrent,
@@ -428,20 +430,25 @@ private fun LivePhotoMotion(url: String, onEnded: () -> Unit) {
 }
 
 @Composable
-private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean, chrome: Boolean, onTap: () -> Unit) {
+private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean, chrome: Boolean, scrub: ScrubController, onTap: () -> Unit) {
     BoxWithConstraints(
         Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null, onClick = onTap),
         contentAlignment = Alignment.Center,
     ) {
         val (w, h) = fit(asset.ratio, maxWidth, maxHeight)
         val px = LocalDensity.current
-        val player = if (isCurrent) rememberPlayer(urls.video(asset.id)) else null
+        val url = urls.video(asset.id)
+        val player = if (isCurrent) rememberPlayer(url) else null
         val playback = rememberPlaybackState(player, asset.durationMs ?: 0)
+        // Frames for the scrub strip: only for the settled page, and only once it plays or the bar is touched.
+        var wantFrames by remember(asset.id) { mutableStateOf(false) }
+        LaunchedEffect(playback.playing) { if (playback.playing) wantFrames = true }
+        val frames = rememberVideoFrames(asset.id, url, playback.duration, active = isCurrent && wantFrames)
         Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true)) {
             AssetImage(urls.preview(asset.id), asset.thumbhash, with(px) { w.roundToPx() }, with(px) { h.roundToPx() }, Modifier.fillMaxSize())
             if (player != null) VideoSurface(player, Modifier.fillMaxSize())
         }
-        if (player == null) {
+        if (player == null && !scrub.scrubbing) {
             Box(Modifier.brutalDark(BrutalDark.Orange, shape = RoundedCornerShape(50), shadow = 4.dp).size(64.dp), contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.PlayArrow, "Play", tint = BrutalDark.Shadow, modifier = Modifier.size(34.dp))
             }
@@ -450,6 +457,10 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
             VideoControls(
                 player, playback,
                 Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(start = 12.dp, end = 12.dp, bottom = 150.dp).fillMaxWidth(),
+                frames = frames,
+                aspect = asset.ratio,
+                scrub = scrub,
+                onBarTouched = { wantFrames = true },
             )
         }
     }

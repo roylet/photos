@@ -4,8 +4,19 @@ import android.graphics.Color as AndroidColor
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -133,68 +144,203 @@ fun rememberPlaybackState(player: Player?, fallbackDurationMs: Long = 0): Playba
     return state
 }
 
-/** Brutal minimal video controls: play/pause, elapsed / total, a chunky seek bar, mute. */
-@Composable
-fun VideoControls(player: Player?, playback: PlaybackState, modifier: Modifier = Modifier) {
-    Row(
-        modifier.brutalDark(shadow = 3.dp).padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        DarkIconButton(
-            if (playback.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-            if (playback.playing) "Pause" else "Play",
-            onClick = {
-                player ?: return@DarkIconButton
-                if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-                if (player.isPlaying) player.pause() else player.play()
-            },
-            active = !playback.playing,
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(clock(playback.position), style = Type.Label, color = BrutalDark.Text)
-        Spacer(Modifier.width(10.dp))
-        SeekBar(
-            fraction = if (playback.duration > 0) playback.position.toFloat() / playback.duration else 0f,
-            onSeek = { f -> player?.seekTo((f * playback.duration).toLong()); playback.position = (f * playback.duration).toLong() },
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(clock(playback.duration), style = Type.Label, color = BrutalDark.MutedText)
-        Spacer(Modifier.width(6.dp))
-        DarkIconButton(
-            if (playback.muted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
-            if (playback.muted) "Unmute" else "Mute",
-            onClick = { player?.let { it.volume = if (it.volume == 0f) 1f else 0f; playback.muted = it.volume == 0f } },
-        )
+/**
+ * Scrubbing on [player]: while [fraction] is non-null the user is dragging the bar. The player is
+ * paused and put in Media3's scrubbing mode (which coalesces the stream of seeks and decodes
+ * just enough to show each frame), then restored on release, resuming only if it was playing.
+ */
+@Stable
+class ScrubController {
+    /** Where the finger is on the bar (0..1) while scrubbing; null otherwise. Drives the thumb directly. */
+    var fraction by mutableStateOf<Float?>(null)
+        private set
+    private var resume = false
+    private var lastSeekMs = -1L
+    private var lastTick = 0
+
+    val scrubbing get() = fraction != null
+
+    @OptIn(UnstableApi::class)
+    fun start(f: Float, player: Player?, durationMs: Long) {
+        fraction = f.coerceIn(0f, 1f)
+        lastTick = tickIndex(scrubPositionMs(f, durationMs), durationMs)
+        if (player != null) {
+            resume = player.playWhenReady && player.playbackState != Player.STATE_ENDED
+            player.pause()
+            (player as? ExoPlayer)?.isScrubbingModeEnabled = true
+        }
+        lastSeekMs = -1
+        seek(player, durationMs)
+    }
+
+    /** Moves the scrub point; returns true when it crossed a tick (10% or a chapter step) for a haptic. */
+    fun move(f: Float, player: Player?, durationMs: Long): Boolean {
+        if (fraction == null) return false
+        fraction = f.coerceIn(0f, 1f)
+        seek(player, durationMs)
+        val tick = tickIndex(scrubPositionMs(fraction!!, durationMs), durationMs)
+        if (tick == lastTick) return false
+        lastTick = tick
+        return true
+    }
+
+    /** Ends scrubbing on the last spot; returns that position. */
+    @OptIn(UnstableApi::class)
+    fun end(player: Player?, durationMs: Long): Long? {
+        val f = fraction ?: return null
+        val ms = scrubPositionMs(f, durationMs)
+        if (player != null) {
+            // The final, exact seek; then back to normal playback.
+            player.seekTo(ms)
+            (player as? ExoPlayer)?.isScrubbingModeEnabled = false
+            if (resume) player.play()
+        }
+        fraction = null
+        resume = false
+        return ms
+    }
+
+    private fun seek(player: Player?, durationMs: Long) {
+        val ms = scrubPositionMs(fraction ?: return, durationMs)
+        if (player == null || ms == lastSeekMs) return
+        lastSeekMs = ms
+        player.seekTo(ms)
     }
 }
 
+/**
+ * Brutal minimal video controls: play/pause, elapsed / total, a chunky seek bar, mute. Touching
+ * the bar anywhere scrubs: the video frame follows the finger, and a preview bubble with the
+ * nearest [frames] thumbnail and the time rides above a strip of frames.
+ */
 @Composable
-private fun SeekBar(fraction: Float, onSeek: (Float) -> Unit, modifier: Modifier = Modifier) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    val shown = (dragging ?: fraction).coerceIn(0f, 1f)
+fun VideoControls(
+    player: Player?,
+    playback: PlaybackState,
+    modifier: Modifier = Modifier,
+    frames: VideoFrameStrip? = null,
+    aspect: Float = 16f / 9f,
+    scrub: ScrubController = remember { ScrubController() },
+    onBarTouched: () -> Unit = {},
+) {
+    val haptics = LocalHapticFeedback.current
+    val holder = remember { CoordsHolder() }
+    val thumbPx = with(LocalDensity.current) { ThumbWidth.toPx() }
+    val duration = playback.duration
+    val latestDuration by rememberUpdatedState(duration)
+    // Let go of the player if the controls vanish mid-scrub (page swiped, chrome hidden).
+    DisposableEffect(player, scrub) { onDispose { scrub.end(player, latestDuration)?.let { playback.position = it } } }
+    Column(modifier.onPlaced { holder.column = it }) {
+        ScrubPreview(
+            fraction = scrub.fraction,
+            anchorX = {
+                val col = holder.column
+                val bar = holder.bar
+                if (col == null || bar == null || !col.isAttached || !bar.isAttached) 0f
+                else col.localPositionOf(bar, Offset.Zero).x + thumbPx / 2 + (bar.size.width - thumbPx) * (scrub.fraction ?: 0f)
+            },
+            durationMs = duration,
+            strip = frames,
+            aspect = aspect,
+        )
+        Row(
+            Modifier.fillMaxWidth().brutalDark(shadow = 3.dp).padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DarkIconButton(
+                if (playback.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                if (playback.playing) "Pause" else "Play",
+                onClick = {
+                    player ?: return@DarkIconButton
+                    if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+                    if (player.isPlaying) player.pause() else player.play()
+                },
+                active = !playback.playing,
+            )
+            Spacer(Modifier.width(10.dp))
+            val position = scrub.fraction?.let { scrubPositionMs(it, duration) } ?: playback.position
+            Text(clock(position), style = Type.Label, color = if (scrub.scrubbing) BrutalDark.Orange else BrutalDark.Text)
+            Spacer(Modifier.width(10.dp))
+            SeekBar(
+                fraction = scrub.fraction ?: if (duration > 0) playback.position.toFloat() / duration else 0f,
+                onStart = { f -> onBarTouched(); scrub.start(f, player, duration) },
+                onMove = { f -> if (scrub.move(f, player, duration)) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) },
+                onEnd = { scrub.end(player, duration)?.let { playback.position = it } },
+                active = scrub.scrubbing,
+                modifier = Modifier.weight(1f).onPlaced { holder.bar = it }.testTag("video-seekbar"),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(clock(duration), style = Type.Label, color = BrutalDark.MutedText)
+            Spacer(Modifier.width(6.dp))
+            DarkIconButton(
+                if (playback.muted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                if (playback.muted) "Unmute" else "Mute",
+                onClick = { player?.let { it.volume = if (it.volume == 0f) 1f else 0f; playback.muted = it.volume == 0f } },
+            )
+        }
+    }
+}
+
+/** Layout coordinates read at layout time (not state: they change without recomposing). */
+private class CoordsHolder {
+    var column: LayoutCoordinates? = null
+    var bar: LayoutCoordinates? = null
+}
+
+private val ThumbWidth = 14.dp
+
+/**
+ * The bar. A touch anywhere on it starts scrubbing at once (no slop, so the pager and the
+ * drag-to-dismiss never get the gesture); the thumb follows the finger, not the player.
+ */
+@Composable
+private fun SeekBar(
+    fraction: Float,
+    onStart: (Float) -> Unit,
+    onMove: (Float) -> Unit,
+    onEnd: () -> Unit,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val start by rememberUpdatedState(onStart)
+    val move by rememberUpdatedState(onMove)
+    val end by rememberUpdatedState(onEnd)
+    val shown = fraction.coerceIn(0f, 1f)
     val shape = RoundedCornerShape(3.dp)
     BoxWithConstraints(
-        modifier.height(36.dp)
-            .pointerInput(Unit) { detectTapGestures { onSeek((it.x / size.width).coerceIn(0f, 1f)) } }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = { dragging = (it.x / size.width).coerceIn(0f, 1f) },
-                    onHorizontalDrag = { c, _ -> c.consume(); dragging = (c.position.x / size.width).coerceIn(0f, 1f); onSeek(dragging!!) },
-                    onDragEnd = { dragging = null },
-                    onDragCancel = { dragging = null },
-                )
-            },
+        modifier.height(36.dp).pointerInput(Unit) {
+            fun at(x: Float) = (x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                down.consume()
+                start(at(down.position.x))
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) { change.consume(); break }
+                        if (change.positionChanged()) {
+                            change.consume()
+                            move(at(change.position.x))
+                        }
+                    }
+                } finally {
+                    end()
+                }
+            }
+        },
         contentAlignment = Alignment.CenterStart,
     ) {
         val w = maxWidth
-        Box(Modifier.fillMaxWidth().height(12.dp).background(BrutalDark.Raised, shape).border(2.dp, BrutalDark.Line, shape)) {
+        val trackHeight = if (active) 16.dp else 12.dp
+        Box(Modifier.fillMaxWidth().height(trackHeight).background(BrutalDark.Raised, shape).border(2.dp, BrutalDark.Line, shape)) {
             Box(Modifier.fillMaxHeight().width(w * shown).background(BrutalDark.Orange, shape).border(2.dp, BrutalDark.Line, shape))
         }
         Box(
-            Modifier.offset { IntOffset(((w - 14.dp) * shown).roundToPx(), 0) }
-                .size(14.dp, 24.dp).background(BrutalDark.Text, RoundedCornerShape(3.dp)).border(2.dp, BrutalDark.Shadow, RoundedCornerShape(3.dp)),
+            Modifier.offset { IntOffset(((w - ThumbWidth) * shown).roundToPx(), 0) }
+                .size(ThumbWidth, if (active) 30.dp else 24.dp)
+                .background(if (active) BrutalDark.Orange else BrutalDark.Text, shape)
+                .border(2.dp, if (active) BrutalDark.Line else BrutalDark.Shadow, shape),
         )
     }
 }
-
