@@ -339,8 +339,8 @@ private fun SeekBar(
         Box(
             Modifier.offset { IntOffset(((w - ThumbWidth) * shown).roundToPx(), 0) }
                 .size(ThumbWidth, if (active) 30.dp else 24.dp)
-                .background(if (active) BrutalDark.Orange else BrutalDark.Text, shape)
-                .border(2.dp, if (active) BrutalDark.Line else BrutalDark.Shadow, shape),
+                .background(BrutalDark.Text, shape)
+                .border(2.dp, BrutalDark.Shadow, shape),
         )
     }
 }

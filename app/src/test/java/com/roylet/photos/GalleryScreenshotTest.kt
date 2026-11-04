@@ -9,7 +9,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import coil3.compose.LocalAsyncImagePreviewHandler
@@ -27,6 +31,7 @@ import com.roylet.photos.ui.gallery.PhotosScreen
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.BrutalDark
 import com.roylet.photos.ui.theme.PhotosTheme
+import com.roylet.photos.ui.viewer.VideoFrameCache
 import com.roylet.photos.ui.viewer.ViewerScreen
 import org.junit.After
 import org.junit.Assume.assumeTrue
@@ -57,7 +62,7 @@ class GalleryScreenshotTest {
 
     @After fun signOut() = app.container.settings.signOut()
 
-    private fun shoot(name: String, dark: Boolean = false, content: @Composable () -> Unit) {
+    private fun shoot(name: String, dark: Boolean = false, before: () -> Unit = {}, content: @Composable () -> Unit) {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             // Reduced motion: Coil's crossfade runs on wall-clock time, which the paused test clock can't advance.
@@ -65,6 +70,10 @@ class GalleryScreenshotTest {
                 PhotosTheme(dark = dark) { content() }
             }
         }
+        compose.mainClock.advanceTimeBy(1500)
+        before()
+        // Let the state written by injected input reach composition (the clock is paused).
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(1500)
         val view = compose.activity.window.decorView.rootView
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
@@ -133,6 +142,24 @@ class GalleryScreenshotTest {
         val s = repo.snapshot.value
         val index = (0 until s.total).first { s.assetAt(it)?.isVideo == true }
         shoot("gallery-06-viewer-video", dark = true) { ViewerScreen(repo, startIndex = index, onBack = {}, onEdit = {}) }
+    }
+
+    /** Mid-scrub on a video: preview bubble, frame strip and the bar under the finger. */
+    @Test fun viewerVideoScrubbing() {
+        val repo = FakeGallery.repository(loadAll = true)
+        val s = repo.snapshot.value
+        val index = (0 until s.total).first { s.assetAt(it)?.let { a -> a.isVideo && (a.durationMs ?: 0) > 60_000 && a.ratio > 1.2f } == true }
+        val asset = s.assetAt(index)!!
+        val strip = VideoFrameCache.obtain(asset.id, asset.durationMs!!)!!
+        FakeGallery.videoFrames(asset, strip.count).forEachIndexed { i, b -> strip.frames[i] = b.asImageBitmap() }
+        shoot("gallery-08-viewer-video-scrub", dark = true, before = {
+            compose.onNodeWithTag("video-seekbar", useUnmergedTree = true).performTouchInput {
+                down(Offset(width * 0.15f, centerY))
+                moveTo(Offset(width * 0.45f, centerY))
+                moveTo(Offset(width * 0.62f, centerY))
+            }
+        }) { ViewerScreen(repo, startIndex = index, onBack = {}, onEdit = {}) }
+        VideoFrameCache.clear()
     }
 
     private fun landscapeIndex(repo: com.roylet.photos.domain.timeline.TimelineRepository): Int {

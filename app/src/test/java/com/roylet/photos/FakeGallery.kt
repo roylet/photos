@@ -109,6 +109,10 @@ object FakeGallery {
         bitmaps.getOrPut(id) { paint(id, ratio) }.asImage()
     }
 
+    /** Fake scrub-strip frames for a video: a different little landscape per sample point. */
+    fun videoFrames(asset: TimelineAsset, count: Int): List<Bitmap> =
+        (0 until count).map { i -> paint("${asset.id}-frame$i", asset.ratio) }
+
     private val skins = intArrayOf(0xFFF1C27D.toInt(), 0xFFE0AC69.toInt(), 0xFFC68642.toInt(), 0xFF8D5524.toInt(), 0xFFFFDBAC.toInt())
     private val backdrops = intArrayOf(0xFF9CC5A1.toInt(), 0xFFF4B393.toInt(), 0xFF8FB8DE.toInt(), 0xFFE8C547.toInt(), 0xFFC9B8FF.toInt(), 0xFFF7A1A1.toInt())
     private val hairs = intArrayOf(0xFF2B1B10.toInt(), 0xFF5A3825.toInt(), 0xFFB5651D.toInt(), 0xFF1A1A1A.toInt(), 0xFFD9C27A.toInt(), 0xFF9E9E9E.toInt())
