@@ -72,6 +72,8 @@ fun AlbumsScreen(
     prefs: UiPrefs,
     onOpen: (Album) -> Unit,
     modifier: Modifier = Modifier,
+    /** Called with the new album's name; the app opens [AlbumPhotoPicker]. Null creates it empty right away. */
+    onNewAlbum: ((name: String) -> Unit)? = null,
 ) {
     val albums by store.albums.collectAsState()
     val error by store.error.collectAsState()
@@ -118,9 +120,9 @@ fun AlbumsScreen(
                 }
             }
         }
-        NewAlbumDialog(creating, onDismiss = { creating = false }) { name ->
+        NewAlbumDialog(creating, onDismiss = { creating = false }, pickNext = onNewAlbum != null) { name ->
             creating = false
-            actions?.createAlbum(name, emptyList()) { onOpen(it) }
+            if (onNewAlbum != null) onNewAlbum(name.trim()) else actions?.createAlbum(name, emptyList()) { onOpen(it) }
         }
     }
 }
@@ -160,12 +162,13 @@ private fun Badge(icon: androidx.compose.ui.graphics.vector.ImageVector) {
 }
 
 @Composable
-fun NewAlbumDialog(visible: Boolean, onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+fun NewAlbumDialog(visible: Boolean, onDismiss: () -> Unit, pickNext: Boolean = false, onCreate: (String) -> Unit) {
     var name by remember(visible) { mutableStateOf("") }
     BrutalDialog(
         visible, "New album", onDismiss,
-        text = "Add photos from the timeline afterwards, or select some first and use Add to album.",
+        text = if (pickNext) "Next, choose the photos to put in it (or skip and add them later)."
+        else "Add photos from the timeline afterwards, or select some first and use Add to album.",
         content = { BrutalTextField(name, { name = it }, "Album name") },
-    ) { DialogButtons("Create", { onCreate(name) }, onDismiss, enabled = name.isNotBlank()) }
+    ) { DialogButtons(if (pickNext) "Next" else "Create", { onCreate(name) }, onDismiss, enabled = name.isNotBlank()) }
 }
 

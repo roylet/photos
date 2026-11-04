@@ -6,6 +6,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -199,7 +204,18 @@ fun EditorWorkspace(
 
     LaunchedEffect(session) { session.history.current.collect { session.push(it) } }
     LaunchedEffect(session, tool) { session.setCropMode(tool == EditorTool.CROP) }
-    LaunchedEffect(session, comparing) { session.setShowOriginal(comparing) }
+    // Gestures render drafts; once one ends (and isn't immediately resumed) go back to full quality.
+    LaunchedEffect(session) {
+        session.history.gesturing.collectLatest { g -> if (!g) { delay(EditorSession.DRAFT_SETTLE_MS); session.endDraft() } }
+    }
+    // Hold-to-compare crossfades the image itself (instantly with reduced motion).
+    val reducedMotion = rememberReducedMotion()
+    val compareMix = animateFloatAsState(
+        if (comparing) 1f else 0f,
+        if (reducedMotion) snap() else tween(EditorSession.COMPARE_FADE_MS),
+        label = "compare",
+    )
+    LaunchedEffect(session) { snapshotFlow { compareMix.value }.collect { session.setCompareMix(it) } }
 
     val requestClose = { if (session.isDirty && saveProgress == null) confirmClose = true else onClose() }
     BackHandler {
@@ -210,7 +226,7 @@ fun EditorWorkspace(
     }
 
     val canvas: @Composable (Modifier) -> Unit = { m ->
-        EditorCanvasArea(session, recipe, tool, comparing, onCompare = { comparing = it }, modifier = m)
+        EditorCanvasArea(session, recipe, tool, comparing, compareMix, onCompare = { comparing = it }, modifier = m)
     }
     val header: @Composable () -> Unit = {
         EditorHeader(session, onClose = requestClose, onSave = { sheet = true })
@@ -317,6 +333,7 @@ private fun EditorCanvasArea(
     recipe: State<Recipe>,
     tool: EditorTool,
     comparing: Boolean,
+    compareMix: State<Float>,
     onCompare: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
@@ -325,7 +342,7 @@ private fun EditorCanvasArea(
     val crop = tool == EditorTool.CROP
     Box(modifier.clipToBounds()) {
         if (session.renderer != null) GlPreview(session, Modifier.fillMaxSize())
-        else StaticPreview(session, Modifier.fillMaxSize(), cropMode = crop, showOriginal = comparing)
+        else StaticPreview(session, Modifier.fillMaxSize(), cropMode = crop, compareMix = compareMix.value)
 
         if (crop) {
             CropOverlay(session, recipe, Modifier.fillMaxSize())

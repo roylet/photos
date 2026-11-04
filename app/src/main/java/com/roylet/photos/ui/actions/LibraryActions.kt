@@ -281,7 +281,7 @@ class LibraryActions(
     }
 
     /** Creates an album already holding [ids] (one request). */
-    fun createAlbum(name: String, ids: List<String>, onCreated: (Album) -> Unit = {}) {
+    fun createAlbum(name: String, ids: List<String>, onFailed: () -> Unit = {}, onCreated: (Album) -> Unit = {}) {
         val clean = name.trim().ifEmpty { "Untitled" }
         scope.launch {
             runCatching { library().createAlbum(clean, ids) }
@@ -290,7 +290,7 @@ class LibraryActions(
                     onCreated(album)
                     snackbar.show(if (ids.isEmpty()) "Created ${album.name}" else "Added ${items(ids.size)} to new album ${album.name}", tone = SnackTone.Success)
                 }
-                .onFailure { e -> if (e is CancellationException) throw e; snackbar.error("Couldn't create album: ${describe(e)}") }
+                .onFailure { e -> if (e is CancellationException) throw e; onFailed(); snackbar.error("Couldn't create album: ${describe(e)}") }
         }
     }
 

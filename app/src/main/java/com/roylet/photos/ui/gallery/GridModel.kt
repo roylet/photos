@@ -2,6 +2,7 @@ package com.roylet.photos.ui.gallery
 
 import com.roylet.photos.domain.timeline.JustifiedLayout
 import com.roylet.photos.domain.timeline.JustifiedRow
+import androidx.compose.runtime.Immutable
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineSnapshot
 
@@ -23,7 +24,8 @@ enum class GridDensity(val columns: Int, val squares: Boolean, val closeUp: Bool
     Months(11, true),
 }
 
-/** One LazyColumn item. */
+/** One LazyColumn item. Never mutated once built. */
+@Immutable
 sealed class GridItem(val bucket: Int, val key: String, val contentType: Int) {
     class Header(bucket: Int, bucketKey: String) : GridItem(bucket, "h:$bucketKey", 0)
     class Row(bucket: Int, bucketKey: String, val row: JustifiedRow, val assets: List<TimelineAsset>) : GridItem(bucket, "r:$bucketKey:${row.start}", 1)
@@ -58,7 +60,14 @@ class GridLayoutCache {
     private var density: GridDensity? = null
     private var columnScale = 1f
     private var viewportHeight = 0f
-    private val rows = HashMap<String, Pair<List<TimelineAsset>, List<JustifiedRow>>>()
+    private val rows = HashMap<String, Laid>()
+
+    /**
+     * A month's laid-out rows, as the very [GridItem.Row] instances handed to the grid: reusing them
+     * when another month loads (or a favourite changes elsewhere) lets each visible `GridRow` skip
+     * recomposition, since its item is the same object.
+     */
+    private class Laid(val assets: List<TimelineAsset>, val bucket: Int, val items: List<GridItem.Row>)
 
     /**
      * @param columnScale widens the density on big screens (1 on a phone; e.g. 2.2 on a 900dp tablet),
@@ -95,13 +104,12 @@ class GridLayoutCache {
                 items += GridItem.Pending(b, bucket.key, h)
             } else {
                 val cached = rows[bucket.key]
-                val laid = if (cached != null && cached.first === assets) cached.second else {
+                val laid = if (cached != null && cached.assets === assets && cached.bucket == b) cached.items else {
                     val r = if (density.squares) JustifiedLayout.squares(assets.size, widthPx, columns, spacingPx)
                     else JustifiedLayout.layout(FloatArray(assets.size) { assets[it].ratio }, widthPx, target, spacingPx, maxHeight, maxPerRow)
-                    rows[bucket.key] = assets to r
-                    r
+                    r.map { GridItem.Row(b, bucket.key, it, assets) }.also { rows[bucket.key] = Laid(assets, b, it) }
                 }
-                laid.forEach { items += GridItem.Row(b, bucket.key, it, assets) }
+                items.addAll(laid)
             }
         }
         return GridModel(items, headers, snapshot, spacingPx)

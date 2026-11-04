@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Photos"
 include(":app")
+include(":baselineprofile")

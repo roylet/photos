@@ -94,15 +94,38 @@ class GalleryScreenshotTest {
     /** The selection bar, check rings and cell tint in the dark theme. */
     @Test fun timelineSelectingDark() = selecting("gallery-02-selecting-dark", dark = true)
 
-    private fun selecting(name: String, dark: Boolean) {
+    /** A narrow phone with a three-digit count: the bar keeps "128 selected" and moves more into ⋯. */
+    @Test @Config(qualifiers = "w360dp-h780dp-xhdpi")
+    fun timelineSelectingNarrow() = selecting("gallery-02-selecting-narrow", dark = false, count = 128)
+
+    @Test @Config(qualifiers = "w360dp-h780dp-xhdpi")
+    fun timelineSelectingNarrowDark() = selecting("gallery-02-selecting-narrow-dark", dark = true, count = 128)
+
+    private fun selecting(name: String, dark: Boolean, count: Int = 6) {
         val repo = FakeGallery.repository(loadAll = true)
         val first = FakeGallery.assetsOf(FakeGallery.buckets[0].key)
-        val selection = GridSelection().apply { set(first.take(5).map { it.id }.toSet() + first[8].id) }
+        val all = FakeGallery.buckets.flatMap { FakeGallery.assetsOf(it.key) }
+        val ids = if (count == 6) first.take(5).map { it.id }.toSet() + first[8].id else all.take(count).map { it.id }.toSet()
+        val selection = GridSelection().apply { set(ids) }
         shoot(name, dark = dark) {
             Column(Modifier.fillMaxSize().background(Palette.paper)) {
                 PhotosScreen(repo, onOpen = { _, _ -> }, onSettings = {}, selection = selection, modifier = Modifier.weight(1f))
                 BrutalTabBar(Tabs, Routes.TIMELINE, {})
             }
+        }
+    }
+
+    /** New album from the Albums tab: the timeline in pick mode with three photos chosen. */
+    @Test fun albumPicker() = albumPicker("gallery-12-album-picker", dark = false)
+
+    @Test fun albumPickerDark() = albumPicker("gallery-12-album-picker-dark", dark = true)
+
+    private fun albumPicker(name: String, dark: Boolean) {
+        val repo = FakeGallery.repository(loadAll = true)
+        val first = FakeGallery.assetsOf(FakeGallery.buckets[0].key)
+        val selection = GridSelection(picking = true).apply { set(setOf(first[0].id, first[2].id, first[6].id)) }
+        shoot(name, dark = dark) {
+            com.roylet.photos.ui.albums.AlbumPhotoPicker("Beach day", repo, onAdd = {}, onSkip = {}, onBack = {}, selection = selection)
         }
     }
 

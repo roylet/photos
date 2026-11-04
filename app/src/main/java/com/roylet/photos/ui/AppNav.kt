@@ -34,6 +34,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
@@ -47,6 +49,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.roylet.photos.AppContainer
 import com.roylet.photos.ui.albums.AlbumsScreen
+import com.roylet.photos.ui.albums.AlbumPhotoPicker
 import com.roylet.photos.ui.albums.AlbumDetailScreen
 import androidx.compose.animation.AnimatedContentScope
 import com.roylet.photos.domain.timeline.TimelineAsset
@@ -108,6 +111,7 @@ object Routes {
     const val VIEWER = "viewer?filter={filter}&index={index}&id={id}"
     const val EDIT = "edit/{assetId}"
     const val ALBUM = "album/{albumId}"
+    const val NEW_ALBUM = "album-new?name={name}"
     const val PERSON = "person/{personId}?name={name}"
     const val FAVORITES = "favorites"
     const val ARCHIVE = "archive"
@@ -121,6 +125,7 @@ object Routes {
     fun viewer(filter: TimelineFilter, index: Int, id: String) = "viewer?filter=${filter.encode()}&index=$index&id=$id"
     fun edit(assetId: String) = "edit/$assetId"
     fun album(id: String) = "album/$id"
+    fun newAlbum(name: String) = "album-new?name=${android.net.Uri.encode(name)}"
     fun memories(index: Int) = "memories?index=$index"
     fun list(filter: TimelineFilter, title: String) = "list/${filter.encode()}?title=${android.net.Uri.encode(title)}"
     fun person(id: String, name: String) = "person/$id?name=${android.net.Uri.encode(name)}"
@@ -342,7 +347,26 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             )
         }
         composable(Routes.ALBUMS) {
-            AlbumsScreen(container.albums, container.actions, container.uiPrefs, onOpen = { nav.navigate(Routes.album(it.id)) })
+            AlbumsScreen(
+                container.albums, container.actions, container.uiPrefs,
+                onOpen = { nav.navigate(Routes.album(it.id)) },
+                onNewAlbum = { name -> nav.navigate(Routes.newAlbum(name)) },
+            )
+        }
+        composable(Routes.NEW_ALBUM, arguments = listOf(navArgument("name") { type = NavType.StringType; defaultValue = "" })) { entry ->
+            val name = entry.arguments?.getString("name").orEmpty()
+            val timeline = remember { container.timelines.get(TimelineFilter.Timeline) }
+            // Created in one request once the photos are chosen; then the album replaces the picker.
+            var busy by remember { mutableStateOf(false) }
+            val create: (List<String>) -> Unit = { ids ->
+                if (!busy) {
+                    busy = true
+                    container.actions.createAlbum(name, ids, onFailed = { busy = false }) { album ->
+                        nav.navigate(Routes.album(album.id)) { popUpTo(Routes.ALBUMS) }
+                    }
+                }
+            }
+            AlbumPhotoPicker(name, timeline, onAdd = create, onSkip = { create(emptyList()) }, onBack = { nav.popBackStack() })
         }
         composable(Routes.ALBUM, arguments = listOf(navArgument("albumId") { type = NavType.StringType })) { entry ->
             val id = entry.arguments?.getString("albumId").orEmpty()

@@ -267,7 +267,7 @@ fun ViewerScreen(
                 beyondViewportPageCount = 1,
                 pageSpacing = 12.dp,
                 key = { snapshot.assetAt(it)?.id ?: "i$it" },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().testTag("viewer-pager"),
             ) { page ->
                 val asset = snapshot.assetAt(page)
                 if (asset == null) {

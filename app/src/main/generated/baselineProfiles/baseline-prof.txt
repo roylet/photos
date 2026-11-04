@@ -1,0 +1,63 @@
+# Hand-written starter Baseline Profile for the app's own hot paths (libraries such as Compose ship
+# their own). Wildcards are expanded against the app's classes at build time.
+# Replace it with a recorded profile on a device:  ./gradlew :app:generateBaselineProfile  (see README).
+
+# Start-up
+Lcom/roylet/photos/MainActivity;
+HSPLcom/roylet/photos/MainActivity;->**(**)**
+Lcom/roylet/photos/PhotosApp;
+HSPLcom/roylet/photos/PhotosApp;->**(**)**
+Lcom/roylet/photos/AppContainer;
+HSPLcom/roylet/photos/AppContainer;->**(**)**
+Lcom/roylet/photos/AppContainer*;
+HSPLcom/roylet/photos/AppContainer*;->**(**)**
+Lcom/roylet/photos/data/*;
+HSPLcom/roylet/photos/data/*;->**(**)**
+Lcom/roylet/photos/net/*;
+HSPLcom/roylet/photos/net/*;->**(**)**
+Lcom/roylet/photos/upload/*;
+HSPLcom/roylet/photos/upload/*;->**(**)**
+
+# Navigation, theme and shared components
+Lcom/roylet/photos/ui/*;
+HSPLcom/roylet/photos/ui/*;->**(**)**
+Lcom/roylet/photos/ui/components/*;
+HSPLcom/roylet/photos/ui/components/*;->**(**)**
+Lcom/roylet/photos/ui/theme/*;
+HSPLcom/roylet/photos/ui/theme/*;->**(**)**
+Lcom/roylet/photos/ui/actions/*;
+HSPLcom/roylet/photos/ui/actions/*;->**(**)**
+Lcom/roylet/photos/util/*;
+HSPLcom/roylet/photos/util/*;->**(**)**
+
+# Timeline: grid rows, month headers, scrubber, thumbnails, selection
+Lcom/roylet/photos/ui/gallery/*;
+HSPLcom/roylet/photos/ui/gallery/*;->**(**)**
+Lcom/roylet/photos/domain/timeline/*;
+HSPLcom/roylet/photos/domain/timeline/*;->**(**)**
+Lcom/roylet/photos/domain/library/*;
+HSPLcom/roylet/photos/domain/library/*;->**(**)**
+Lcom/roylet/photos/immich/*;
+HSPLcom/roylet/photos/immich/*;->**(**)**
+
+# Viewer: pager, zoom, gestures, preload, video
+Lcom/roylet/photos/ui/viewer/*;
+HSPLcom/roylet/photos/ui/viewer/*;->**(**)**
+
+# Albums tab and picker
+Lcom/roylet/photos/ui/albums/*;
+HSPLcom/roylet/photos/ui/albums/*;->**(**)**
+
+# Editor: session, sliders, GPU preview, recipe maths, saving
+Lcom/roylet/photos/editor/ui/*;
+HSPLcom/roylet/photos/editor/ui/*;->**(**)**
+Lcom/roylet/photos/editor/gl/*;
+HSPLcom/roylet/photos/editor/gl/*;->**(**)**
+Lcom/roylet/photos/editor/recipe/*;
+HSPLcom/roylet/photos/editor/recipe/*;->**(**)**
+Lcom/roylet/photos/editor/io/*;
+HSPLcom/roylet/photos/editor/io/*;->**(**)**
+Lcom/roylet/photos/editor/save/*;
+HSPLcom/roylet/photos/editor/save/*;->**(**)**
+Lcom/roylet/photos/editor/cpu/*;
+HSPLcom/roylet/photos/editor/cpu/*;->**(**)**

@@ -166,7 +166,7 @@ fun SaveProgressPanel(progress: SaveProgress?, onBackground: () -> Unit, onDismi
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("${(overall * 100).toInt()}%", style = Type.Huge, color = BrutalDark.Text, modifier = Modifier.weight(1f))
                         }
-                        DarkProgress(overall, height = 18.dp, moving = p.stage == SaveStage.QUEUED)
+                        DarkProgress(overall, height = 18.dp, moving = p.stage == SaveStage.QUEUED || p.stage == SaveStage.WAITING)
                         Text(p.stage.label, style = Type.Small, color = BrutalDark.MutedText)
                         Text("You can leave; the save keeps going with a notification.", style = Type.Small, color = BrutalDark.MutedText)
                         DarkButton("Continue in background", onBackground, primary = false, modifier = Modifier.align(Alignment.End))

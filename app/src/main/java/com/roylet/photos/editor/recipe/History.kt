@@ -32,10 +32,13 @@ class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) : Rec
     private val _current = MutableStateFlow(initial)
     private val _canUndo = MutableStateFlow(false)
     private val _canRedo = MutableStateFlow(false)
+    private val _gesturing = MutableStateFlow(false)
 
     val current: StateFlow<Recipe> = _current.asStateFlow()
     val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
     val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+    /** True between [beginGesture] and [endGesture]/[cancelGesture] (the preview drafts meanwhile). */
+    val gesturing: StateFlow<Boolean> = _gesturing.asStateFlow()
 
     override val recipe: Recipe get() = _current.value
     val inGesture: Boolean get() = gestureStart != null
@@ -52,12 +55,14 @@ class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) : Rec
     /** Starts coalescing changes. Nested calls are ignored. */
     override fun beginGesture() {
         if (gestureStart == null) gestureStart = _current.value
+        _gesturing.value = true
     }
 
     /** Ends coalescing; records one step if the recipe changed since [beginGesture]. */
     override fun endGesture() {
         val start = gestureStart ?: return
         gestureStart = null
+        _gesturing.value = false
         if (start != _current.value) push(start)
     }
 
@@ -65,6 +70,7 @@ class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) : Rec
     fun cancelGesture() {
         val start = gestureStart ?: return
         gestureStart = null
+        _gesturing.value = false
         _current.value = start
     }
 
@@ -89,6 +95,7 @@ class History(initial: Recipe = Recipe(), private val maxSteps: Int = 100) : Rec
     /** Replaces everything (e.g. when a new photo is opened). */
     fun reset(recipe: Recipe = Recipe()) {
         undoStack.clear(); redoStack.clear(); gestureStart = null
+        _gesturing.value = false
         _current.value = recipe
         refresh()
     }

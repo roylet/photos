@@ -52,7 +52,7 @@ class EditorSession(
     @Volatile internal var invalidate: () -> Unit = {}
 
     private var cropMode = false
-    private var showOriginal = false
+    private var compareMix = 0f
     private var zoom = 1f
     private var panX = 0f
     private var panY = 0f
@@ -65,7 +65,22 @@ class EditorSession(
         renderer?.setBackgroundColor(0xFF111111.toInt())
     }
 
-    fun push(recipe: Recipe) { renderer?.setRecipe(recipe); invalidate() }
+    /** Sends [recipe] to the preview; frames during a gesture render at draft resolution. */
+    fun push(recipe: Recipe) { renderer?.setRecipe(recipe, draft = history.inGesture); invalidate() }
+
+    /**
+     * Back to full quality after a gesture; [EditorWorkspace] calls it [DRAFT_SETTLE_MS] after the
+     * gesture ends, so a quick re-grab of the slider doesn't flip quality back and forth.
+     */
+    fun endDraft() { if (renderer?.setDraft(false) == true) invalidate() }
+
+    /** Hold-to-compare crossfade: 0 = the edit, 1 = the original. */
+    fun setCompareMix(mix: Float) {
+        if (compareMix == mix) return
+        compareMix = mix
+        renderer?.setCompareMix(mix)
+        invalidate()
+    }
 
     fun setCropMode(enabled: Boolean) {
         if (cropMode == enabled) return
@@ -76,12 +91,7 @@ class EditorSession(
         invalidate()
     }
 
-    fun setShowOriginal(show: Boolean) {
-        if (showOriginal == show) return
-        showOriginal = show
-        renderer?.setShowOriginal(show)
-        invalidate()
-    }
+    fun setShowOriginal(show: Boolean) = setCompareMix(if (show) 1f else 0f)
 
     fun setView(zoom: Float, panX: Float, panY: Float) {
         this.zoom = zoom; this.panX = panX; this.panY = panY
@@ -118,6 +128,10 @@ class EditorSession(
 
     companion object {
         const val CROP_ZOOM = 0.86f
+        /** How long after a gesture ends the preview re-renders at full proxy quality. */
+        const val DRAFT_SETTLE_MS = 120L
+        /** Hold-to-compare crossfade length. */
+        const val COMPARE_FADE_MS = 150
     }
 }
 
