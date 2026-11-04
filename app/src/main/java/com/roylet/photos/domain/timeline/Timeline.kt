@@ -23,6 +23,8 @@ data class TimelineFilter(
     val withPartners: Boolean? = null,
     /** Newest first by default. */
     val newestFirst: Boolean = true,
+    /** A fixed, app-side list (search results, a map cluster) registered with the timeline registry; never sent to the server. */
+    val listId: String? = null,
 ) {
     fun toQuery(): List<Pair<String, String>> = buildList {
         visibility?.let { add("visibility" to it.wire) }
@@ -37,7 +39,7 @@ data class TimelineFilter(
     }
 
     /** A compact, URL-safe form for navigation arguments; [decode] reverses it. */
-    fun encode(): String = toQuery().joinToString("~") { (k, v) -> "$k.$v" }
+    fun encode(): String = (toQuery() + listOfNotNull(listId?.let { "listId" to it })).joinToString("~") { (k, v) -> "$k.$v" }
 
     companion object {
         val Timeline = TimelineFilter()
@@ -47,6 +49,7 @@ data class TimelineFilter(
         fun album(id: String, newestFirst: Boolean = true) = TimelineFilter(visibility = null, albumId = id, newestFirst = newestFirst)
         fun person(id: String) = TimelineFilter(personId = id)
         fun tag(id: String) = TimelineFilter(tagId = id)
+        fun list(id: String) = TimelineFilter(visibility = null, withStacked = false, listId = id)
 
         fun decode(s: String): TimelineFilter {
             if (s.isBlank()) return Timeline
@@ -61,6 +64,7 @@ data class TimelineFilter(
                 withStacked = m["withStacked"] == "true",
                 withPartners = m["withPartners"]?.toBooleanStrictOrNull(),
                 newestFirst = m["order"] != "asc",
+                listId = m["listId"],
             )
         }
     }

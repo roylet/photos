@@ -102,9 +102,40 @@ object FakeGallery {
     private val bitmaps = ConcurrentHashMap<String, Bitmap>()
 
     val previewHandler = AsyncImagePreviewHandler { request ->
-        val id = idPattern.find(request.data.toString())?.groupValues?.get(1) ?: "x"
+        val data = request.data.toString()
+        if (data.startsWith("fake://person/")) return@AsyncImagePreviewHandler bitmaps.getOrPut(data) { face(data) }.asImage()
+        val id = idPattern.find(data)?.groupValues?.get(1) ?: "x"
         val ratio = byId[id]?.ratio ?: 1.33f
         bitmaps.getOrPut(id) { paint(id, ratio) }.asImage()
+    }
+
+    private val skins = intArrayOf(0xFFF1C27D.toInt(), 0xFFE0AC69.toInt(), 0xFFC68642.toInt(), 0xFF8D5524.toInt(), 0xFFFFDBAC.toInt())
+    private val backdrops = intArrayOf(0xFF9CC5A1.toInt(), 0xFFF4B393.toInt(), 0xFF8FB8DE.toInt(), 0xFFE8C547.toInt(), 0xFFC9B8FF.toInt(), 0xFFF7A1A1.toInt())
+    private val hairs = intArrayOf(0xFF2B1B10.toInt(), 0xFF5A3825.toInt(), 0xFFB5651D.toInt(), 0xFF1A1A1A.toInt(), 0xFFD9C27A.toInt(), 0xFF9E9E9E.toInt())
+
+    /** A simple portrait (backdrop, shoulders, head, hair) for fake people. */
+    private fun face(key: String): Bitmap {
+        val rnd = Random(key.hashCode())
+        val s = 200
+        val bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        c.drawColor(backdrops[rnd.nextInt(backdrops.size)])
+        paint.color = listOf(0xFF3D6BFF, 0xFF2E9E58, 0xFFFF5A1F, 0xFF111111, 0xFFFFFFFF).map { it.toInt() }[rnd.nextInt(5)]
+        c.drawOval(30f, 150f, 170f, 290f, paint)
+        val skin = skins[rnd.nextInt(skins.size)]
+        paint.color = skin
+        c.drawRect(85f, 120f, 115f, 160f, paint)
+        c.drawOval(58f, 48f, 142f, 148f, paint)
+        paint.color = hairs[rnd.nextInt(hairs.size)]
+        val long = rnd.nextBoolean()
+        c.drawArc(54f, 36f, 146f, 120f, 180f, 180f, true, paint)
+        if (long) { c.drawRect(54f, 78f, 70f, 150f, paint); c.drawRect(130f, 78f, 146f, 150f, paint) }
+        paint.color = 0xFF222222.toInt()
+        c.drawCircle(84f, 100f, 4f, paint); c.drawCircle(116f, 100f, 4f, paint)
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 3f
+        c.drawArc(86f, 108f, 114f, 130f, 20f, 140f, false, paint)
+        return bmp
     }
 
     private class Palette(val skyTop: Int, val skyBottom: Int, val sun: Int, val far: Int, val near: Int)

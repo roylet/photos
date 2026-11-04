@@ -121,14 +121,58 @@ class TimelineRepository(
 
     fun setFavorite(ids: Collection<String>, favorite: Boolean) = updateAssets(ids) { it.copy(isFavorite = favorite) }
 
+    /** What [remove] took out, so an undo can put it back exactly where it was. */
+    class Removal internal constructor(
+        internal val buckets: List<TimeBucket>,
+        internal val removed: Map<String, List<Pair<Int, TimelineAsset>>>,
+    ) {
+        val count: Int get() = removed.values.sumOf { it.size }
+    }
+
     /** Drops assets from the cached months (after delete / archive / remove-from-album). */
-    fun remove(ids: Collection<String>) {
+    fun remove(ids: Collection<String>): Removal {
         val set = ids.toSet()
+        var removal = Removal(emptyList(), emptyMap())
         _snapshot.update { s ->
-            val loaded = s.loaded.mapValues { (_, list) -> list.filterNot { it.id in set } }
+            val taken = HashMap<String, List<Pair<Int, TimelineAsset>>>()
+            val loaded = s.loaded.mapValues { (key, list) ->
+                if (list.none { it.id in set }) list else {
+                    taken[key] = list.withIndex().filter { it.value.id in set }.map { it.index to it.value }
+                    list.filterNot { it.id in set }
+                }
+            }
+            removal = Removal(s.buckets, taken)
             val buckets = s.buckets.map { b -> loaded[b.key]?.let { b.copy(count = it.size) } ?: b }.filter { it.count > 0 }
             TimelineSnapshot(buckets, loaded.filterValues { it.isNotEmpty() })
         }
+        return removal
+    }
+
+    /** Undoes a [remove]: the assets go back to their months at their old positions. */
+    fun reinsert(removal: Removal) {
+        if (removal.removed.isEmpty()) return
+        _snapshot.update { s ->
+            val loaded = s.loaded.toMutableMap()
+            removal.removed.forEach { (key, items) ->
+                val list = loaded[key].orEmpty().toMutableList()
+                items.sortedBy { it.first }.forEach { (i, a) -> if (list.none { it.id == a.id }) list.add(i.coerceAtMost(list.size), a) }
+                loaded[key] = list
+            }
+            val known = (s.buckets + removal.buckets).associateBy { it.key }
+            val keys = known.keys.filter { it in loaded || s.buckets.any { b -> b.key == it } }
+            val ordered = if (filter.newestFirst) keys.sortedDescending() else keys.sorted()
+            TimelineSnapshot(ordered.map { k -> known.getValue(k).let { b -> loaded[k]?.let { b.copy(count = it.size) } ?: b } }, loaded)
+        }
+    }
+
+    @Volatile private var stale = false
+
+    /** Something changed elsewhere (e.g. an asset was archived from another timeline): re-fetch next time this is shown. */
+    fun markStale() { if (_status.value != Status.Idle) stale = true }
+
+    /** [start], but also re-fetches if [markStale] was called since the last load. */
+    fun startOrRefresh() {
+        if (stale) { stale = false; refresh() } else start()
     }
 }
 
@@ -150,8 +194,10 @@ class TimelineRegistry(
     @Synchronized
     fun get(filter: TimelineFilter): TimelineRepository {
         val s = session()
-        if (s != currentSession) { repos.clear(); currentSession = s }
-        return repos.getOrPut(filter) { TimelineRepository(source, filter, CoroutineScope(SupervisorJob() + context)) }
+        if (s != currentSession) { repos.clear(); lists.clear(); currentSession = s }
+        return repos.getOrPut(filter) {
+            TimelineRepository(if (filter.listId != null) listSource() else source, filter, CoroutineScope(SupervisorJob() + context))
+        }
     }
 
     @Synchronized
@@ -160,4 +206,45 @@ class TimelineRegistry(
     /** Re-fetches every live timeline in place (screens keep their repository instances), e.g. after an edit was saved. */
     @Synchronized
     fun invalidateAll() = repos.values.forEach { it.refresh(keepLoaded = true) }
+
+    /** Marks every cached timeline except [except] as stale (they re-fetch when next shown). */
+    @Synchronized
+    fun markStale(except: TimelineFilter? = null) = repos.forEach { (f, r) -> if (f != except && f.listId == null) r.markStale() }
+
+    /** Runs [action] on every cached timeline (for cross-timeline optimistic updates). */
+    fun forEachRepo(action: (TimelineRepository) -> Unit) = synchronized(this) { repos.values.toList() }.forEach(action)
+
+    private val lists = HashMap<String, List<TimelineAsset>>()
+
+    /**
+     * Registers a fixed list of assets (search results, a map cluster) as a timeline, so the grid
+     * and viewer can page through it like any other. Returns its filter.
+     */
+    @Synchronized
+    fun putList(id: String, assets: List<TimelineAsset>): TimelineFilter {
+        val filter = TimelineFilter.list(id)
+        lists[id] = assets
+        repos.remove(filter)
+        return filter
+    }
+
+    internal fun listSource(): TimelineSource = object : TimelineSource {
+        override suspend fun buckets(filter: TimelineFilter): List<TimeBucket> = StaticTimeline.buckets(assetsFor(filter))
+        override suspend fun bucket(filter: TimelineFilter, key: String): List<TimelineAsset> = StaticTimeline.bucket(assetsFor(filter), key)
+        private fun assetsFor(f: TimelineFilter) = synchronized(this@TimelineRegistry) { lists[f.listId].orEmpty() }
+    }
+}
+
+/** Groups a flat asset list into months, newest first, for list-backed timelines. */
+object StaticTimeline {
+    fun keyOf(a: TimelineAsset): String {
+        val d = java.time.Instant.ofEpochMilli(a.localTakenAt).atZone(java.time.ZoneOffset.UTC)
+        return "%04d-%02d-01T00:00:00.000Z".format(d.year, d.monthValue)
+    }
+
+    fun buckets(assets: List<TimelineAsset>): List<TimeBucket> =
+        assets.groupBy(::keyOf).map { (k, v) -> TimeBucket(k, v.size) }.sortedByDescending { it.key }
+
+    fun bucket(assets: List<TimelineAsset>, key: String): List<TimelineAsset> =
+        assets.filter { keyOf(it) == key }.sortedByDescending { it.localTakenAt }
 }

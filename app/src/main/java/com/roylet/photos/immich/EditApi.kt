@@ -110,9 +110,7 @@ suspend fun ImmichApi.copyAsset(request: AssetCopyRequest) = send(put("/assets/c
 suspend fun ImmichApi.createStack(assetIds: List<String>): StackCreated =
     call(post("/stacks", StackCreateRequest(assetIds)))
 
-/** `DELETE /assets`; with [force] false the assets go to Trash and can be restored. */
-suspend fun ImmichApi.deleteAssets(ids: List<String>, force: Boolean = false) =
-    send(delete("/assets", AssetDeleteRequest(ids, force)))
+// `DELETE /assets` (deleteAssets) lives in LibraryApi.kt; force=false moves assets to Trash.
 
 suspend fun ImmichApi.restoreFromTrash(ids: List<String>): TrashCount =
     call(post("/trash/restore/assets", BulkIds(ids)))

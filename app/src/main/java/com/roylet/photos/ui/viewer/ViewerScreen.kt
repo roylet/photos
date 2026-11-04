@@ -45,6 +45,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -75,6 +77,11 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -162,12 +169,13 @@ fun ViewerScreen(
         }
     }
     val current = snapshot.assetAt(pager.currentPage)
+    // Everything here was deleted or archived away: nothing left to show.
+    val status by timeline.status.collectAsState()
+    LaunchedEffect(snapshot.total == 0, status) { if (snapshot.total == 0 && status == TimelineRepository.Status.Ready) onBack() }
 
     var chrome by rememberSaveable { mutableStateOf(initialChrome) }
     var info by rememberSaveable { mutableStateOf(initialInfo) }
     val zoomed = remember { mutableStateMapOf<Int, Boolean>() }
-    var message by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(message) { if (message != null) { delay(3000); message = null } }
     var liveFor by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = info) { info = false }
@@ -232,6 +240,7 @@ fun ViewerScreen(
                             onZoomed = { zoomed[page] = it },
                             playingLive = liveFor == asset.id,
                             onLiveEnded = { if (liveFor == asset.id) liveFor = null },
+                            onPinchClose = onBack,
                         )
                     }
                 }
@@ -242,7 +251,11 @@ fun ViewerScreen(
         val enter = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { -it / 2 }
         val exit = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { -it / 2 }
         AnimatedVisibility(chrome && !info, Modifier.align(Alignment.TopCenter).graphicsLayer { alpha = chromeAlpha }, enter = enter, exit = exit) {
-            TopBar(current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } })
+            TopBar(
+                current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
+                archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE,
+                onArchive = { current?.let { actions.archive(listOf(it.id), timeline) } },
+            )
         }
         val enterB = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 }
         val exitB = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 2 }
@@ -254,14 +267,8 @@ fun ViewerScreen(
                     onFavorite = {
                         val a = current ?: return@ActionBar
                         val fav = !a.isFavorite
-                        timeline.setFavorite(listOf(a.id), fav)
                         if (fav) haptics.performHapticFeedback(HapticFeedbackType.ToggleOn)
-                        scope.launch {
-                            runCatching { actions.setFavorite(listOf(a.id), fav) }.onFailure {
-                                timeline.setFavorite(listOf(a.id), !fav)
-                                message = "Couldn't update favourite"
-                            }
-                        }
+                        actions.favorite(listOf(a.id), fav, timeline)
                     },
                     onShare = { current?.let { actions.share(listOf(it.id), timeline) } },
                     onAddToAlbum = { current?.let { actions.addToAlbum(listOf(it.id), timeline) } },
@@ -291,10 +298,6 @@ fun ViewerScreen(
             }
         }
 
-        val msg = message
-        AnimatedVisibility(msg != null, Modifier.align(Alignment.BottomCenter).padding(bottom = 150.dp), enter = fadeIn() + slideInVertically(spring(dampingRatio = 0.5f)) { it }, exit = fadeOut()) {
-            Text(msg ?: "", style = Type.Label, color = BrutalDark.Text, modifier = Modifier.brutalDark(BrutalDark.Raised).padding(horizontal = 16.dp, vertical = 12.dp))
-        }
     }
 }
 
@@ -322,6 +325,9 @@ private fun SystemBars(visible: Boolean) {
     }
 }
 
+/** Pinching an unzoomed photo below this scale closes the viewer. */
+private const val PINCH_CLOSE = 0.72f
+
 /** Size of an image of [ratio] fitted inside [maxW]×[maxH]. */
 private fun fit(ratio: Float, maxW: Dp, maxH: Dp): Pair<Dp, Dp> {
     val r = if (ratio > 0f) ratio else 1f
@@ -338,8 +344,10 @@ private fun PhotoPage(
     onZoomed: (Boolean) -> Unit,
     playingLive: Boolean,
     onLiveEnded: () -> Unit,
+    onPinchClose: () -> Unit = {},
 ) {
     val zoom = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 8f))
+    val pinchClose by rememberUpdatedState(onPinchClose)
     val zoomFraction = zoom.zoomFraction ?: 0f
     val zoomedIn = zoomFraction > 0.02f
     LaunchedEffect(zoomedIn) { onZoomed(zoomedIn) }
@@ -356,11 +364,25 @@ private fun PhotoPage(
         val px = LocalDensity.current
         LaunchedEffect(w, h) { zoom.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(with(px) { Size(w.toPx(), h.toPx()) })) }
         Box(
-            Modifier.fillMaxSize().zoomable(zoom, onClick = { onTap() }, onLongClick = { onLongPress() }),
+            Modifier.fillMaxSize()
+                // Pinching in on an unzoomed photo goes back to the grid (observed, not consumed, so zoom still works).
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val unzoomed = (zoom.zoomFraction ?: 0f) < 0.02f
+                        var total = 1f
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.count { it.pressed } >= 2) total *= event.calculateZoom()
+                        } while (event.changes.any { it.pressed })
+                        if (unzoomed && total < PINCH_CLOSE) pinchClose()
+                    }
+                }
+                .zoomable(zoom, onClick = { onTap() }, onLongClick = { onLongPress() }),
             contentAlignment = Alignment.Center,
         ) {
             val hash = remember(asset.thumbhash) { ThumbHashCache.get(asset.thumbhash) }
-            Box(Modifier.size(w, h).sharedAsset(asset.id).thumbHashBackground(hash, BrutalDark.Raised)) {
+            Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true).thumbHashBackground(hash, BrutalDark.Raised)) {
                 val wPx = with(px) { w.roundToPx() }
                 val hPx = with(px) { h.roundToPx() }
                 val preview = remember(asset.id, wPx, hPx) {
@@ -415,7 +437,7 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
         val px = LocalDensity.current
         val player = if (isCurrent) rememberPlayer(urls.video(asset.id)) else null
         val playback = rememberPlaybackState(player, asset.durationMs ?: 0)
-        Box(Modifier.size(w, h).sharedAsset(asset.id)) {
+        Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true)) {
             AssetImage(urls.preview(asset.id), asset.thumbhash, with(px) { w.roundToPx() }, with(px) { h.roundToPx() }, Modifier.fillMaxSize())
             if (player != null) VideoSurface(player, Modifier.fillMaxSize())
         }
@@ -434,7 +456,7 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
 }
 
 @Composable
-private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit) {
+private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit, archived: Boolean, onArchive: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(BrutalDark.Canvas)
             .drawBehind { drawLine(BrutalDark.Raised, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
@@ -461,7 +483,13 @@ private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolea
                     Spacer(Modifier.width(6.dp))
                     Text("LIVE", style = Type.Label, color = ink)
                 }
+                Spacer(Modifier.width(8.dp))
             }
+            DarkIconButton(
+                if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
+                if (archived) "Unarchive" else "Archive",
+                onArchive,
+            )
         } else Spacer(Modifier.weight(1f))
     }
 }

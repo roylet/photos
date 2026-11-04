@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the share cache is exposed: originals downloaded for "Send file". -->
+<paths>
+    <cache-path name="share" path="share/" />
+</paths>
