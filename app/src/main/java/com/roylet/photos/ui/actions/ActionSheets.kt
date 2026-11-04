@@ -215,8 +215,8 @@ fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
     SheetTitle("Share", if (albumMode) albumName ?: "Album" else Format.plural(sheet.ids.size, "item"))
     Spacer(Modifier.height(14.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ModeTile(Icons.Rounded.Send, "Send file", "Originals, to any app", selected = mode == "file", enabled = !albumMode, modifier = Modifier.weight(1f)) { mode = "file" }
-        ModeTile(Icons.Rounded.Link, "Share link", "A web page anyone can open", selected = mode == "link", modifier = Modifier.weight(1f)) { mode = "link" }
+        ModeTile(Icons.Rounded.Send, "Send file", "Originals to any app", selected = mode == "file", enabled = !albumMode, modifier = Modifier.weight(1f)) { mode = "file" }
+        ModeTile(Icons.Rounded.Link, "Share link", "A link anyone can open", selected = mode == "link", modifier = Modifier.weight(1f)) { mode = "link" }
     }
     Spacer(Modifier.height(16.dp))
     AnimatedContent(mode, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) }, label = "shareMode") { m ->

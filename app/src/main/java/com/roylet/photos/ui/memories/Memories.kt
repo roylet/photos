@@ -92,7 +92,7 @@ fun MemoriesCarousel(memories: List<Memory>, onOpen: (Int) -> Unit, modifier: Mo
                         Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Brutal.Ink.copy(alpha = 0.85f))))
                         Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
                             Text(m.title(today), style = Type.Title.copy(fontSize = Type.Body.fontSize), color = Brutal.Paper, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("${m.year} · ${m.assets.size}", style = Type.Tiny, color = Brutal.Paper.copy(alpha = 0.8f))
+                            Text("${m.year} · ${Format.plural(m.assets.size, "photo")}".uppercase(), style = Type.Tiny, color = Brutal.Paper.copy(alpha = 0.8f))
                         }
                     }
                 }

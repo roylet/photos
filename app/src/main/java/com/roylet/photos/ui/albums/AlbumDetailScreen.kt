@@ -98,7 +98,6 @@ fun AlbumDetailScreen(
             emptyText = "Select photos on the timeline and choose Add to album to fill it.",
             headerActions = {
                 if (actions != null) {
-                    SquareIconButton(Icons.Rounded.Link, "Share link", { actions.shareAlbum(albumId) })
                     SquareIconButton(Icons.Rounded.MoreVert, "Album options", { menu = true })
                 }
             },

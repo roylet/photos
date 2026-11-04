@@ -63,7 +63,7 @@ fun LibraryScreen(onOpen: (LibraryEntry) -> Unit, modifier: Modifier = Modifier)
             item { Tile(Icons.Rounded.AutoAwesome, Brutal.Yellow, "Memories", "On this day, years ago") { onOpen(LibraryEntry.Memories) } }
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Tidy up", Modifier.padding(top = 12.dp)) }
             item { Tile(Icons.Rounded.Archive, Brutal.Sand, "Archive", "Hidden from Photos") { onOpen(LibraryEntry.Archive) } }
-            item { Tile(Icons.Rounded.Delete, Color(0xFFFFE1E3), "Trash", "Restore or delete for good") { onOpen(LibraryEntry.Trash) } }
+            item { Tile(Icons.Rounded.Delete, Color(0xFFFFE1E3), "Trash", "Restore or delete") { onOpen(LibraryEntry.Trash) } }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Pressable({ onOpen(LibraryEntry.Settings) }, Modifier.fillMaxWidth().padding(top = 12.dp)) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

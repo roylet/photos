@@ -15,7 +15,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -52,6 +51,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.ui.theme.Brutal
@@ -164,13 +170,14 @@ private val SheetShape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 fun BrutalSheet(visible: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val reduced = reducedMotion()
     BackHandler(enabled = visible, onBack = onDismiss)
-    Box(modifier.fillMaxSize()) {
+    var panel by remember { mutableStateOf(Rect.Zero) }
+    Box(modifier.fillMaxSize().dismissOutside(visible, { panel }, onDismiss)) {
         AnimatedVisibility(visible, enter = fadeIn(tween(if (reduced) 0 else 180)), exit = fadeOut(tween(if (reduced) 0 else 160))) {
-            Box(Modifier.fillMaxSize().background(Brutal.Ink.copy(alpha = 0.45f)).clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss))
+            Box(Modifier.fillMaxSize().background(Brutal.Ink.copy(alpha = 0.45f)))
         }
         AnimatedVisibility(
             visible,
-            Modifier.align(Alignment.BottomCenter),
+            Modifier.align(Alignment.BottomCenter).onGloballyPositioned { panel = it.boundsInParent() },
             enter = if (reduced) fadeIn(snap()) else slideInVertically(spring(dampingRatio = 0.74f, stiffness = Spring.StiffnessMediumLow)) { it },
             exit = if (reduced) fadeOut(snap()) else slideOutVertically(tween(200)) { it },
         ) {
@@ -181,8 +188,6 @@ fun BrutalSheet(visible: Boolean, onDismiss: () -> Unit, modifier: Modifier = Mo
                     .clip(SheetShape)
                     .background(Brutal.Paper, SheetShape)
                     .border(2.dp, Brutal.Ink, SheetShape)
-                    // Swallow taps so they don't reach the scrim.
-                    .clickable(remember { MutableInteractionSource() }, null) {}
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
             ) {
@@ -193,6 +198,21 @@ fun BrutalSheet(visible: Boolean, onDismiss: () -> Unit, modifier: Modifier = Mo
         }
     }
 }
+
+/**
+ * While [active], a tap outside [bounds] calls [onDismiss] and every touch is held here, so
+ * nothing under the overlay reacts. Taps the overlay's own controls consume never get here.
+ */
+private fun Modifier.dismissOutside(active: Boolean, bounds: () -> Rect, onDismiss: () -> Unit): Modifier =
+    if (!active) this else pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val inside = bounds().contains(down.position)
+            val up = waitForUpOrCancellation()
+            if (!inside && up != null && !bounds().contains(up.position)) onDismiss()
+            if (!inside) up?.consume()
+        }
+    }
 
 /* ---------------- Dialog ---------------- */
 
@@ -209,19 +229,20 @@ fun BrutalDialog(
 ) {
     val reduced = reducedMotion()
     BackHandler(enabled = visible, onBack = onDismiss)
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    var card by remember { mutableStateOf(Rect.Zero) }
+    Box(modifier.fillMaxSize().dismissOutside(visible, { card }, onDismiss), contentAlignment = Alignment.Center) {
         AnimatedVisibility(visible, enter = fadeIn(tween(if (reduced) 0 else 160)), exit = fadeOut(tween(if (reduced) 0 else 140))) {
-            Box(Modifier.fillMaxSize().background(Brutal.Ink.copy(alpha = 0.45f)).clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss))
+            Box(Modifier.fillMaxSize().background(Brutal.Ink.copy(alpha = 0.45f)))
         }
         AnimatedVisibility(
             visible,
+            Modifier.onGloballyPositioned { card = it.boundsInParent() },
             enter = if (reduced) fadeIn(snap()) else scaleIn(spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium), initialScale = 0.8f) + fadeIn(tween(120)),
             exit = if (reduced) fadeOut(snap()) else scaleOut(tween(120), targetScale = 0.92f) + fadeOut(tween(120)),
         ) {
             Column(
                 Modifier.padding(24.dp).widthIn(max = 420.dp).fillMaxWidth()
                     .brutal(Brutal.Card, shadow = 6.dp)
-                    .clickable(remember { MutableInteractionSource() }, null) {}
                     .windowInsetsPadding(WindowInsets.ime)
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),

@@ -86,7 +86,7 @@ class FakeLibrary : LibrarySource {
     override suspend fun mapMarkers(): List<MapMarker> = listOf(MapMarker("m-1", -42.88, 147.32, "Hobart"), MapMarker("m-2", 35.01, 135.76, "Kyoto"))
     override suspend fun assets(ids: List<String>): List<TimelineAsset> = ids.mapNotNull { id -> FakeGallery.buckets.flatMap { FakeGallery.assetsOf(it.key) }.firstOrNull { it.id == id } }
     override suspend fun memories(day: LocalDate): List<Memory> = listOf(1, 3, 6).mapIndexed { i, ago ->
-        Memory("mem-$i", day.year - ago, FakeGallery.assetsOf(FakeGallery.buckets[i + 2].key).take(6))
+        Memory("mem-$i", day.year - ago, FakeGallery.assetsOf(FakeGallery.buckets[i + 2].key).take(6).map { it.copy(fileCreatedAt = it.fileCreatedAt - ago * 31_557_600_000L) })
     }
     override suspend fun download(id: String, dir: File, onProgress: (Long, Long) -> Unit): File {
         record("download $id")

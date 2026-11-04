@@ -83,7 +83,7 @@ fun AlbumsScreen(
         Column(Modifier.fillMaxSize()) {
             ScreenHeader(
                 "Albums",
-                subtitle = albums?.let { list -> "${Format.plural(list.size, "album")} · ${Format.plural(list.count { it.shared }, "shared")}" },
+                subtitle = albums?.let { list -> "${Format.plural(list.size, "album")} · ${"${list.count { it.shared }} shared"}" },
                 actions = { if (actions != null) BrutalButton("New album", { creating = true }, icon = Icons.Rounded.Add) },
                 below = {
                     Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
