@@ -1,0 +1,86 @@
+package com.roylet.photos.data
+
+import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/** Which address the connection manager should use. AUTO picks the LAN address whenever it answers. */
+enum class ConnectionMode { AUTO, HOME, REMOTE }
+
+data class ServerConfig(
+    /** The address that works from anywhere, e.g. https://photos.example.com. */
+    val publicUrl: String,
+    /**
+     * The server's address on the home network, e.g. http://192.168.1.20:2283. Found automatically
+     * by the connection manager (or entered by hand) and preferred whenever it's reachable.
+     */
+    val localUrl: String? = null,
+    val apiKey: String,
+    /** `GET /users/me` id, used to prove a LAN address is the same server and account. */
+    val userId: String,
+    val email: String? = null,
+    val name: String? = null,
+    /** User override for the automatic LAN/public switch. */
+    val mode: ConnectionMode = ConnectionMode.AUTO,
+)
+
+class Settings(context: Context) {
+    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    private val _server = MutableStateFlow(readServer())
+    val server: StateFlow<ServerConfig?> = _server.asStateFlow()
+
+    fun saveServer(config: ServerConfig) {
+        prefs.edit()
+            .putString(KEY_PUBLIC, config.publicUrl)
+            .putString(KEY_LOCAL, config.localUrl)
+            .putString(KEY_API_KEY, config.apiKey)
+            .putString(KEY_USER_ID, config.userId)
+            .putString(KEY_EMAIL, config.email)
+            .putString(KEY_NAME, config.name)
+            .putString(KEY_MODE, config.mode.name)
+            .apply()
+        _server.value = config
+    }
+
+    /** Applies [change] to the saved server, if there is one. */
+    fun updateServer(change: (ServerConfig) -> ServerConfig) {
+        val current = _server.value ?: return
+        saveServer(change(current))
+    }
+
+    fun updateLocalUrl(localUrl: String?) = updateServer { it.copy(localUrl = localUrl?.trim()?.takeIf { url -> url.isNotEmpty() }) }
+
+    fun updateMode(mode: ConnectionMode) = updateServer { it.copy(mode = mode) }
+
+    fun signOut() {
+        prefs.edit().apply { SERVER_KEYS.forEach(::remove) }.apply()
+        _server.value = null
+    }
+
+    private fun readServer(): ServerConfig? {
+        val url = prefs.getString(KEY_PUBLIC, null) ?: return null
+        val key = prefs.getString(KEY_API_KEY, null) ?: return null
+        return ServerConfig(
+            publicUrl = url,
+            localUrl = prefs.getString(KEY_LOCAL, null),
+            apiKey = key,
+            userId = prefs.getString(KEY_USER_ID, null).orEmpty(),
+            email = prefs.getString(KEY_EMAIL, null),
+            name = prefs.getString(KEY_NAME, null),
+            mode = prefs.getString(KEY_MODE, null)?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() } ?: ConnectionMode.AUTO,
+        )
+    }
+
+    private companion object {
+        const val KEY_PUBLIC = "publicUrl"
+        const val KEY_LOCAL = "localUrl"
+        const val KEY_API_KEY = "apiKey"
+        const val KEY_USER_ID = "userId"
+        const val KEY_EMAIL = "email"
+        const val KEY_NAME = "name"
+        const val KEY_MODE = "connectionMode"
+        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE)
+    }
+}
