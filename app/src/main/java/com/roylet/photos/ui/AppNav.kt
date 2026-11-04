@@ -1,5 +1,7 @@
 package com.roylet.photos.ui
 
+import com.roylet.photos.editor.ui.EditorScreen
+
 import com.roylet.photos.ui.components.ConnectionChip
 
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -209,13 +211,17 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                 }
             }
         }
-        composable(Routes.EDIT, arguments = listOf(navArgument("assetId") { type = NavType.StringType })) {
-            // TODO(editor): replace with the photo editor.
-            PhotosTheme(dark = true) {
-                EmptyState(Icons.Rounded.Tune, "Editor", "The photo editor opens here.") {
-                    BrutalButton("Back", { nav.popBackStack() })
-                }
-            }
+        composable(Routes.EDIT, arguments = listOf(navArgument("assetId") { type = NavType.StringType })) { entry ->
+            val assetId = entry.arguments?.getString("assetId").orEmpty()
+            EditorScreen(
+                assetId = assetId,
+                onClose = { nav.popBackStack() },
+                onSaved = {
+                    // The timeline changed (new asset, maybe a trashed original): refresh caches and return to the viewer.
+                    container.timelines.invalidateAll()
+                    nav.popBackStack()
+                },
+            )
         }
         composable(Routes.ALBUMS) { AlbumsScreen(container) }
         composable(Routes.SEARCH) { SearchScreen(container) }

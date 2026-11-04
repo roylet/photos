@@ -6,6 +6,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
 import com.roylet.photos.domain.timeline.TimelineRegistry
+import com.roylet.photos.editor.save.EditSaveManager
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichTimelineSource
 import com.roylet.photos.net.AndroidNetworkEnvironment
@@ -57,6 +58,9 @@ class AppContainer(context: Context) {
      * "logical" address); [http] rewrites each request to whichever address is active.
      */
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }
+
+    /** Photo-editor saves (WorkManager jobs) and the viewer's "Original moved to Trash · UNDO". */
+    val edits: EditSaveManager by lazy { EditSaveManager(app) { api() } }
 
     companion object {
         /**

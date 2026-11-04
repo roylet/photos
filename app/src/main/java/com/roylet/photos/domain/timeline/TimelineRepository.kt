@@ -156,4 +156,8 @@ class TimelineRegistry(
 
     @Synchronized
     fun clear() = repos.clear()
+
+    /** Re-fetches every live timeline in place (screens keep their repository instances), e.g. after an edit was saved. */
+    @Synchronized
+    fun invalidateAll() = repos.values.forEach { it.refresh(keepLoaded = true) }
 }
