@@ -1,6 +1,8 @@
 package com.roylet.photos.editor.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -139,6 +141,7 @@ fun EditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId: Str
     LaunchedEffect(save) {
         (save as? SaveProgress.Done)?.let { onSaved(it.result.newAssetId) }
     }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     PhotosTheme(dark = true) {
         when (val p = phase) {
@@ -157,13 +160,22 @@ fun EditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId: Str
             is EditorPhase.Ready -> EditorWorkspace(
                 session = p.session,
                 onClose = onClose,
-                onSave = vm::save,
+                onSave = { mode, group ->
+                    // Android 13+: without this the progress and "saved/failed" notifications are hidden.
+                    if (needsNotificationPermission(app)) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    vm.save(mode, group)
+                },
                 saveProgress = save,
                 onDismissSaveError = vm::clearSave,
             )
         }
     }
 }
+
+private fun needsNotificationPermission(context: android.content.Context): Boolean =
+    android.os.Build.VERSION.SDK_INT >= 33 &&
+        androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+        android.content.pm.PackageManager.PERMISSION_GRANTED
 
 /**
  * The editor UI for an open [session]. Stateless apart from UI choices, so screenshot tests can
