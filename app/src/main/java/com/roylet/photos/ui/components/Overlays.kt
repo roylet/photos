@@ -61,6 +61,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.delay
 
@@ -132,26 +133,28 @@ fun BrutalSnackbarHost(controller: SnackbarController, modifier: Modifier = Modi
 
 @Composable
 fun SnackbarCard(data: SnackbarData, onAction: () -> Unit, modifier: Modifier = Modifier) {
+    // Inverted: an ink bar with paper text (cream bar, near-black text in dark mode).
+    val c = Palette.current
     Row(
         modifier
             .widthIn(max = 520.dp)
             .fillMaxWidth()
-            .brutal(Brutal.Ink, shadow = 4.dp, shadowColor = if (data.tone == SnackTone.Error) Brutal.Red else Brutal.Orange)
+            .brutal(c.ink, shadow = 4.dp, border = c.border, shadowColor = if (data.tone == SnackTone.Error) Brutal.Red else Brutal.Orange)
             .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
             .height(44.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when (data.tone) {
-            SnackTone.Success -> Icon(Icons.Rounded.CheckCircle, null, tint = Brutal.Mint, modifier = Modifier.size(20.dp).padding(end = 0.dp))
+            SnackTone.Success -> Icon(Icons.Rounded.CheckCircle, null, tint = c.snackSuccess, modifier = Modifier.size(20.dp).padding(end = 0.dp))
             SnackTone.Error -> Icon(Icons.Rounded.ErrorOutline, null, tint = Brutal.Red, modifier = Modifier.size(20.dp))
             SnackTone.Info -> Unit
         }
         if (data.tone != SnackTone.Info) Spacer(Modifier.width(10.dp))
-        Text(data.message, style = Type.Label, color = Brutal.Paper, maxLines = 2, modifier = Modifier.weight(1f))
+        Text(data.message, style = Type.Label, color = c.paper, maxLines = 2, modifier = Modifier.weight(1f))
         if (data.actionLabel != null) {
             Box(
                 Modifier.clip(BrutalShape).clickable(onClick = onAction).background(Brutal.Orange, BrutalShape)
-                    .border(2.dp, Brutal.Paper, BrutalShape).padding(horizontal = 12.dp, vertical = 7.dp),
+                    .border(2.dp, c.paper, BrutalShape).padding(horizontal = 12.dp, vertical = 7.dp),
             ) { Text(data.actionLabel.uppercase(), style = Type.Label, color = Brutal.Ink) }
         }
     }
@@ -173,7 +176,7 @@ fun BrutalSheet(visible: Boolean, onDismiss: () -> Unit, modifier: Modifier = Mo
     var panel by remember { mutableStateOf(Rect.Zero) }
     Box(modifier.fillMaxSize().dismissOutside(visible, { panel }, onDismiss)) {
         AnimatedVisibility(visible, enter = fadeIn(tween(if (reduced) 0 else 180)), exit = fadeOut(tween(if (reduced) 0 else 160))) {
-            Box(Modifier.fillMaxSize().background(Brutal.Ink.copy(alpha = 0.45f)))
+            Box(Modifier.fillMaxSize().background(Palette.scrim))
         }
         AnimatedVisibility(
             visible,
@@ -186,12 +189,12 @@ fun BrutalSheet(visible: Boolean, onDismiss: () -> Unit, modifier: Modifier = Mo
                     .widthIn(max = 640.dp)
                     .fillMaxWidth()
                     .clip(SheetShape)
-                    .background(Brutal.Paper, SheetShape)
-                    .border(2.dp, Brutal.Ink, SheetShape)
+                    .background(Palette.paper, SheetShape)
+                    .border(2.dp, Palette.border, SheetShape)
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
             ) {
-                Box(Modifier.align(Alignment.CenterHorizontally).size(44.dp, 5.dp).background(Brutal.Ink, RoundedCornerShape(50)))
+                Box(Modifier.align(Alignment.CenterHorizontally).size(44.dp, 5.dp).background(Palette.ink, RoundedCornerShape(50)))
                 Spacer(Modifier.height(12.dp))
                 content()
             }
@@ -232,7 +235,7 @@ fun BrutalDialog(
     var card by remember { mutableStateOf(Rect.Zero) }
     Box(modifier.fillMaxSize().dismissOutside(visible, { card }, onDismiss), contentAlignment = Alignment.Center) {
         AnimatedVisibility(visible, enter = fadeIn(tween(if (reduced) 0 else 160)), exit = fadeOut(tween(if (reduced) 0 else 140))) {
-            Box(Modifier.fillMaxSize().background(Brutal.Ink.copy(alpha = 0.45f)))
+            Box(Modifier.fillMaxSize().background(Palette.scrim))
         }
         AnimatedVisibility(
             visible,
@@ -242,13 +245,13 @@ fun BrutalDialog(
         ) {
             Column(
                 Modifier.padding(24.dp).widthIn(max = 420.dp).fillMaxWidth()
-                    .brutal(Brutal.Card, shadow = 6.dp)
+                    .brutal(Palette.card, shadow = 6.dp)
                     .windowInsetsPadding(WindowInsets.ime)
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(title, style = Type.Headline, color = Brutal.Ink)
-                if (text != null) Text(text, style = Type.Body, color = Brutal.MutedInk)
+                Text(title, style = Type.Headline, color = Palette.ink)
+                if (text != null) Text(text, style = Type.Body, color = Palette.mutedInk)
                 content?.invoke(this)
                 Spacer(Modifier.height(2.dp))
                 Box(Modifier.fillMaxWidth(), content = buttons)
@@ -274,8 +277,8 @@ fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boo
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = Type.Title.copy(fontSize = Type.Body.fontSize), color = Brutal.Ink)
-            if (subtitle != null) Text(subtitle, style = Type.Small, color = Brutal.MutedInk)
+            Text(title, style = Type.Title.copy(fontSize = Type.Body.fontSize), color = Palette.ink)
+            if (subtitle != null) Text(subtitle, style = Type.Small, color = Palette.mutedInk)
         }
         BrutalSwitch(checked)
     }
@@ -287,9 +290,9 @@ fun BrutalSwitch(checked: Boolean, modifier: Modifier = Modifier) {
     val reduced = reducedMotion()
     val x by androidx.compose.animation.core.animateDpAsState(if (checked) 22.dp else 2.dp, if (reduced) snap() else spring(dampingRatio = 0.6f), label = "knob")
     Box(
-        modifier.size(48.dp, 28.dp).background(if (checked) Brutal.Orange else Brutal.Sand, RoundedCornerShape(50)).border(2.dp, Brutal.Ink, RoundedCornerShape(50)),
+        modifier.size(48.dp, 28.dp).background(if (checked) Brutal.Orange else Palette.sand, RoundedCornerShape(50)).border(2.dp, Palette.border, RoundedCornerShape(50)),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Box(Modifier.padding(start = x).size(20.dp).background(Brutal.Card, RoundedCornerShape(50)).border(2.dp, Brutal.Ink, RoundedCornerShape(50)))
+        Box(Modifier.padding(start = x).size(20.dp).background(Palette.card, RoundedCornerShape(50)).border(2.dp, Palette.border, RoundedCornerShape(50)))
     }
 }

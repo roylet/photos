@@ -74,6 +74,7 @@ import com.roylet.photos.ui.gallery.SelectionTopBar
 import com.roylet.photos.ui.gallery.DefaultSelectionActions
 import com.roylet.photos.ui.gallery.TimelineGrid
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 
@@ -96,7 +97,7 @@ fun SearchScreen(
     val done = result as? SearchResult.Done
     val timeline = done?.let { remember(it.filter) { timelineFor(it.filter) } }
 
-    Column(modifier.fillMaxSize().background(Brutal.Paper)) {
+    Column(modifier.fillMaxSize().background(Palette.paper)) {
         if (selection.active && timeline != null) {
             SelectionTopBar(selection.ids.size, onClose = selection::clear) {
                 DefaultSelectionActions(SelectionScope(selection.ids.toList(), timeline, selection::clear))
@@ -117,7 +118,7 @@ fun SearchScreen(
                 is SearchResult.Loading -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     BrutalSpinner(size = 32.dp)
                     Spacer(Modifier.height(12.dp))
-                    Text("Looking for “${result.query.label}”…", style = Type.Body, color = Brutal.MutedInk)
+                    Text("Looking for “${result.query.label}”…", style = Type.Body, color = Palette.mutedInk)
                 }
                 is SearchResult.Failed -> EmptyState(Icons.Rounded.CloudOff, "Search failed", result.message) {
                     BrutalButton("Try again", { model.submit(result.query) })
@@ -138,22 +139,22 @@ private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () 
         value = value,
         onValueChange = onChange,
         singleLine = true,
-        textStyle = Type.Body.copy(color = Brutal.Ink),
+        textStyle = Type.Body.copy(color = Palette.ink),
         cursorBrush = SolidColor(Brutal.Orange),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { onSearch() }),
         modifier = modifier.fillMaxWidth(),
         decorationBox = { inner ->
             Row(Modifier.fillMaxWidth().brutal(shadow = 3.dp).padding(start = 14.dp, end = 6.dp).height(50.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Search, null, tint = Brutal.Ink, modifier = Modifier.size(20.dp))
+                Icon(Icons.Rounded.Search, null, tint = Palette.ink, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
                 Box(Modifier.weight(1f)) {
-                    if (value.isEmpty()) Text("Beach at sunset, red car, birthday cake…", style = Type.Body, color = Brutal.MutedInk.copy(alpha = 0.7f), maxLines = 1)
+                    if (value.isEmpty()) Text("Beach at sunset, red car, birthday cake…", style = Type.Body, color = Palette.mutedInk.copy(alpha = 0.7f), maxLines = 1)
                     inner()
                 }
                 if (value.isNotEmpty()) {
                     Box(Modifier.size(38.dp).clip(CircleShape).clickable(onClick = onClear), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Close, "Clear", tint = Brutal.Ink, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.Close, "Clear", tint = Palette.ink, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -214,13 +215,13 @@ fun PersonBubble(person: Person, size: androidx.compose.ui.unit.Dp, modifier: Mo
     val urls = LocalMediaUrls.current
     val px = with(LocalDensity.current) { size.roundToPx() }
     Column(modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(size).clip(CircleShape).background(Brutal.Lilac, CircleShape).border(2.dp, Brutal.Ink, CircleShape), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.Person, null, tint = Brutal.Ink.copy(alpha = 0.5f), modifier = Modifier.size(size * 0.5f))
+        Box(Modifier.size(size).clip(CircleShape).background(Palette.lilac, CircleShape).border(2.dp, Palette.ink, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Person, null, tint = Palette.ink.copy(alpha = 0.5f), modifier = Modifier.size(size * 0.5f))
             AssetImage(urls.person(person.id), null, px, px, Modifier.matchParentSize(), placeholderColor = Color.Transparent)
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            person.name.ifBlank { "Add a name" }, style = Type.Label, color = if (person.name.isBlank()) Brutal.MutedInk else Brutal.Ink,
+            person.name.ifBlank { "Add a name" }, style = Type.Label, color = if (person.name.isBlank()) Palette.mutedInk else Palette.ink,
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.width(size + 12.dp),
         )
     }

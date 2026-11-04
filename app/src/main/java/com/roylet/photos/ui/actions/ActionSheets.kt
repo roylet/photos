@@ -75,6 +75,7 @@ import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.gallery.AssetImage
 import com.roylet.photos.ui.gallery.LocalMediaUrls
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 
@@ -97,8 +98,8 @@ fun ActionSheets(actions: LibraryActions, modifier: Modifier = Modifier) {
 @Composable
 private fun SheetTitle(title: String, subtitle: String?) {
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(title, style = Type.Headline, color = Brutal.Ink, modifier = Modifier.weight(1f))
-        if (subtitle != null) Text(subtitle.uppercase(), style = Type.Tiny, color = Brutal.MutedInk, modifier = Modifier.padding(bottom = 4.dp))
+        Text(title, style = Type.Headline, color = Palette.ink, modifier = Modifier.weight(1f))
+        if (subtitle != null) Text(subtitle.uppercase(), style = Type.Tiny, color = Palette.mutedInk, modifier = Modifier.padding(bottom = 4.dp))
     }
 }
 
@@ -150,7 +151,7 @@ fun AddToAlbumContent(actions: LibraryActions, sheet: ActionSheet.AddToAlbum) {
     if (shown.isEmpty()) {
         Text(
             if (list.isEmpty()) "No albums yet. Make one with New album." else "No album called “${query.trim()}”.",
-            style = Type.Body, color = Brutal.MutedInk, modifier = Modifier.padding(vertical = 24.dp),
+            style = Type.Body, color = Palette.mutedInk, modifier = Modifier.padding(vertical = 24.dp),
         )
         return
     }
@@ -182,9 +183,9 @@ private fun AlbumPickRow(album: Album, checked: Boolean, onClick: () -> Unit) {
         AlbumThumb(album.coverAssetId, 52.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(album.name, style = Type.Title, color = Brutal.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(album.name, style = Type.Title, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val meta = listOfNotNull(Format.plural(album.assetCount, "item"), if (album.shared) "Shared" else null).joinToString(" · ")
-            Text(meta, style = Type.Small, color = Brutal.MutedInk, maxLines = 1)
+            Text(meta, style = Type.Small, color = Palette.mutedInk, maxLines = 1)
         }
         BrutalCheck(checked, Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }, size = 28.dp)
         Spacer(Modifier.width(4.dp))
@@ -197,9 +198,9 @@ fun AlbumThumb(coverId: String?, size: androidx.compose.ui.unit.Dp, modifier: Mo
     val urls = LocalMediaUrls.current
     val px = with(LocalDensity.current) { size.roundToPx() }
     val shape = RoundedCornerShape(6.dp)
-    Box(modifier.size(size).clip(shape).background(Brutal.Lilac, shape).border(2.dp, Brutal.Ink, shape), contentAlignment = Alignment.Center) {
+    Box(modifier.size(size).clip(shape).background(Palette.lilac, shape).border(2.dp, Palette.ink, shape), contentAlignment = Alignment.Center) {
         if (coverId != null) AssetImage(urls.thumbnail(coverId), null, px, px, Modifier.matchParentSize())
-        else Icon(Icons.Rounded.PhotoAlbum, null, tint = Brutal.Ink, modifier = Modifier.size(size * 0.45f))
+        else Icon(Icons.Rounded.PhotoAlbum, null, tint = Palette.ink, modifier = Modifier.size(size * 0.45f))
     }
 }
 
@@ -228,12 +229,12 @@ fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
 
 @Composable
 private fun ModeTile(icon: ImageVector, title: String, subtitle: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    Pressable(onClick, modifier, fill = if (selected) Brutal.Orange else Brutal.Card, shadow = if (selected) 4.dp else 3.dp, enabled = enabled) {
+    Pressable(onClick, modifier, fill = if (selected) Brutal.Orange else Palette.card, shadow = if (selected) 4.dp else 3.dp, enabled = enabled) {
         Column(Modifier.padding(12.dp)) {
-            Icon(icon, null, tint = Brutal.Ink, modifier = Modifier.size(24.dp))
+            Icon(icon, null, tint = if (selected) Brutal.Ink else Palette.ink, modifier = Modifier.size(24.dp))
             Spacer(Modifier.height(8.dp))
-            Text(title.uppercase(), style = Type.Label, color = Brutal.Ink)
-            Text(subtitle, style = Type.Small, color = if (selected) Brutal.Ink else Brutal.MutedInk, maxLines = 2)
+            Text(title.uppercase(), style = Type.Label, color = if (selected) Brutal.Ink else Palette.ink)
+            Text(subtitle, style = Type.Small, color = if (selected) Brutal.Ink else Palette.mutedInk, maxLines = 2)
         }
     }
 }
@@ -245,14 +246,14 @@ private fun SendFilePane(actions: LibraryActions, ids: List<String>) {
         Text(
             if (ids.size == 1) "Downloads the full-quality original, then opens Android's share sheet."
             else "Downloads ${ids.size} full-quality originals, then shares them together.",
-            style = Type.Small, color = Brutal.MutedInk,
+            style = Type.Small, color = Palette.mutedInk,
         )
         Spacer(Modifier.height(14.dp))
         BrutalButton("Send ${Format.plural(ids.size, "file")}", { actions.sendFiles(ids) }, icon = Icons.Rounded.Share, large = true, modifier = Modifier.fillMaxWidth())
     } else {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("DOWNLOADING ${minOf(t.done + 1, t.count)} OF ${t.count}", style = Type.Label, color = Brutal.Ink, modifier = Modifier.weight(1f))
-            if (t.totalBytes > 0) Text("${Format.bytes(t.bytes)} / ${Format.bytes(t.totalBytes)}", style = Type.Small, color = Brutal.MutedInk)
+            Text("DOWNLOADING ${minOf(t.done + 1, t.count)} OF ${t.count}", style = Type.Label, color = Palette.ink, modifier = Modifier.weight(1f))
+            if (t.totalBytes > 0) Text("${Format.bytes(t.bytes)} / ${Format.bytes(t.totalBytes)}", style = Type.Small, color = Palette.mutedInk)
         }
         Spacer(Modifier.height(8.dp))
         BrutalProgress(t.fraction, moving = true)
@@ -265,11 +266,11 @@ private fun SendFilePane(actions: LibraryActions, ids: List<String>) {
 private fun LinkPane(actions: LibraryActions, sheet: ActionSheet.Share) {
     when (val l = actions.link) {
         is LinkState.Ready -> {
-            Text("YOUR LINK", style = Type.Tiny, color = Brutal.MutedInk)
+            Text("YOUR LINK", style = Type.Tiny, color = Palette.mutedInk)
             Spacer(Modifier.height(6.dp))
             Text(
-                l.url, style = Type.Body.copy(fontFamily = FontFamily.Monospace), color = Brutal.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().brutal(Brutal.Sand, shadow = 0.dp).padding(12.dp),
+                l.url, style = Type.Body.copy(fontFamily = FontFamily.Monospace), color = Palette.ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().brutal(Palette.sand, shadow = 0.dp).padding(12.dp),
             )
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -282,7 +283,7 @@ private fun LinkPane(actions: LibraryActions, sheet: ActionSheet.Share) {
             var download by remember { mutableStateOf(true) }
             var metadata by remember { mutableStateOf(true) }
             var password by remember { mutableStateOf("") }
-            Text("EXPIRES", style = Type.Tiny, color = Brutal.MutedInk)
+            Text("EXPIRES", style = Type.Tiny, color = Palette.mutedInk)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 expiryChoices.forEach { (label, days) -> Chip(label, selected = expiry == days, onClick = { expiry = days }) }

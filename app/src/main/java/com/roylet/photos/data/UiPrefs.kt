@@ -6,7 +6,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** Small UI memories: the last share option, album sort, recent searches. In-memory when [context] is null (tests). */
+/** The Appearance setting: follow the system, or force the light or dark palette. */
+enum class ThemeMode { System, Light, Dark }
+
+/** Small UI memories: the last share option, album sort, recent searches, appearance. In-memory when [context] is null (tests). */
 class UiPrefs(context: Context?) {
     private val prefs: SharedPreferences? = context?.getSharedPreferences("ui", Context.MODE_PRIVATE)
 
@@ -19,6 +22,16 @@ class UiPrefs(context: Context?) {
         get() = prefs?.getString("albumSort", null) ?: memSort
         set(v) { memSort = v; prefs?.edit()?.putString("albumSort", v)?.apply() }
     private var memSort = "Recent"
+
+    private val _theme = MutableStateFlow(
+        prefs?.getString("themeMode", null)?.let { v -> ThemeMode.entries.firstOrNull { it.name == v } } ?: ThemeMode.System,
+    )
+    val themeMode: StateFlow<ThemeMode> = _theme.asStateFlow()
+
+    fun setThemeMode(mode: ThemeMode) {
+        _theme.value = mode
+        prefs?.edit()?.putString("themeMode", mode.name)?.apply()
+    }
 
     private val _recent = MutableStateFlow(prefs?.getString("recentSearches", null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList())
     val recentSearches: StateFlow<List<String>> = _recent.asStateFlow()

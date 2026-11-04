@@ -1,5 +1,6 @@
 package com.roylet.photos.ui.gallery
 
+import com.roylet.photos.ui.theme.Palette
 import android.graphics.Bitmap
 import android.util.LruCache
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -102,7 +103,7 @@ fun AssetImage(
     heightPx: Int,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
-    placeholderColor: Color = Color(0xFFE9DFCC),
+    placeholderColor: Color = Palette.placeholder,
     crossfadeMs: Int = 160,
 ) {
     val context = LocalContext.current

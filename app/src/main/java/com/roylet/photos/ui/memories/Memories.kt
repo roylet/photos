@@ -66,6 +66,7 @@ import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.gallery.AssetImage
 import com.roylet.photos.ui.gallery.LocalMediaUrls
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.BrutalDark
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
@@ -76,11 +77,11 @@ import java.time.LocalDate
 fun MemoriesCarousel(memories: List<Memory>, onOpen: (Int) -> Unit, modifier: Modifier = Modifier, today: LocalDate = LocalDate.now()) {
     val urls = LocalMediaUrls.current
     val px = LocalDensity.current
-    Column(modifier.fillMaxWidth().background(Brutal.Paper).padding(top = 14.dp, bottom = 10.dp)) {
+    Column(modifier.fillMaxWidth().background(Palette.paper).padding(top = 14.dp, bottom = 10.dp)) {
         Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.AutoAwesome, null, tint = Brutal.Orange, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("ON THIS DAY", style = Type.Label, color = Brutal.Ink)
+            Text("ON THIS DAY", style = Type.Label, color = Palette.ink)
         }
         Spacer(Modifier.height(10.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

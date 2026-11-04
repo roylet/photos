@@ -39,6 +39,7 @@ import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.domain.timeline.TimelineSnapshot
 import com.roylet.photos.ui.components.SquareIconButton
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.Animatable
@@ -101,12 +102,13 @@ class SelectionScope(val ids: List<String>, val timeline: TimelineRepository?, v
 /** Top bar shown instead of the screen header while assets are selected. */
 @Composable
 fun SelectionTopBar(count: Int, onClose: () -> Unit, actions: @Composable RowScope.() -> Unit) {
+    val rule = Palette.border
     Row(
         Modifier
             .fillMaxWidth()
             .background(Brutal.Orange)
             .windowInsetsPadding(WindowInsets.statusBars)
-            .drawBehind { drawLine(Brutal.Ink, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
+            .drawBehind { drawLine(rule, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -152,7 +154,7 @@ fun RowScope.DefaultSelectionActions(scope: SelectionScope, actions: AssetAction
     SquareIconButton(if (unarchive) Icons.Rounded.Unarchive else Icons.Rounded.Archive, if (unarchive) "Unarchive" else "Archive", {
         actions.archive(scope.ids, scope.timeline); scope.clear()
     })
-    SquareIconButton(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() }, fill = Brutal.Card)
+    SquareIconButton(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() }, fill = Palette.card)
 }
 
 /** Heart button for the light selection bar: pops (overshoot + an orange burst ring) when turned on. */
@@ -169,11 +171,12 @@ fun FavoritePopButton(favorite: Boolean, onClick: () -> Unit) {
         }
         last = favorite
     }
+    val ringColor = Palette.ink
     Box(contentAlignment = Alignment.Center) {
         Box(
             Modifier.size(43.dp).drawBehind {
                 val t = ring.value
-                if (t < 1f) drawCircle(Brutal.Ink.copy(alpha = 1f - t), radius = size.minDimension * (0.4f + 0.7f * t), style = Stroke(3.dp.toPx() * (1f - t) + 1f))
+                if (t < 1f) drawCircle(ringColor.copy(alpha = 1f - t), radius = size.minDimension * (0.4f + 0.7f * t), style = Stroke(3.dp.toPx() * (1f - t) + 1f))
             },
         )
         Box(Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }) {
@@ -181,7 +184,7 @@ fun FavoritePopButton(favorite: Boolean, onClick: () -> Unit) {
                 if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 if (favorite) "Unfavourite" else "Favourite",
                 onClick,
-                fill = if (favorite) Brutal.Yellow else Brutal.Card,
+                fill = if (favorite) Palette.yellow else Palette.card,
             )
         }
     }

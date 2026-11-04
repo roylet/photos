@@ -30,6 +30,7 @@ import com.roylet.photos.ui.components.EmptyState
 import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.search.PersonBubble
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.util.Format
 
 /** Faces Immich recognised, named ones first; tap for that person's timeline. */
@@ -42,7 +43,7 @@ fun PeopleScreen(library: () -> LibrarySource, onPerson: (Person) -> Unit, onBac
         error = null
         runCatching { library().people() }.onSuccess { people = it }.onFailure { error = ImmichApi.describe(it) }
     }
-    Column(modifier.fillMaxSize().background(Brutal.Paper)) {
+    Column(modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("People", subtitle = people?.let { list -> Format.plural(list.count { it.name.isNotBlank() }, "named person", "named people") }, onBack = onBack)
         val list = people
         when {

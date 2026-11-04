@@ -31,6 +31,7 @@ import com.roylet.photos.ui.gallery.LocalAssetActions
 import com.roylet.photos.ui.gallery.SelectionScope
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.util.Format
 
 /** Trash: restore some or all, or delete for good (with a confirmation). */
@@ -68,7 +69,7 @@ fun TrashScreen(
             headerActions = {
                 if (actions != null && count > 0) {
                     SquareIconButton(Icons.Rounded.RestoreFromTrash, "Restore all", { actions.restoreAll(timeline) })
-                    SquareIconButton(Icons.Rounded.DeleteForever, "Empty trash", { confirmEmpty = true }, fill = Brutal.Red)
+                    SquareIconButton(Icons.Rounded.DeleteForever, "Empty trash", { confirmEmpty = true }, fill = Palette.red)
                 }
             },
             selectionActions = { scope -> TrashSelectionActions(scope) { confirmDelete = scope } },
@@ -100,5 +101,5 @@ fun TrashScreen(
 @Composable
 private fun RowScope.TrashSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current, onDelete: () -> Unit) {
     SquareIconButton(Icons.Rounded.RestoreFromTrash, "Restore", { actions.restore(scope.ids, scope.timeline); scope.clear() })
-    SquareIconButton(Icons.Rounded.DeleteForever, "Delete for good", onDelete, fill = Brutal.Red)
+    SquareIconButton(Icons.Rounded.DeleteForever, "Delete for good", onDelete, fill = Palette.red)
 }

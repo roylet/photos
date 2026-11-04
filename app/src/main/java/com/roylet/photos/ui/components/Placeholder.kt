@@ -18,21 +18,22 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 /** Centered "nothing here yet" block: a big icon badge, a title and a line of text. */
 @Composable
 fun EmptyState(icon: ImageVector, title: String, text: String, modifier: Modifier = Modifier, actions: (@Composable ColumnScope.() -> Unit)? = null) {
     Column(
-        modifier.fillMaxSize().background(Brutal.Paper).padding(24.dp),
+        modifier.fillMaxSize().background(Palette.paper).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        IconBadge(icon, fill = Brutal.Peach, size = 72.dp)
+        IconBadge(icon, fill = Palette.peach, size = 72.dp)
         Spacer(Modifier.height(18.dp))
-        Text(title, style = Type.Headline, color = Brutal.Ink, textAlign = TextAlign.Center)
+        Text(title, style = Type.Headline, color = Palette.ink, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
-        Text(text, style = Type.Body, color = Brutal.MutedInk, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 360.dp))
+        Text(text, style = Type.Body, color = Palette.mutedInk, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 360.dp))
         if (actions != null) {
             Spacer(Modifier.height(18.dp))
             Column(Modifier.widthIn(max = 320.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp), content = actions)

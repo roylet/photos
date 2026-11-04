@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.roylet.photos.ui.components.brutal
 import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -119,12 +120,12 @@ internal fun TimelineScrubber(
             }
             years.forEach { (year, y) ->
                 Text(
-                    year.toString(), style = Type.Tiny, color = Brutal.Ink,
+                    year.toString(), style = Type.Tiny, color = Palette.ink,
                     modifier = Modifier.align(Alignment.TopEnd)
                         .offset { IntOffset(0, (y + thumbHalf).roundToInt() - 7.dp.roundToPx()) }
                         .padding(end = ThumbWidth + 16.dp)
-                        .background(Brutal.Paper, RoundedCornerShape(4.dp))
-                        .border(1.5.dp, Brutal.Ink, RoundedCornerShape(4.dp))
+                        .background(Palette.paper, RoundedCornerShape(4.dp))
+                        .border(1.5.dp, Palette.border, RoundedCornerShape(4.dp))
                         .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
             }
@@ -184,8 +185,8 @@ internal fun TimelineScrubber(
                         .padding(end = ThumbWidth + 22.dp),
                 ) {
                     Text(
-                        monthLabel(b, compact = true), style = Type.Title, color = Brutal.Ink,
-                        modifier = Modifier.brutal(Brutal.Card, shadow = 4.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                        monthLabel(b, compact = true), style = Type.Title, color = Palette.ink,
+                        modifier = Modifier.brutal(Palette.card, shadow = 4.dp).padding(horizontal = 14.dp, vertical = 8.dp),
                     )
                 }
             }

@@ -23,6 +23,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AutoMode
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.BrightnessAuto
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Person
@@ -64,7 +67,9 @@ import com.roylet.photos.ui.components.NoticeTone
 import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.SectionLabel
 import com.roylet.photos.ui.components.Tag
+import com.roylet.photos.data.ThemeMode
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.launch
 
@@ -75,6 +80,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
     val activeUrl by container.connection.activeUrl.collectAsState()
     val scan by container.connection.scan.collectAsState()
     val check by container.connection.check.collectAsState()
+    val theme by container.uiPrefs.themeMode.collectAsState()
     SettingsContent(
         server = server,
         state = state,
@@ -87,6 +93,8 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
         onSaveLocal = container.connection::setLocalUrl,
         onScan = container.connection::rescan,
         onSignOut = container.settings::signOut,
+        theme = theme,
+        onTheme = container.uiPrefs::setThemeMode,
     )
 }
 
@@ -107,15 +115,18 @@ fun SettingsContent(
     onSaveLocal: suspend (String?) -> LocalUrlResult,
     onScan: () -> Unit,
     onSignOut: () -> Unit,
+    /** The Appearance choice; switching it re-themes the whole app at once. */
+    theme: ThemeMode = ThemeMode.System,
+    onTheme: (ThemeMode) -> Unit = {},
 ) {
-    Column(Modifier.fillMaxSize().background(Brutal.Paper)) {
+    Column(Modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Settings", onBack = onBack, actions = { ConnectionChip(state) })
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).windowInsetsPadding(WindowInsets.navigationBars),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (server == null) {
-                BrutalCard(Modifier.fillMaxWidth()) { Text("Not connected", style = Type.Title, color = Brutal.Ink) }
+                BrutalCard(Modifier.fillMaxWidth()) { Text("Not connected", style = Type.Title, color = Palette.ink) }
                 return@Column
             }
 
@@ -123,8 +134,8 @@ fun SettingsContent(
             BrutalCard(Modifier.fillMaxWidth().animateContentSize()) {
                 UrlField(
                     tag = "Public",
-                    tagFill = Brutal.Blue,
-                    tagInk = Brutal.Card,
+                    tagFill = Palette.blue,
+                    tagInk = Palette.onStrong,
                     value = server.publicUrl,
                     empty = "",
                     active = state != ConnState.Offline && activeUrl == server.publicUrl,
@@ -139,8 +150,8 @@ fun SettingsContent(
                 Spacer(Modifier.height(16.dp))
                 UrlField(
                     tag = "Home network",
-                    tagFill = Brutal.Mint,
-                    tagInk = Brutal.Ink,
+                    tagFill = Palette.mint,
+                    tagInk = Palette.ink,
                     value = server.localUrl,
                     empty = "Not found yet",
                     active = state == ConnState.Home && activeUrl == server.localUrl,
@@ -176,24 +187,24 @@ fun SettingsContent(
                     ConnectionMode.REMOTE -> "Always uses the public address, even at home."
                 },
                 style = Type.Small,
-                color = Brutal.MutedInk,
+                color = Palette.mutedInk,
             )
 
             BrutalCard(Modifier.fillMaxWidth().animateContentSize()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Radar, fill = Brutal.Mint, size = 40.dp)
+                    IconBadge(Icons.Rounded.Radar, fill = Palette.mint, size = 40.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Find on this network", style = Type.Title, color = Brutal.Ink)
-                        Text("Looks for your server on the Wi-Fi you're on.", style = Type.Small, color = Brutal.MutedInk)
+                        Text("Find on this network", style = Type.Title, color = Palette.ink)
+                        Text("Looks for your server on the Wi-Fi you're on.", style = Type.Small, color = Palette.mutedInk)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
                 when (scan) {
                     is ScanState.Running -> {
-                        BrutalProgress(if (scan.total == 0) 0f else scan.done.toFloat() / scan.total, fill = Brutal.Mint, moving = true)
+                        BrutalProgress(if (scan.total == 0) 0f else scan.done.toFloat() / scan.total, fill = Palette.mint, moving = true)
                         Spacer(Modifier.height(6.dp))
-                        Text("Checked ${scan.done} of ${scan.total} addresses…", style = Type.Small, color = Brutal.MutedInk)
+                        Text("Checked ${scan.done} of ${scan.total} addresses…", style = Type.Small, color = Palette.mutedInk)
                     }
                     is ScanState.Found -> Notice("Found your server at ${scan.url}", NoticeTone.Success, Icons.Rounded.CheckCircle)
                     ScanState.NotFound -> Notice("Didn't find your server on this network. Check it's on port 2283, or enter the address above.", NoticeTone.Warning, Icons.Rounded.WarningAmber)
@@ -217,14 +228,31 @@ fun SettingsContent(
             }
 
             Spacer(Modifier.height(4.dp))
+            SectionLabel("Appearance")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("System", selected = theme == ThemeMode.System, onClick = { onTheme(ThemeMode.System) }, icon = Icons.Rounded.BrightnessAuto)
+                Chip("Light", selected = theme == ThemeMode.Light, onClick = { onTheme(ThemeMode.Light) }, icon = Icons.Rounded.LightMode)
+                Chip("Dark", selected = theme == ThemeMode.Dark, onClick = { onTheme(ThemeMode.Dark) }, icon = Icons.Rounded.DarkMode)
+            }
+            Text(
+                when (theme) {
+                    ThemeMode.System -> "Follows your phone's dark theme setting."
+                    ThemeMode.Light -> "Cream paper, always."
+                    ThemeMode.Dark -> "Dark paper, always. Photos and the editor are always dark."
+                },
+                style = Type.Small,
+                color = Palette.mutedInk,
+            )
+
+            Spacer(Modifier.height(4.dp))
             SectionLabel("Account")
             BrutalCard(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconBadge(Icons.Rounded.Person, size = 40.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(server.name ?: server.email ?: "Signed in", style = Type.Title, color = Brutal.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (server.name != null && server.email != null) Text(server.email, style = Type.Small, color = Brutal.MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(server.name ?: server.email ?: "Signed in", style = Type.Title, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (server.name != null && server.email != null) Text(server.email, style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -246,30 +274,30 @@ private class SaveOutcome(val ok: Boolean, val message: String)
 @Composable
 private fun ConnectionCheckPanel(check: ConnectionCheck) {
     Column(
-        Modifier.fillMaxWidth().background(Brutal.Sand).padding(10.dp),
+        Modifier.fillMaxWidth().background(Palette.sand).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Connection check", style = Type.Label, color = Brutal.Ink, modifier = Modifier.weight(1f))
-            if (check.running) Tag("Running", fill = Brutal.Yellow)
+            Text("Connection check", style = Type.Label, color = Palette.ink, modifier = Modifier.weight(1f))
+            if (check.running) Tag("Running", fill = Palette.yellow)
         }
-        Text(check.title, style = Type.Small, color = Brutal.MutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(check.title, style = Type.Small, color = Palette.mutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
         SelectionContainer {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 check.steps.forEach { step ->
                     Row(verticalAlignment = Alignment.Top) {
                         val (label, fill, ink) = when (step.status) {
-                            StepStatus.Pass -> Triple("Pass", Brutal.Mint, Brutal.Ink)
-                            StepStatus.Warn -> Triple("Note", Brutal.Yellow, Brutal.Ink)
-                            StepStatus.Fail -> Triple("Fail", Brutal.Red, Brutal.Card)
-                            StepStatus.Running -> Triple("…", Brutal.Card, Brutal.Ink)
-                            StepStatus.Skipped -> Triple("Skip", Brutal.Card, Brutal.MutedInk)
+                            StepStatus.Pass -> Triple("Pass", Palette.mint, Palette.ink)
+                            StepStatus.Warn -> Triple("Note", Palette.yellow, Palette.ink)
+                            StepStatus.Fail -> Triple("Fail", Palette.red, Palette.onStrong)
+                            StepStatus.Running -> Triple("…", Palette.card, Palette.ink)
+                            StepStatus.Skipped -> Triple("Skip", Palette.card, Palette.mutedInk)
                         }
                         Tag(label, fill = fill, ink = ink, modifier = Modifier.width(52.dp))
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(step.name, style = Type.Small.copy(fontWeight = FontWeight.Bold), color = Brutal.Ink)
-                            Text(step.detail, style = Type.Small, color = Brutal.MutedInk)
+                            Text(step.name, style = Type.Small.copy(fontWeight = FontWeight.Bold), color = Palette.ink)
+                            Text(step.detail, style = Type.Small, color = Palette.mutedInk)
                         }
                     }
                 }
@@ -313,7 +341,7 @@ private fun UrlField(
         Tag(tag, fill = tagFill, ink = tagInk)
         if (active) {
             Spacer(Modifier.width(6.dp))
-            Tag("In use", fill = Brutal.Yellow)
+            Tag("In use", fill = Palette.yellow)
         }
         Spacer(Modifier.weight(1f))
         if (!editing) {
@@ -321,8 +349,8 @@ private fun UrlField(
         }
     }
     if (!editing) {
-        Text(value ?: empty, style = Type.Body, color = if (value == null) Brutal.MutedInk else Brutal.Ink, modifier = Modifier.padding(top = 2.dp))
-        Text(hint, style = Type.Small, color = Brutal.MutedInk)
+        Text(value ?: empty, style = Type.Body, color = if (value == null) Palette.mutedInk else Palette.ink, modifier = Modifier.padding(top = 2.dp))
+        Text(hint, style = Type.Small, color = Palette.mutedInk)
     }
     AnimatedVisibility(editing) {
         Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -334,5 +362,5 @@ private fun UrlField(
             }
         }
     }
-    result?.let { Text(it.message, style = Type.Small, color = if (it.ok) Brutal.Green else Brutal.Red, modifier = Modifier.padding(top = 4.dp)) }
+    result?.let { Text(it.message, style = Type.Small, color = if (it.ok) Palette.success else Palette.danger, modifier = Modifier.padding(top = 4.dp)) }
 }

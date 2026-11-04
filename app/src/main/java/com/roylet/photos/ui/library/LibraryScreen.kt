@@ -39,6 +39,7 @@ import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.SectionLabel
 import com.roylet.photos.ui.components.SquareIconButton
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 /** Where a Library tile leads. */
@@ -47,7 +48,7 @@ enum class LibraryEntry { Favorites, People, Places, Memories, Archive, Trash, S
 /** The "Library" tab: big brutal tiles for the collections that don't get a tab of their own. */
 @Composable
 fun LibraryScreen(onOpen: (LibraryEntry) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxSize().background(Brutal.Paper)) {
+    Column(modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Library", actions = { SquareIconButton(Icons.Rounded.Settings, "Settings", { onOpen(LibraryEntry.Settings) }) })
         LazyVerticalGrid(
             columns = GridCells.Adaptive(160.dp),
@@ -57,23 +58,23 @@ fun LibraryScreen(onOpen: (LibraryEntry) -> Unit, modifier: Modifier = Modifier)
             modifier = Modifier.fillMaxSize(),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Collections") }
-            item { Tile(Icons.Rounded.Favorite, Brutal.Peach, "Favorites", "Everything you've hearted") { onOpen(LibraryEntry.Favorites) } }
-            item { Tile(Icons.Rounded.People, Brutal.Lilac, "People", "Faces Immich found") { onOpen(LibraryEntry.People) } }
-            item { Tile(Icons.Rounded.Map, Brutal.Mint, "Places", "Your photos on a map") { onOpen(LibraryEntry.Places) } }
-            item { Tile(Icons.Rounded.AutoAwesome, Brutal.Yellow, "Memories", "On this day, years ago") { onOpen(LibraryEntry.Memories) } }
+            item { Tile(Icons.Rounded.Favorite, Palette.peach, "Favorites", "Everything you've hearted") { onOpen(LibraryEntry.Favorites) } }
+            item { Tile(Icons.Rounded.People, Palette.lilac, "People", "Faces Immich found") { onOpen(LibraryEntry.People) } }
+            item { Tile(Icons.Rounded.Map, Palette.mint, "Places", "Your photos on a map") { onOpen(LibraryEntry.Places) } }
+            item { Tile(Icons.Rounded.AutoAwesome, Palette.yellow, "Memories", "On this day, years ago") { onOpen(LibraryEntry.Memories) } }
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Tidy up", Modifier.padding(top = 12.dp)) }
-            item { Tile(Icons.Rounded.Archive, Brutal.Sand, "Archive", "Hidden from Photos") { onOpen(LibraryEntry.Archive) } }
-            item { Tile(Icons.Rounded.Delete, Color(0xFFFFE1E3), "Trash", "Restore or delete") { onOpen(LibraryEntry.Trash) } }
+            item { Tile(Icons.Rounded.Archive, Palette.sand, "Archive", "Hidden from Photos") { onOpen(LibraryEntry.Archive) } }
+            item { Tile(Icons.Rounded.Delete, Palette.current.noticeError, "Trash", "Restore or delete") { onOpen(LibraryEntry.Trash) } }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Pressable({ onOpen(LibraryEntry.Settings) }, Modifier.fillMaxWidth().padding(top = 12.dp)) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconBadge(Icons.Rounded.Settings, fill = Brutal.Card, size = 40.dp)
+                        IconBadge(Icons.Rounded.Settings, fill = Palette.card, size = 40.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Settings", style = Type.Title, color = Brutal.Ink)
-                            Text("Server, connection and account", style = Type.Small, color = Brutal.MutedInk)
+                            Text("Settings", style = Type.Title, color = Palette.ink)
+                            Text("Server, connection and account", style = Type.Small, color = Palette.mutedInk)
                         }
-                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Brutal.Ink)
+                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.ink)
                     }
                 }
             }
@@ -86,13 +87,13 @@ private fun Tile(icon: ImageVector, fill: Color, title: String, subtitle: String
     Pressable(onClick, Modifier.fillMaxWidth(), fill = fill) {
         Column(Modifier.padding(14.dp).height(118.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                IconBadge(icon, fill = Brutal.Card, size = 44.dp)
+                IconBadge(icon, fill = Palette.card, size = 44.dp)
                 Spacer(Modifier.weight(1f))
-                Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Brutal.Ink, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Palette.ink, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.weight(1f))
-            Text(title, style = Type.Title, color = Brutal.Ink, maxLines = 1)
-            Text(subtitle, style = Type.Small, color = Brutal.Ink.copy(alpha = 0.7f), maxLines = 1)
+            Text(title, style = Type.Title, color = Palette.ink, maxLines = 1)
+            Text(subtitle, style = Type.Small, color = Palette.ink.copy(alpha = 0.7f), maxLines = 1)
         }
     }
 }

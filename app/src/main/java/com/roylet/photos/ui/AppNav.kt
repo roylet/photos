@@ -95,6 +95,7 @@ import kotlinx.coroutines.launch
 import com.roylet.photos.ui.search.SearchScreen
 import com.roylet.photos.ui.settings.SettingsScreen
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.PhotosTheme
 
 object Routes {
@@ -194,7 +195,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     ) {
       SharedTransitionLayout(Modifier.fillMaxSize()) {
       CompositionLocalProvider(LocalSharedTransitionScope provides this) {
-        BoxWithConstraints(Modifier.fillMaxSize().background(Brutal.Paper)) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Palette.paper)) {
             val wide = maxWidth >= WideBreakpoint
             if (wide) {
                 Row(Modifier.fillMaxSize()) {
@@ -273,7 +274,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
     NavHost(
         navController = nav,
         startDestination = if (signedIn) Routes.TIMELINE else Routes.CONNECT,
-        modifier = modifier.background(Brutal.Paper),
+        modifier = modifier.background(Palette.paper),
         // immichup's push/pop motion for screens; a quick crossfade between tabs.
         enterTransition = { if (isViewer()) fadeIn(tween(220)) else if (isTabSwitch()) fadeIn(tween(160)) else slideInHorizontally { it / 3 } + fadeIn() },
         exitTransition = { if (isViewer()) ExitTransition.KeepUntilTransitionsFinished else if (isTabSwitch()) fadeOut(tween(120)) else fadeOut() },
