@@ -36,7 +36,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.roylet.photos.data.ServerConfig
+import coil3.compose.LocalAsyncImagePreviewHandler
 import com.roylet.photos.ui.AppNav
+import com.roylet.photos.ui.components.LocalReducedMotion
 import com.roylet.photos.ui.components.DarkButton
 import com.roylet.photos.ui.components.DarkChip
 import com.roylet.photos.ui.components.DarkIconButton
@@ -75,15 +77,22 @@ class ScreenshotTest {
 
     @After fun signOut() = app.container.settings.signOut()
 
-    private fun signIn() = app.container.settings.saveServer(
-        ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1", email = "me@example.com", name = "Roy"),
-    )
+    private fun signIn() {
+        app.container.settings.saveServer(
+            ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1", email = "me@example.com", name = "Roy"),
+        )
+        FakeGallery.install(app.container)
+    }
 
     private fun shoot(name: String, dark: Boolean = false, content: @Composable () -> Unit) {
         // Infinite animations (spinners, progress stripes) would otherwise keep Compose from idling.
         compose.mainClock.autoAdvance = false
         compose.setContent {
-            CompositionLocalProvider(LocalInspectionMode provides true) { PhotosTheme(dark = dark) { content() } }
+            CompositionLocalProvider(
+                LocalInspectionMode provides true,
+                LocalAsyncImagePreviewHandler provides FakeGallery.previewHandler,
+                LocalReducedMotion provides true,
+            ) { PhotosTheme(dark = dark) { content() } }
         }
         save(name)
     }

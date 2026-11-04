@@ -5,7 +5,9 @@ import coil3.ImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
+import com.roylet.photos.domain.timeline.TimelineRegistry
 import com.roylet.photos.immich.ImmichApi
+import com.roylet.photos.immich.ImmichTimelineSource
 import com.roylet.photos.net.AndroidNetworkEnvironment
 import com.roylet.photos.net.ApiKeyGuard
 import com.roylet.photos.net.ApiKeyInterceptor
@@ -46,6 +48,9 @@ class AppContainer(context: Context) {
             add(VideoFrameDecoder.Factory())
         }
         .build()
+
+    /** Cached timelines (main, favourites, albums, ...) shared by the grid and the viewer. */
+    val timelines = TimelineRegistry(ImmichTimelineSource { api() }, session = { settings.server.value?.let { it.publicUrl + it.userId } })
 
     /**
      * The API for the saved server, or null when signed out. It's built on the public URL (the
