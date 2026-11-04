@@ -40,6 +40,7 @@ import com.roylet.photos.ui.components.EmptyState
 import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.brutal
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 import kotlinx.coroutines.launch
@@ -67,6 +68,9 @@ import org.maplibre.geojson.Point
  */
 const val MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
 
+/** OpenFreeMap's dark style (same host, same tiles), used in dark mode. */
+const val MAP_STYLE_URL_DARK = "https://tiles.openfreemap.org/styles/dark"
+
 /** Places: every geotagged photo on a clustered map; tap a cluster or pin to see its photos. */
 @Composable
 fun MapScreen(library: () -> LibrarySource, onPick: (ids: List<String>, title: String) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -77,7 +81,7 @@ fun MapScreen(library: () -> LibrarySource, onPick: (ids: List<String>, title: S
         error = null
         runCatching { library().mapMarkers() }.onSuccess { markers = it }.onFailure { error = ImmichApi.describe(it) }
     }
-    Column(modifier.fillMaxSize().background(Brutal.Paper)) {
+    Column(modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Places", subtitle = markers?.let { Format.plural(it.size, "geotagged photo") }, onBack = onBack)
         val list = markers
         Box(Modifier.weight(1f)) {
@@ -90,9 +94,9 @@ fun MapScreen(library: () -> LibrarySource, onPick: (ids: List<String>, title: S
                 else -> {
                     ClusterMap(list, onPick)
                     Text(
-                        "TAP A CLUSTER TO SEE ITS PHOTOS", style = Type.Tiny, color = Brutal.Ink,
+                        "TAP A CLUSTER TO SEE ITS PHOTOS", style = Type.Tiny, color = Palette.ink,
                         modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)
-                            .brutal(Brutal.Card, shadow = 3.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+                            .brutal(Palette.card, shadow = 3.dp).padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }
             }
@@ -106,6 +110,16 @@ private fun ClusterMap(markers: List<MapMarker>, onPick: (List<String>, String) 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val pick by rememberUpdatedState(onPick)
     val scope = rememberCoroutineScope()
+    val colors = Palette.current
+    val dark = colors.dark
+    val look = MarkerLook(
+        clusterStroke = colors.border.toArgb(),
+        pointFill = (if (dark) colors.ink else colors.paper).toArgb(),
+        pointStroke = (if (dark) colors.paper else colors.ink).toArgb(),
+    )
+    // The source of the style currently shown, for the click listener (registered once).
+    val source = remember { arrayOfNulls<GeoJsonSource>(1) }
+    var framed by remember { mutableStateOf<List<MapMarker>?>(null) }
     val view = remember {
         MapLibre.getInstance(context)
         MapView(context).apply { onCreate(null) }
@@ -123,9 +137,15 @@ private fun ClusterMap(markers: List<MapMarker>, onPick: (List<String>, String) 
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); view.onStop(); view.onDestroy() }
     }
-    LaunchedEffect(markers) {
+    LaunchedEffect(Unit) {
+        view.getMapAsync { map -> addClickListener(map, { source[0] }) { ids, title -> scope.launch { pick(ids, title) } } }
+    }
+    LaunchedEffect(markers, dark) {
         view.getMapAsync { map ->
-            map.setStyle(Style.Builder().fromUri(MAP_STYLE_URL)) { style -> addMarkers(map, style, markers) { ids, title -> scope.launch { pick(ids, title) } } }
+            map.setStyle(Style.Builder().fromUri(if (dark) MAP_STYLE_URL_DARK else MAP_STYLE_URL)) { style ->
+                source[0] = addMarkers(map, style, markers, look, frame = framed != markers)
+                framed = markers
+            }
         }
     }
     AndroidView({ view }, Modifier.fillMaxSize())
@@ -133,7 +153,10 @@ private fun ClusterMap(markers: List<MapMarker>, onPick: (List<String>, String) 
 
 private const val SOURCE = "photos"
 
-private fun addMarkers(map: MapLibreMap, style: Style, markers: List<MapMarker>, onPick: (List<String>, String) -> Unit) {
+/** Marker colours for the current theme (clusters stay orange with ink counts). */
+private class MarkerLook(val clusterStroke: Int, val pointFill: Int, val pointStroke: Int)
+
+private fun addMarkers(map: MapLibreMap, style: Style, markers: List<MapMarker>, look: MarkerLook, frame: Boolean): GeoJsonSource {
     val features = markers.map { m ->
         Feature.fromGeometry(Point.fromLngLat(m.lon, m.lat)).apply {
             addStringProperty("id", m.id)
@@ -147,7 +170,7 @@ private fun addMarkers(map: MapLibreMap, style: Style, markers: List<MapMarker>,
     style.addLayer(
         CircleLayer("clusters", SOURCE).withFilter(Expression.has("point_count")).withProperties(
             PropertyFactory.circleColor(orange),
-            PropertyFactory.circleStrokeColor(ink),
+            PropertyFactory.circleStrokeColor(look.clusterStroke),
             PropertyFactory.circleStrokeWidth(2.5f),
             PropertyFactory.circleRadius(Expression.step(Expression.get("point_count"), Expression.literal(16), Expression.stop(10, 20), Expression.stop(100, 26), Expression.stop(1000, 32))),
         ),
@@ -163,18 +186,24 @@ private fun addMarkers(map: MapLibreMap, style: Style, markers: List<MapMarker>,
     )
     style.addLayer(
         CircleLayer("points", SOURCE).withFilter(Expression.not(Expression.has("point_count"))).withProperties(
-            PropertyFactory.circleColor(Brutal.Paper.toArgb()),
-            PropertyFactory.circleStrokeColor(ink),
+            PropertyFactory.circleColor(look.pointFill),
+            PropertyFactory.circleStrokeColor(look.pointStroke),
             PropertyFactory.circleStrokeWidth(2.5f),
             PropertyFactory.circleRadius(8f),
         ),
     )
-    if (markers.size > 1) {
+    if (!frame) {
+        // A theme switch only restyles; keep the user's pan and zoom.
+    } else if (markers.size > 1) {
         val bounds = LatLngBounds.Builder().includes(markers.map { LatLng(it.lat, it.lon) }).build()
         runCatching { map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 80)) }
     } else markers.firstOrNull()?.let { map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(it.lat, it.lon), 11.0)) }
+    return source
+}
 
+private fun addClickListener(map: MapLibreMap, source: () -> GeoJsonSource?, onPick: (List<String>, String) -> Unit) {
     map.addOnMapClickListener { latLng ->
+        val source = source() ?: return@addOnMapClickListener false
         val p: PointF = map.projection.toScreenLocation(latLng)
         val hit = map.queryRenderedFeatures(p, "clusters", "points").firstOrNull() ?: return@addOnMapClickListener false
         if (hit.hasProperty("point_count")) {
