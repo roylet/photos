@@ -56,6 +56,7 @@ import com.roylet.photos.ui.gallery.SelectionScope
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.gallery.allFavorite
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 
@@ -106,7 +107,7 @@ fun AlbumDetailScreen(
         )
 
         BrutalSheet(menu, onDismiss = { menu = false }) {
-            Text(album?.name ?: "Album", style = Type.Headline, color = Brutal.Ink)
+            Text(album?.name ?: "Album", style = Type.Headline, color = Palette.ink)
             Spacer(Modifier.padding(top = 8.dp))
             MenuRow(Icons.Rounded.Edit, "Rename", "Change the name or description") { menu = false; renaming = true }
             MenuRow(Icons.Rounded.Link, "Share link", "A web page for this album") { menu = false; actions?.shareAlbum(albumId) }
@@ -147,22 +148,22 @@ private fun RowScope.AlbumSelectionActions(scope: SelectionScope, albumId: Strin
 /** Description, dates and owner/sharing badges above the album's photos. */
 @Composable
 fun AlbumHeader(album: Album) {
-    Column(Modifier.fillMaxWidth().background(Brutal.Paper).padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp)) {
+    Column(Modifier.fillMaxWidth().background(Palette.paper).padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Tag(if (album.ownedByMe) "Yours" else "by ${album.ownerName ?: "someone"}", fill = if (album.ownedByMe) Brutal.Mint else Brutal.Peach)
-            if (album.shared) Tag("Shared", fill = Brutal.Lilac)
-            if (album.hasSharedLink) Tag("Link", fill = Brutal.Yellow)
+            Tag(if (album.ownedByMe) "Yours" else "by ${album.ownerName ?: "someone"}", fill = if (album.ownedByMe) Palette.mint else Palette.peach)
+            if (album.shared) Tag("Shared", fill = Palette.lilac)
+            if (album.hasSharedLink) Tag("Link", fill = Palette.yellow)
             val start = album.startDate
             val end = album.endDate
             if (start != null) {
                 Spacer(Modifier.width(2.dp))
                 val range = if (end == null || Format.shortDate(start) == Format.shortDate(end)) Format.shortDate(start) else "${Format.shortDate(start)} – ${Format.shortDate(end)}"
-                Text(range, style = Type.Small, color = Brutal.MutedInk, maxLines = 1)
+                Text(range, style = Type.Small, color = Palette.mutedInk, maxLines = 1)
             }
         }
         if (album.description.isNotBlank()) {
             Spacer(Modifier.padding(top = 8.dp))
-            Text(album.description, style = Type.Body, color = Brutal.Ink)
+            Text(album.description, style = Type.Body, color = Palette.ink)
         }
     }
 }
@@ -173,11 +174,11 @@ private fun MenuRow(icon: ImageVector, title: String, subtitle: String, danger: 
         Modifier.fillMaxWidth().clip(BrutalShape).clickable(onClick = onClick).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconBadge(icon, fill = if (danger) Color(0xFFFFE1E3) else Brutal.Peach, size = 42.dp)
+        IconBadge(icon, fill = if (danger) Palette.current.noticeError else Palette.peach, size = 42.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = Type.Title, color = if (danger) Brutal.Red else Brutal.Ink)
-            Text(subtitle, style = Type.Small, color = Brutal.MutedInk)
+            Text(title, style = Type.Title, color = if (danger) Palette.danger else Palette.ink)
+            Text(subtitle, style = Type.Small, color = Palette.mutedInk)
         }
     }
 }

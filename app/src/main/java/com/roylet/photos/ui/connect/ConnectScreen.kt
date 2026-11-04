@@ -48,6 +48,7 @@ import com.roylet.photos.ui.components.Chip
 import com.roylet.photos.ui.components.Notice
 import com.roylet.photos.ui.components.NoticeTone
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -111,7 +112,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Brutal.Paper), contentAlignment = Alignment.TopCenter) {
+    Box(Modifier.fillMaxSize().background(Palette.paper), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
                 .widthIn(max = 560.dp)
@@ -133,7 +134,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
                 )
             }
 
-            Text("Connect to your server", style = Type.Headline, color = Brutal.Ink)
+            Text("Connect to your server", style = Type.Headline, color = Palette.ink)
 
             BrutalTextField(
                 url, { url = it }, "photos.example.com or 192.168.1.20:2283",
@@ -153,7 +154,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
                     "Create one in Immich under Account Settings → API Keys. Give it all permissions, or at least: " +
                         ImmichApi.PERMISSIONS.joinToString(", ") + ".",
                     style = Type.Small,
-                    color = Brutal.MutedInk,
+                    color = Palette.mutedInk,
                 )
             } else {
                 BrutalTextField(email, { email = it }, "you@example.com", label = "Email", leading = Icons.Rounded.Mail, keyboard = KeyboardOptions(keyboardType = KeyboardType.Email))
@@ -161,7 +162,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
                 Text(
                     "Your password is only used once to create an API key for this app (\"${ImmichApi.KEY_NAME}\"), then forgotten.",
                     style = Type.Small,
-                    color = Brutal.MutedInk,
+                    color = Palette.mutedInk,
                 )
             }
 

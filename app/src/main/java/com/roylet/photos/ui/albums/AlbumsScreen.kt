@@ -60,6 +60,7 @@ import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.gallery.AssetImage
 import com.roylet.photos.ui.gallery.LocalMediaUrls
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 
@@ -79,7 +80,7 @@ fun AlbumsScreen(
     var sort by rememberSaveable { mutableStateOf(runCatching { AlbumSort.valueOf(prefs.albumSort) }.getOrDefault(AlbumSort.Recent)) }
     var creating by remember { mutableStateOf(false) }
 
-    Box(modifier.fillMaxSize().background(Brutal.Paper)) {
+    Box(modifier.fillMaxSize().background(Palette.paper)) {
         Column(Modifier.fillMaxSize()) {
             ScreenHeader(
                 "Albums",
@@ -129,11 +130,11 @@ fun AlbumsScreen(
 fun AlbumCard(album: Album, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val urls = LocalMediaUrls.current
     Column(modifier) {
-        Pressable(onClick, Modifier.fillMaxWidth(), fill = Brutal.Lilac, shadow = 4.dp) {
+        Pressable(onClick, Modifier.fillMaxWidth(), fill = Palette.lilac, shadow = 4.dp) {
             var px by remember { mutableStateOf(300) }
             Box(Modifier.fillMaxWidth().aspectRatio(1f).onSizeChanged { px = it.width }, contentAlignment = Alignment.Center) {
                 if (album.coverAssetId != null) AssetImage(urls.thumbnail(album.coverAssetId), null, px, px, Modifier.matchParentSize())
-                else Icon(Icons.Rounded.PhotoAlbum, null, tint = Brutal.Ink, modifier = Modifier.size(40.dp))
+                else Icon(Icons.Rounded.PhotoAlbum, null, tint = Palette.ink, modifier = Modifier.size(40.dp))
                 Row(Modifier.align(Alignment.TopEnd).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (album.hasSharedLink) Badge(Icons.Rounded.Link)
                     if (album.shared) Badge(Icons.Rounded.People)
@@ -141,20 +142,20 @@ fun AlbumCard(album: Album, onClick: () -> Unit, modifier: Modifier = Modifier) 
             }
         }
         Spacer(Modifier.height(4.dp))
-        Text(album.name, style = Type.Title, color = Brutal.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(album.name, style = Type.Title, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         val meta = buildList {
             add(Format.plural(album.assetCount, "item"))
             if (!album.ownedByMe && album.ownerName != null) add("by ${album.ownerName}")
         }.joinToString(" · ")
-        Text(meta, style = Type.Small, color = Brutal.MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(meta, style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun Badge(icon: androidx.compose.ui.graphics.vector.ImageVector) {
     val shape = RoundedCornerShape(50)
-    Box(Modifier.size(26.dp).clip(shape).background(Brutal.Card, shape).border(2.dp, Brutal.Ink, shape), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = Brutal.Ink, modifier = Modifier.size(15.dp))
+    Box(Modifier.size(26.dp).clip(shape).background(Palette.card, shape).border(2.dp, Palette.ink, shape), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = Palette.ink, modifier = Modifier.size(15.dp))
     }
 }
 

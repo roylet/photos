@@ -33,6 +33,7 @@ import com.roylet.photos.ui.components.EmptyState
 import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.SquareIconButton
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 
 /**
  * A full timeline screen: header (or the selection bar while selecting) over a [TimelineGrid].
@@ -66,7 +67,7 @@ fun TimelineScreen(
     // Re-fetch if something elsewhere changed this timeline (e.g. photos were added to this album).
     androidx.compose.runtime.LaunchedEffect(timeline) { timeline.startOrRefresh() }
 
-    Column(modifier.fillMaxSize().background(Brutal.Paper)) {
+    Column(modifier.fillMaxSize().background(Palette.paper)) {
         AnimatedContent(
             targetState = selection.active,
             transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(100)) },

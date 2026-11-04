@@ -75,6 +75,7 @@ import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 import kotlinx.coroutines.Job
@@ -136,7 +137,7 @@ fun TimelineGrid(
     val open by rememberUpdatedState(onOpen)
     val context = LocalContext.current
 
-    BoxWithConstraints(modifier.fillMaxSize().background(Brutal.Paper)) {
+    BoxWithConstraints(modifier.fillMaxSize().background(Palette.paper)) {
         val widthPx = constraints.maxWidth.toFloat()
         val heightPx = constraints.maxHeight.toFloat()
         var densityIndex by rememberSaveable { mutableIntStateOf((initialDensity ?: GridDensityPrefs.load(context) ?: GridDensity.Medium).ordinal) }
@@ -398,13 +399,13 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
     val h = with(px) { heightPx.toDp() }
     // Above ~180px the 250px thumbnail starts to look soft, so big cells (and every close-up level) get the preview rendition.
     val url = if (sharp || widthPx > 360f || heightPx > 360f) urls.preview(asset.id) else urls.thumbnail(asset.id)
-    Box(Modifier.size(w, h).background(if (selected) Brutal.Peach else Color.Transparent)) {
+    Box(Modifier.size(w, h).background(if (selected) Palette.peach else Color.Transparent)) {
         AssetImage(
             url, asset.thumbhash, widthPx.toInt(), heightPx.toInt(),
             Modifier
                 .matchParentSize()
                 .graphicsLayer { scaleX = cellScale; scaleY = cellScale }
-                .then(if (selected) Modifier.clip(RoundedCornerShape(6.dp)).border(2.dp, Brutal.Ink, RoundedCornerShape(6.dp)) else Modifier)
+                .then(if (selected) Modifier.clip(RoundedCornerShape(6.dp)).border(2.dp, Palette.border, RoundedCornerShape(6.dp)) else Modifier)
                 .sharedAsset(asset.id),
         )
         if (showBadges && w > 44.dp) {
@@ -454,6 +455,7 @@ fun SelectCheck(selected: Boolean, modifier: Modifier = Modifier) {
 private fun PendingMonth(item: GridItem.Pending, load: () -> Unit) {
     LaunchedEffect(item.key) { load() }
     val px = LocalDensity.current
+    val sand = Palette.sand
     Box(
         Modifier.fillMaxWidth().height(with(px) { item.heightPx.toDp() }).drawBehind {
             // Faint tiles hint at the grid while the month loads.
@@ -463,7 +465,7 @@ private fun PendingMonth(item: GridItem.Pending, load: () -> Unit) {
             while (y < size.height) {
                 var x = 0f
                 while (x < size.width) {
-                    drawRoundRect(Brutal.Sand, Offset(x, y), Size(minOf(tile, size.width - x), minOf(tile, size.height - y)), CornerRadius(0f))
+                    drawRoundRect(sand, Offset(x, y), Size(minOf(tile, size.width - x), minOf(tile, size.height - y)), CornerRadius(0f))
                     x += tile + gap
                 }
                 y += tile + gap
@@ -476,12 +478,12 @@ private fun PendingMonth(item: GridItem.Pending, load: () -> Unit) {
 private fun MonthHeader(bucket: TimeBucket, count: Int, selection: GridSelection, assets: () -> List<TimelineAsset>?, compact: Boolean) {
     val selecting by remember { derivedStateOf { selection.active } }
     Row(
-        Modifier.fillMaxWidth().height(HeaderHeight).background(Brutal.Paper).padding(start = 14.dp, end = 10.dp),
+        Modifier.fillMaxWidth().height(HeaderHeight).background(Palette.paper).padding(start = 14.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(monthLabel(bucket, compact), style = Type.Title, color = Brutal.Ink, maxLines = 1)
+        Text(monthLabel(bucket, compact), style = Type.Title, color = Palette.ink, maxLines = 1)
         Spacer(Modifier.weight(1f))
-        Text(Format.plural(count, "item").uppercase(), style = Type.Tiny, color = Brutal.MutedInk, modifier = Modifier.padding(horizontal = 4.dp))
+        Text(Format.plural(count, "item").uppercase(), style = Type.Tiny, color = Palette.mutedInk, modifier = Modifier.padding(horizontal = 4.dp))
         if (selecting) {
             val all by remember(bucket.key) { derivedStateOf { assets()?.let { list -> list.isNotEmpty() && list.all { it.id in selection.ids } } == true } }
             Box(
