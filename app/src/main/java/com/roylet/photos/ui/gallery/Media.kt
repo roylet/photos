@@ -30,6 +30,7 @@ import com.roylet.photos.immich.personThumbnailUrl
 import com.roylet.photos.immich.thumbnailUrl
 import com.roylet.photos.immich.videoPlaybackUrl
 import com.roylet.photos.ui.components.reducedMotion
+import com.roylet.photos.ui.viewer.LocalViewer
 import okhttp3.OkHttpClient
 
 /** Where an asset's pixels live. Screens read it from [LocalMediaUrls]. */
@@ -129,11 +130,22 @@ val LocalSharedTransitionScope = staticCompositionLocalOf<SharedTransitionScope?
 /** The nav destination's AnimatedVisibilityScope; provided by AppNav around each route. */
 val LocalNavAnimatedScope = staticCompositionLocalOf<AnimatedVisibilityScope?> { null }
 
-/** Marks this node as asset [id]'s shared element; a no-op outside a SharedTransitionLayout. */
+/**
+ * Marks this node as asset [id]'s shared element for the grid ↔ viewer morph; a no-op outside a
+ * SharedTransitionLayout. Under AppNav the viewer is an overlay ([LocalViewer]): only the focused
+ * asset takes part, visible in the viewer while it's open and in the grid otherwise. Without one
+ * (the viewer as a nav destination) it falls back to the destination's AnimatedVisibilityScope.
+ */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun Modifier.sharedAsset(id: String): Modifier {
+fun Modifier.sharedAsset(id: String, inViewer: Boolean = false): Modifier {
     val shared = LocalSharedTransitionScope.current ?: return this
+    val viewer = LocalViewer.current
+    if (viewer != null) {
+        if (viewer.focusId != id) return this
+        val visible = if (inViewer) viewer.open else !viewer.open
+        return with(shared) { this@sharedAsset.sharedElementWithCallerManagedVisibility(rememberSharedContentState("asset:$id"), visible) }
+    }
     val anim = LocalNavAnimatedScope.current ?: return this
     return with(shared) { this@sharedAsset.sharedElement(rememberSharedContentState("asset:$id"), anim) }
 }

@@ -74,6 +74,9 @@ import com.roylet.photos.ui.gallery.LocalSharedTransitionScope
 import com.roylet.photos.ui.gallery.PhotosScreen
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.viewer.ViewerScreen
+import com.roylet.photos.ui.viewer.LocalViewer
+import com.roylet.photos.ui.viewer.ViewerController
+import com.roylet.photos.ui.viewer.ViewerOverlay
 import com.roylet.photos.ui.library.LibraryScreen
 import com.roylet.photos.ui.memories.MemoriesCarousel
 import com.roylet.photos.ui.memories.MemoryStoryScreen
@@ -132,6 +135,7 @@ private val tabRoutes = Tabs.map { it.route }.toSet()
 /** Width at which the bottom bar becomes a side rail (tablets, foldables, landscape). */
 val WideBreakpoint = 600.dp
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AppNav(container: AppContainer, nav: NavHostController = rememberNavController()) {
     val server by container.settings.server.collectAsState()
@@ -154,6 +158,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     val showBar = route in tabRoutes
 
     val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
+    val viewer = remember { ViewerController() }
     // A new account (or sign-out) starts the library caches afresh.
     LaunchedEffect(server?.publicUrl, server?.userId) { container.albums.clear(); container.memories.clear(); container.search.reset() }
     CompositionLocalProvider(
@@ -162,28 +167,39 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalAssetActions provides container.actions,
         LocalLibraryActions provides container.actions,
         LocalSnackbar provides container.snackbar,
+        LocalViewer provides viewer,
     ) {
+      SharedTransitionLayout(Modifier.fillMaxSize()) {
+      CompositionLocalProvider(LocalSharedTransitionScope provides this) {
         BoxWithConstraints(Modifier.fillMaxSize().background(Brutal.Paper)) {
             val wide = maxWidth >= WideBreakpoint
             if (wide) {
                 Row(Modifier.fillMaxSize()) {
                     if (showBar) BrutalRail(Tabs, route, selectTab, header = { AppMark() })
-                    Host(container, nav, server != null, Modifier.weight(1f))
+                    Host(container, nav, viewer, server != null, Modifier.weight(1f))
                 }
             } else {
                 Column(Modifier.fillMaxSize()) {
-                    Host(container, nav, server != null, Modifier.weight(1f))
+                    Host(container, nav, viewer, server != null, Modifier.weight(1f))
                     if (showBar) BrutalTabBar(Tabs, route, selectTab)
                 }
             }
+            ViewerOverlay(
+                viewer, entry,
+                timelineFor = { container.timelines.get(it) },
+                onEdit = { id -> nav.navigate(Routes.edit(id)) },
+                loadDetails = { id -> container.api()?.asset(id) },
+            )
             ActionSheets(container.actions)
             BrutalSnackbarHost(
                 container.snackbar,
                 Modifier.align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(start = 16.dp, end = 16.dp, bottom = if (route == Routes.VIEWER) 150.dp else if (showBar && !wide) 84.dp else 16.dp),
+                    .padding(start = 16.dp, end = 16.dp, bottom = if (route == Routes.VIEWER || viewer.open) 150.dp else if (showBar && !wide) 84.dp else 16.dp),
             )
         }
+      }
+      }
     }
 }
 
@@ -204,7 +220,7 @@ private fun openMemories(container: AppContainer, nav: NavHostController) {
 @Composable
 private fun AnimatedContentScope.TimelineDestination(
     container: AppContainer,
-    nav: NavHostController,
+    viewer: ViewerController,
     entry: NavBackStackEntry,
     filter: TimelineFilter,
     content: @Composable (TimelineRepository, (Int, TimelineAsset) -> Unit, Int?, () -> Unit) -> Unit,
@@ -214,7 +230,7 @@ private fun AnimatedContentScope.TimelineDestination(
         val reveal by entry.savedStateHandle.getStateFlow<Int?>(Routes.REVEAL_INDEX, null).collectAsState()
         content(
             timeline,
-            { index, asset -> nav.navigate(Routes.viewer(timeline.filter, index, asset.id)) },
+            { index, asset -> viewer.open(timeline.filter, index, asset.id, entry) },
             reveal,
             { entry.savedStateHandle.remove<Int>(Routes.REVEAL_INDEX) },
         )
@@ -230,13 +246,11 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.isViewer() =
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun Host(container: AppContainer, nav: NavHostController, signedIn: Boolean, modifier: Modifier) {
-    SharedTransitionLayout(modifier) {
-    CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+private fun Host(container: AppContainer, nav: NavHostController, viewer: ViewerController, signedIn: Boolean, modifier: Modifier) {
     NavHost(
         navController = nav,
         startDestination = if (signedIn) Routes.TIMELINE else Routes.CONNECT,
-        modifier = Modifier.background(Brutal.Paper),
+        modifier = modifier.background(Brutal.Paper),
         // immichup's push/pop motion for screens; a quick crossfade between tabs.
         enterTransition = { if (isViewer()) fadeIn(tween(220)) else if (isTabSwitch()) fadeIn(tween(160)) else slideInHorizontally { it / 3 } + fadeIn() },
         exitTransition = { if (isViewer()) ExitTransition.KeepUntilTransitionsFinished else if (isTabSwitch()) fadeOut(tween(120)) else fadeOut() },
@@ -254,7 +268,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                 val reveal by entry.savedStateHandle.getStateFlow<Int?>(Routes.REVEAL_INDEX, null).collectAsState()
                 PhotosScreen(
                     timeline = timeline,
-                    onOpen = { index, asset -> nav.navigate(Routes.viewer(timeline.filter, index, asset.id)) },
+                    onOpen = { index, asset -> viewer.open(timeline.filter, index, asset.id, entry) },
                     onSettings = { nav.navigate(Routes.SETTINGS) },
                     revealIndex = reveal,
                     onRevealed = { entry.savedStateHandle.remove<Int>(Routes.REVEAL_INDEX) },
@@ -274,7 +288,8 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                 navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
             ),
         ) { entry ->
-            CompositionLocalProvider(LocalNavAnimatedScope provides this) {
+            // Kept for deep links; the app opens the viewer as an overlay (ViewerOverlay).
+            CompositionLocalProvider(LocalNavAnimatedScope provides this, LocalViewer provides null) {
                 val args = entry.arguments
                 val filter = remember { TimelineFilter.decode(args?.getString("filter").orEmpty()) }
                 val timeline = remember { container.timelines.get(filter) }
@@ -304,16 +319,16 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
         }
         composable(Routes.ALBUM, arguments = listOf(navArgument("albumId") { type = NavType.StringType })) { entry ->
             val id = entry.arguments?.getString("albumId").orEmpty()
-            TimelineDestination(container, nav, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
                 AlbumDetailScreen(id, container.albums, timeline, container.actions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
-        composable(Routes.SEARCH) {
+        composable(Routes.SEARCH) { entry ->
             CompositionLocalProvider(LocalNavAnimatedScope provides this) {
                 SearchScreen(
                     container.search,
                     timelineFor = { container.timelines.get(it) },
-                    onOpen = { timeline, index, asset -> nav.navigate(Routes.viewer(timeline.filter, index, asset.id)) },
+                    onOpen = { timeline, index, asset -> viewer.open(timeline.filter, index, asset.id, entry) },
                     onPerson = { nav.navigate(Routes.person(it.id, it.name)) },
                     onAllPeople = { nav.navigate(Routes.PEOPLE) },
                 )
@@ -325,7 +340,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
         ) { entry ->
             val id = entry.arguments?.getString("personId").orEmpty()
             val name = entry.arguments?.getString("name").orEmpty()
-            TimelineDestination(container, nav, entry, TimelineFilter.person(id)) { timeline, open, reveal, revealed ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.person(id)) { timeline, open, reveal, revealed ->
                 TimelineScreen(timeline, name.ifBlank { "Person" }, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
@@ -349,7 +364,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
             }
         }
         composable(Routes.FAVORITES) { entry ->
-            TimelineDestination(container, nav, entry, TimelineFilter.Favorites) { timeline, open, reveal, revealed ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.Favorites) { timeline, open, reveal, revealed ->
                 TimelineScreen(
                     timeline, "Favorites", open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
                     emptyTitle = "No favourites yet", emptyText = "Tap the heart on a photo to keep it here.",
@@ -357,7 +372,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
             }
         }
         composable(Routes.ARCHIVE) { entry ->
-            TimelineDestination(container, nav, entry, TimelineFilter.Archive) { timeline, open, reveal, revealed ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.Archive) { timeline, open, reveal, revealed ->
                 TimelineScreen(
                     timeline, "Archive", open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
                     emptyTitle = "Nothing archived", emptyText = "Archive photos to hide them from Photos without deleting them.",
@@ -365,7 +380,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
             }
         }
         composable(Routes.TRASH) { entry ->
-            TimelineDestination(container, nav, entry, TimelineFilter.Trash) { timeline, open, reveal, revealed ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.Trash) { timeline, open, reveal, revealed ->
                 TrashScreen(timeline, { container.library }, container.actions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
@@ -387,12 +402,10 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
             arguments = listOf(navArgument("filter") { type = NavType.StringType }, navArgument("title") { type = NavType.StringType; defaultValue = "" }),
         ) { entry ->
             val filter = remember { TimelineFilter.decode(entry.arguments?.getString("filter").orEmpty()) }
-            TimelineDestination(container, nav, entry, filter) { timeline, open, reveal, revealed ->
+            TimelineDestination(container, viewer, entry, filter) { timeline, open, reveal, revealed ->
                 TimelineScreen(timeline, entry.arguments?.getString("title").orEmpty().ifBlank { "Photos" }, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
         composable(Routes.SETTINGS) { SettingsScreen(container, onBack = { nav.popBackStack() }) }
-    }
-    }
     }
 }
