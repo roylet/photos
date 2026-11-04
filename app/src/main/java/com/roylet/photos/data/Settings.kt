@@ -31,6 +31,12 @@ data class ServerConfig(
     val fingerprint: String? = null,
     /** [localUrl] has passed the full check (fingerprint, then `/users/me` id) at least once. */
     val localVerified: Boolean = false,
+    /**
+     * The fingerprint [localUrl] showed when it was verified. Re-checks on a new network accept
+     * this or the public [fingerprint], so a hand-entered address that passed the account check
+     * despite a differing config field keeps working.
+     */
+    val localFingerprint: String? = null,
 )
 
 class Settings(context: Context) : ServerStore {
@@ -50,6 +56,7 @@ class Settings(context: Context) : ServerStore {
             .putString(KEY_MODE, config.mode.name)
             .putString(KEY_FINGERPRINT, config.fingerprint)
             .putBoolean(KEY_LOCAL_VERIFIED, config.localVerified)
+            .putString(KEY_LOCAL_FINGERPRINT, config.localFingerprint)
             .apply()
         _server.value = config
     }
@@ -64,7 +71,7 @@ class Settings(context: Context) : ServerStore {
     /** Sets an unverified LAN address; the connection manager verifies it before sending it the key. */
     fun updateLocalUrl(localUrl: String?) = updateServer {
         val url = localUrl?.trim()?.takeIf { u -> u.isNotEmpty() }
-        it.copy(localUrl = url, localVerified = it.localVerified && url == it.localUrl)
+        if (url == it.localUrl) it else it.copy(localUrl = url, localVerified = false, localFingerprint = null)
     }
 
     fun updateMode(mode: ConnectionMode) = updateServer { it.copy(mode = mode) }
@@ -87,6 +94,7 @@ class Settings(context: Context) : ServerStore {
             mode = prefs.getString(KEY_MODE, null)?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() } ?: ConnectionMode.AUTO,
             fingerprint = prefs.getString(KEY_FINGERPRINT, null),
             localVerified = prefs.getBoolean(KEY_LOCAL_VERIFIED, false),
+            localFingerprint = prefs.getString(KEY_LOCAL_FINGERPRINT, null),
         )
     }
 
@@ -100,6 +108,7 @@ class Settings(context: Context) : ServerStore {
         const val KEY_MODE = "connectionMode"
         const val KEY_FINGERPRINT = "serverFingerprint"
         const val KEY_LOCAL_VERIFIED = "localVerified"
-        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED)
+        const val KEY_LOCAL_FINGERPRINT = "localFingerprint"
+        val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED, KEY_LOCAL_FINGERPRINT)
     }
 }

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.roylet.photos.AppContainer
 import com.roylet.photos.data.ServerConfig
 import com.roylet.photos.immich.ImmichApi
+import com.roylet.photos.net.LanScanner
 import com.roylet.photos.ui.components.BrutalButton
 import com.roylet.photos.ui.components.BrutalCard
 import com.roylet.photos.ui.components.BrutalTextField
@@ -74,7 +75,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
         error = null
         scope.launch {
             try {
-                val origin = ImmichApi.discoverOrigin(url, container.http)
+                val origin = LanScanner.discoverOrigin(url, container.http)
                 if (origin == null) {
                     error = "Couldn't reach an Immich server at ${url.trim()}. Check the address (include the port, e.g. :2283) and that you're on the right network."
                     return@launch

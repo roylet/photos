@@ -20,6 +20,10 @@ class FakeImmich(
     var externalDomain: String = "",
     /** Changes the unauthenticated fingerprint: a different "server". */
     var loginPageMessage: String = "Welcome to the family photos",
+    /** major.minor.patch reported by /server/version. */
+    var version: Triple<Int, Int, Int> = Triple(2, 4, 1),
+    /** Replaces the whole /server/config body when set. */
+    var configBody: String? = null,
 ) {
     val server = MockWebServer()
 
@@ -31,9 +35,9 @@ class FakeImmich(
                     if (request.getHeader("x-api-key") == apiKey) MockResponse().setBody("""{"id":"$userId","email":"me@example.com"}""")
                     else MockResponse().setResponseCode(401).setBody("""{"message":"Invalid API key"}""")
                 "/api/server/config" -> MockResponse().setBody(
-                    """{"externalDomain":"$externalDomain","loginPageMessage":"$loginPageMessage","oauthButtonText":"Login with OAuth","trashDays":30,"maintenanceMode":false}""",
+                    configBody ?: """{"externalDomain":"$externalDomain","loginPageMessage":"$loginPageMessage","oauthButtonText":"Login with OAuth","trashDays":30,"maintenanceMode":false}""",
                 )
-                "/api/server/version" -> MockResponse().setBody("""{"major":2,"minor":4,"patch":1,"prerelease":null}""")
+                "/api/server/version" -> MockResponse().setBody("""{"major":${version.first},"minor":${version.second},"patch":${version.third},"prerelease":null}""")
                 "/api/server/features" -> MockResponse().setBody("""{"trash":true,"map":true,"oauth":false,"passwordLogin":true,"smartSearch":true}""")
                 else -> MockResponse().setBody("ok")
             }

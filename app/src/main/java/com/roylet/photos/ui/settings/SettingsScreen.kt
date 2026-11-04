@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
@@ -38,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +47,8 @@ import com.roylet.photos.AppContainer
 import com.roylet.photos.data.ConnectionMode
 import com.roylet.photos.data.ServerConfig
 import com.roylet.photos.net.ConnState
+import com.roylet.photos.net.ConnectionCheck
+import com.roylet.photos.net.StepStatus
 import com.roylet.photos.net.LocalUrlResult
 import com.roylet.photos.net.ScanState
 import com.roylet.photos.ui.components.BrutalButton
@@ -70,11 +74,13 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
     val state by container.connection.state.collectAsState()
     val activeUrl by container.connection.activeUrl.collectAsState()
     val scan by container.connection.scan.collectAsState()
+    val check by container.connection.check.collectAsState()
     SettingsContent(
         server = server,
         state = state,
         activeUrl = activeUrl,
         scan = scan,
+        check = check,
         onBack = onBack,
         onMode = container.connection::setMode,
         onSavePublic = container.connection::setPublicUrl,
@@ -91,6 +97,8 @@ fun SettingsContent(
     state: ConnState,
     activeUrl: String,
     scan: ScanState,
+    /** The last connection check's steps, shown under the scan card; null hides the panel. */
+    check: ConnectionCheck? = null,
     onBack: () -> Unit,
     onMode: (ConnectionMode) -> Unit,
     /** Saves the address; returns whether it was verified as this account's server. */
@@ -141,7 +149,11 @@ fun SettingsContent(
                     onSave = {
                         when (onSaveLocal(it)) {
                             LocalUrlResult.Verified -> SaveOutcome(true, "Verified: same server and account.")
-                            LocalUrlResult.Unverified -> SaveOutcome(false, "Saved, but not verified yet. It won't be used (or sent your key) until it matches your server.")
+                            LocalUrlResult.VerifiedWithNote -> SaveOutcome(true, "Verified by your account. Some server settings look different from the public address: see Connection check below.")
+                            LocalUrlResult.Unverified -> SaveOutcome(
+                                false,
+                                "Saved, but not verified, so it won't be used or sent your key. Connection check below shows which step failed.",
+                            )
                             LocalUrlResult.NotLanAddress -> SaveOutcome(false, "Not saved: use a home network IP address like 192.168.x.x or 10.x.x.x.")
                             LocalUrlResult.Cleared -> null
                         }
@@ -190,6 +202,10 @@ fun SettingsContent(
                     ScanState.Idle -> {}
                 }
                 if (scan !is ScanState.Idle) Spacer(Modifier.height(12.dp))
+                check?.let {
+                    ConnectionCheckPanel(it)
+                    Spacer(Modifier.height(12.dp))
+                }
                 BrutalButton(
                     if (scan is ScanState.Running) "Scanning…" else "Scan network",
                     onClick = onScan,
@@ -225,6 +241,42 @@ fun SettingsContent(
 }
 
 private class SaveOutcome(val ok: Boolean, val message: String)
+
+/** Each step of the last check with pass/fail and the reason; selectable so it can be copied into a report. */
+@Composable
+private fun ConnectionCheckPanel(check: ConnectionCheck) {
+    Column(
+        Modifier.fillMaxWidth().background(Brutal.Sand).padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Connection check", style = Type.Label, color = Brutal.Ink, modifier = Modifier.weight(1f))
+            if (check.running) Tag("Running", fill = Brutal.Yellow)
+        }
+        Text(check.title, style = Type.Small, color = Brutal.MutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        SelectionContainer {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                check.steps.forEach { step ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        val (label, fill, ink) = when (step.status) {
+                            StepStatus.Pass -> Triple("Pass", Brutal.Mint, Brutal.Ink)
+                            StepStatus.Warn -> Triple("Note", Brutal.Yellow, Brutal.Ink)
+                            StepStatus.Fail -> Triple("Fail", Brutal.Red, Brutal.Card)
+                            StepStatus.Running -> Triple("…", Brutal.Card, Brutal.Ink)
+                            StepStatus.Skipped -> Triple("Skip", Brutal.Card, Brutal.MutedInk)
+                        }
+                        Tag(label, fill = fill, ink = ink, modifier = Modifier.width(52.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(step.name, style = Type.Small.copy(fontWeight = FontWeight.Bold), color = Brutal.Ink)
+                            Text(step.detail, style = Type.Small, color = Brutal.MutedInk)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun UrlField(
