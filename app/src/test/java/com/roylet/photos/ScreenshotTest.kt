@@ -49,12 +49,13 @@ import com.roylet.photos.ui.theme.BrutalDark
 import com.roylet.photos.ui.theme.PhotosTheme
 import com.roylet.photos.ui.theme.Type
 import org.junit.After
+import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
@@ -64,10 +65,17 @@ import java.io.File
  *   ./gradlew testDebugUnitTest -Pscreenshots --tests '*ScreenshotTest*'
  * Output: app/build/screenshots/
  */
-@RunWith(RobolectricTestRunner::class)
+@RunWith(ParameterizedRobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w400dp-h880dp-xhdpi")
-class ScreenshotTest {
+class ScreenshotTest(private val darkTheme: Boolean) {
+    companion object {
+        /** Every screen is shot in the light theme and again in dark (as name-dark.png). */
+        @JvmStatic
+        @ParameterizedRobolectricTestRunner.Parameters(name = "dark={0}")
+        fun themes(): List<Array<Any>> = listOf(arrayOf(false), arrayOf(true))
+    }
+
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val app get() = ApplicationProvider.getApplicationContext<PhotosApp>()
@@ -84,7 +92,7 @@ class ScreenshotTest {
         FakeGallery.install(app.container)
     }
 
-    private fun shoot(name: String, dark: Boolean = false, content: @Composable () -> Unit) {
+    private fun shoot(name: String, dark: Boolean = darkTheme, content: @Composable () -> Unit) {
         // Infinite animations (spinners, progress stripes) would otherwise keep Compose from idling.
         compose.mainClock.autoAdvance = false
         compose.setContent {
@@ -94,7 +102,7 @@ class ScreenshotTest {
                 LocalReducedMotion provides true,
             ) { PhotosTheme(dark = dark) { content() } }
         }
-        save(name)
+        save(if (darkTheme) "$name-dark" else name)
     }
 
     private fun save(name: String) {
@@ -120,7 +128,12 @@ class ScreenshotTest {
     }
 
     /** The dark brutalist kit the viewer and editor are built from. */
-    @Test fun darkKit() = shoot("04-dark-kit", dark = true) {
+    @Test fun darkKit() {
+        assumeFalse(darkTheme) // Always dark.
+        darkKitShot()
+    }
+
+    private fun darkKitShot() = shoot("04-dark-kit", dark = true) {
         Column(Modifier.fillMaxSize().background(BrutalDark.Canvas).statusBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DarkIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", {})

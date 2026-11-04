@@ -433,13 +433,13 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
 
 /** Round check in the corner of each cell during selection: an empty ring, filling orange with a check when selected. */
 @Composable
-fun SelectCheck(selected: Boolean, modifier: Modifier = Modifier) {
+fun SelectCheck(selected: Boolean, modifier: Modifier = Modifier, ring: Color = Brutal.Ink, wash: Color = Color.White.copy(alpha = 0.35f)) {
     val reduced = reducedMotion()
     val pop by animateFloatAsState(if (selected) 1f else 0f, if (reduced) spring(stiffness = 1e5f) else spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium), label = "check")
     Box(
         modifier.size(22.dp).drawBehind {
-            drawCircle(Color.White.copy(alpha = 0.35f))
-            drawCircle(Brutal.Ink, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            drawCircle(wash)
+            drawCircle(ring, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
         },
         contentAlignment = Alignment.Center,
     ) {
@@ -492,7 +492,7 @@ private fun MonthHeader(bucket: TimeBucket, count: Int, selection: GridSelection
                     if (all) selection.deselectAll(ids) else selection.selectAll(ids)
                 },
                 contentAlignment = Alignment.Center,
-            ) { SelectCheck(all) }
+            ) { SelectCheck(all, ring = Palette.border, wash = Palette.card.copy(alpha = 0.35f)) }
         }
     }
 }

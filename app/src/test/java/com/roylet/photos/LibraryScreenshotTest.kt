@@ -50,6 +50,7 @@ import com.roylet.photos.ui.search.SearchModel
 import com.roylet.photos.ui.search.SearchQuery
 import com.roylet.photos.ui.search.SearchScreen
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.PhotosTheme
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
@@ -59,12 +60,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
@@ -75,10 +77,17 @@ import java.time.LocalDate
  *   ./gradlew testDebugUnitTest -Pscreenshots --tests '*LibraryScreenshotTest*'
  * Output: app/build/screenshots/library-*.png
  */
-@RunWith(RobolectricTestRunner::class)
+@RunWith(ParameterizedRobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w400dp-h880dp-xhdpi")
-class LibraryScreenshotTest {
+class LibraryScreenshotTest(private val darkTheme: Boolean) {
+    companion object {
+        /** Every screen is shot in the light theme and again in dark (as name-dark.png). */
+        @JvmStatic
+        @ParameterizedRobolectricTestRunner.Parameters(name = "dark={0}")
+        fun themes(): List<Array<Any>> = listOf(arrayOf(false), arrayOf(true))
+    }
+
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val app get() = ApplicationProvider.getApplicationContext<PhotosApp>()
@@ -104,7 +113,7 @@ class LibraryScreenshotTest {
 
     @After fun signOut() = app.container.settings.signOut()
 
-    private fun shoot(name: String, dark: Boolean = false, before: () -> Unit = {}, content: @Composable () -> Unit) {
+    private fun shoot(name: String, dark: Boolean = darkTheme, before: () -> Unit = {}, content: @Composable () -> Unit) {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             CompositionLocalProvider(
@@ -126,7 +135,7 @@ class LibraryScreenshotTest {
         }
         compose.mainClock.advanceTimeBy(300)
         before()
-        save(name)
+        save(if (darkTheme) "$name-dark" else name)
     }
 
     private fun save(name: String) {
@@ -140,7 +149,7 @@ class LibraryScreenshotTest {
 
     @Composable
     private fun WithTabs(route: String, content: @Composable () -> Unit) {
-        Column(Modifier.fillMaxSize().background(Brutal.Paper)) {
+        Column(Modifier.fillMaxSize().background(Palette.paper)) {
             Box(Modifier.weight(1f)) { content() }
             BrutalTabBar(Tabs, route, {})
         }
@@ -228,6 +237,7 @@ class LibraryScreenshotTest {
     }
 
     @Test fun memoryStory() {
+        assumeFalse(darkTheme) // Always dark.
         val memories: List<Memory> = runBlocking { library.memories(LocalDate.of(2026, 11, 4)) }
         shoot("library-12-memory-story", dark = true) {
             MemoryStoryScreen(memories, 1, onClose = {}, today = LocalDate.of(2026, 11, 4))
@@ -248,6 +258,7 @@ class LibraryScreenshotTest {
 
     /** Through the real app: open a photo, then drag it halfway down. The grid must show behind it. */
     @Test fun viewerDismissRevealsGrid() {
+        assumeFalse(darkTheme)
         app.container.settings.saveServer(ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1", email = "me@example.com"))
         FakeGallery.install(app.container)
         app.container.library = library

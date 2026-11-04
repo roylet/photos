@@ -30,6 +30,7 @@ import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.gallery.PhotosScreen
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.BrutalDark
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.PhotosTheme
 import com.roylet.photos.ui.viewer.VideoFrameCache
 import com.roylet.photos.ui.viewer.ViewerScreen
@@ -88,12 +89,17 @@ class GalleryScreenshotTest {
         shoot("gallery-01-timeline") { AppNav(app.container) }
     }
 
-    @Test fun timelineSelecting() {
+    @Test fun timelineSelecting() = selecting("gallery-02-selecting", dark = false)
+
+    /** The selection bar, check rings and cell tint in the dark theme. */
+    @Test fun timelineSelectingDark() = selecting("gallery-02-selecting-dark", dark = true)
+
+    private fun selecting(name: String, dark: Boolean) {
         val repo = FakeGallery.repository(loadAll = true)
         val first = FakeGallery.assetsOf(FakeGallery.buckets[0].key)
         val selection = GridSelection().apply { set(first.take(5).map { it.id }.toSet() + first[8].id) }
-        shoot("gallery-02-selecting") {
-            Column(Modifier.fillMaxSize().background(Brutal.Paper)) {
+        shoot(name, dark = dark) {
+            Column(Modifier.fillMaxSize().background(Palette.paper)) {
                 PhotosScreen(repo, onOpen = { _, _ -> }, onSettings = {}, selection = selection, modifier = Modifier.weight(1f))
                 BrutalTabBar(Tabs, Routes.TIMELINE, {})
             }
@@ -101,10 +107,14 @@ class GalleryScreenshotTest {
     }
 
     /** The compact month overview (pinched all the way out). */
-    @Test fun timelineMonths() {
+    @Test fun timelineMonths() = months("gallery-07-months", dark = false)
+
+    @Test fun timelineMonthsDark() = months("gallery-07-months-dark", dark = true)
+
+    private fun months(name: String, dark: Boolean) {
         val repo = FakeGallery.repository(loadAll = true)
-        shoot("gallery-07-months") {
-            Column(Modifier.fillMaxSize().background(Brutal.Paper)) {
+        shoot(name, dark = dark) {
+            Column(Modifier.fillMaxSize().background(Palette.paper)) {
                 ScreenHeader("Photos")
                 TimelineGrid(repo, onOpen = { _, _ -> }, initialDensity = GridDensity.Months, modifier = Modifier.weight(1f))
             }

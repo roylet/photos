@@ -229,7 +229,7 @@ fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
 
 @Composable
 private fun ModeTile(icon: ImageVector, title: String, subtitle: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    Pressable(onClick, modifier, fill = if (selected) Brutal.Orange else Brutal.Card, shadow = if (selected) 4.dp else 3.dp, enabled = enabled) {
+    Pressable(onClick, modifier, fill = if (selected) Brutal.Orange else Palette.card, shadow = if (selected) 4.dp else 3.dp, enabled = enabled) {
         Column(Modifier.padding(12.dp)) {
             Icon(icon, null, tint = if (selected) Brutal.Ink else Palette.ink, modifier = Modifier.size(24.dp))
             Spacer(Modifier.height(8.dp))
