@@ -334,8 +334,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                 assetId = assetId,
                 onClose = { nav.popBackStack() },
                 onSaved = {
-                    // The timeline changed (new asset, maybe a trashed original): refresh caches and return to the viewer.
-                    container.timelines.invalidateAll()
+                    // EditSaveManager already refreshed the cached timelines (new asset, maybe a trashed original).
                     nav.popBackStack()
                 },
             )

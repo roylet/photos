@@ -109,7 +109,7 @@ class AppContainer(context: Context) {
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }
 
     /** Photo-editor saves (WorkManager jobs) and the viewer's "Original moved to Trash · UNDO". */
-    val edits: EditSaveManager by lazy { EditSaveManager(app) { api() } }
+    val edits: EditSaveManager by lazy { EditSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }
 
     companion object {
         /**

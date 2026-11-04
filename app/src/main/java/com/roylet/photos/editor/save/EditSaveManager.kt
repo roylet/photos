@@ -65,7 +65,12 @@ sealed interface SaveProgress {
  * "Original moved to Trash · UNDO" and call [undoReplace] on tap or [consumeLastReplace] when the
  * snackbar is dismissed.
  */
-class EditSaveManager(context: Context, private val api: () -> ImmichApi?) {
+class EditSaveManager(
+    context: Context,
+    private val api: () -> ImmichApi?,
+    /** Called once per finished save (from the worker's thread), e.g. to refresh cached timelines. */
+    private val onSaved: (SaveResult) -> Unit = {},
+) {
     private val app = context.applicationContext
     private val _jobs = MutableStateFlow<Map<String, SaveProgress>>(emptyMap())
     private val _lastReplace = MutableStateFlow<SaveResult?>(null)
@@ -116,7 +121,11 @@ class EditSaveManager(context: Context, private val api: () -> ImmichApi?) {
 
     internal fun report(jobId: String, progress: SaveProgress) {
         _jobs.update { it + (jobId to progress) }
-        if (progress is SaveProgress.Done && progress.result.originalTrashed) _lastReplace.value = progress.result
+        if (progress is SaveProgress.Done) {
+            // Also when the editor was left ("keep working in the background"): it can't refresh then.
+            runCatching { onSaved(progress.result) }
+            if (progress.result.originalTrashed) _lastReplace.value = progress.result
+        }
     }
 
     /** Runs one job: render, then [SaveFlow]. Called by the worker. */
@@ -128,6 +137,7 @@ class EditSaveManager(context: Context, private val api: () -> ImmichApi?) {
         onProgress(SaveStage.RENDERING, 0f)
         val out = File(app.cacheDir, "edit-save/$jobId/${spec.filename}")
         val recipe = Recipe.fromJson(spec.recipeJson)
+        var stopped = false
         try {
             val source = SourceLoader.load(sourceFile, proxyLongEdge = 1024)
             try {
@@ -137,9 +147,14 @@ class EditSaveManager(context: Context, private val api: () -> ImmichApi?) {
             }
             onProgress(SaveStage.RENDERING, 1f)
             return SaveFlow(api).run(spec.targetId, spec.renderSourceId, out, spec.filename, recipe, spec.mode, spec.group, onProgress)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // WorkManager stopped the job (constraints, quota, system pressure) and will run it again:
+            // keep the spec so the rerun can find it.
+            stopped = true
+            throw e
         } finally {
-            out.delete()
-            specFile(jobId).delete()
+            out.parentFile?.deleteRecursively()
+            if (!stopped) specFile(jobId).delete()
         }
     }
 
