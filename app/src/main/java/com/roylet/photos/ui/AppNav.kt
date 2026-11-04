@@ -75,6 +75,13 @@ import com.roylet.photos.ui.gallery.PhotosScreen
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.viewer.ViewerScreen
 import com.roylet.photos.ui.library.LibraryScreen
+import com.roylet.photos.ui.library.LibraryEntry
+import com.roylet.photos.ui.library.MapScreen
+import com.roylet.photos.ui.library.PeopleScreen
+import com.roylet.photos.ui.library.TrashScreen
+import com.roylet.photos.immich.ImmichApi
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.roylet.photos.ui.search.SearchScreen
 import com.roylet.photos.ui.settings.SettingsScreen
 import com.roylet.photos.ui.theme.Brutal
@@ -91,11 +98,20 @@ object Routes {
     const val EDIT = "edit/{assetId}"
     const val ALBUM = "album/{albumId}"
     const val PERSON = "person/{personId}?name={name}"
+    const val FAVORITES = "favorites"
+    const val ARCHIVE = "archive"
+    const val TRASH = "trash"
+    const val PEOPLE = "people"
+    const val MAP = "map"
+    const val LIST = "list/{filter}?title={title}"
+    const val MEMORIES = "memories?index={index}"
 
     /** Opens the viewer on [index] of the timeline described by [filter]. */
     fun viewer(filter: TimelineFilter, index: Int, id: String) = "viewer?filter=${filter.encode()}&index=$index&id=$id"
     fun edit(assetId: String) = "edit/$assetId"
     fun album(id: String) = "album/$id"
+    fun memories(index: Int) = "memories?index=$index"
+    fun list(filter: TimelineFilter, title: String) = "list/${filter.encode()}?title=${android.net.Uri.encode(title)}"
     fun person(id: String, name: String) = "person/$id?name=${android.net.Uri.encode(name)}"
 
     /** Saved-state key the viewer sets on the screen below it: the index it ended on, so the grid can reveal it. */
@@ -167,6 +183,16 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
             )
         }
     }
+}
+
+/** Map clusters open at most this many photos. */
+private const val MAX_CLUSTER = 300
+
+/** Opens today's memories in the story viewer, or says there are none. */
+private fun openMemories(container: AppContainer, nav: NavHostController) {
+    container.memories.start()
+    if (container.memories.memories.value.isEmpty()) container.snackbar.show("No memories for today yet")
+    else nav.navigate(Routes.memories(0))
 }
 
 /**
@@ -284,7 +310,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                     timelineFor = { container.timelines.get(it) },
                     onOpen = { timeline, index, asset -> nav.navigate(Routes.viewer(timeline.filter, index, asset.id)) },
                     onPerson = { nav.navigate(Routes.person(it.id, it.name)) },
-                    onAllPeople = {},
+                    onAllPeople = { nav.navigate(Routes.PEOPLE) },
                 )
             }
         }
@@ -298,7 +324,62 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                 TimelineScreen(timeline, name.ifBlank { "Person" }, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
-        composable(Routes.LIBRARY) { LibraryScreen(container, onSettings = { nav.navigate(Routes.SETTINGS) }) }
+        composable(Routes.LIBRARY) {
+            LibraryScreen(onOpen = { e ->
+                when (e) {
+                    LibraryEntry.Favorites -> nav.navigate(Routes.FAVORITES)
+                    LibraryEntry.People -> nav.navigate(Routes.PEOPLE)
+                    LibraryEntry.Places -> nav.navigate(Routes.MAP)
+                    LibraryEntry.Memories -> openMemories(container, nav)
+                    LibraryEntry.Archive -> nav.navigate(Routes.ARCHIVE)
+                    LibraryEntry.Trash -> nav.navigate(Routes.TRASH)
+                    LibraryEntry.Settings -> nav.navigate(Routes.SETTINGS)
+                }
+            })
+        }
+        composable(Routes.FAVORITES) { entry ->
+            TimelineDestination(container, nav, entry, TimelineFilter.Favorites) { timeline, open, reveal, revealed ->
+                TimelineScreen(
+                    timeline, "Favorites", open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
+                    emptyTitle = "No favourites yet", emptyText = "Tap the heart on a photo to keep it here.",
+                )
+            }
+        }
+        composable(Routes.ARCHIVE) { entry ->
+            TimelineDestination(container, nav, entry, TimelineFilter.Archive) { timeline, open, reveal, revealed ->
+                TimelineScreen(
+                    timeline, "Archive", open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
+                    emptyTitle = "Nothing archived", emptyText = "Archive photos to hide them from Photos without deleting them.",
+                )
+            }
+        }
+        composable(Routes.TRASH) { entry ->
+            TimelineDestination(container, nav, entry, TimelineFilter.Trash) { timeline, open, reveal, revealed ->
+                TrashScreen(timeline, { container.library }, container.actions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+            }
+        }
+        composable(Routes.PEOPLE) {
+            PeopleScreen({ container.library }, onPerson = { nav.navigate(Routes.person(it.id, it.name)) }, onBack = { nav.popBackStack() })
+        }
+        composable(Routes.MAP) {
+            val scope = rememberCoroutineScope()
+            MapScreen({ container.library }, onPick = { ids, title ->
+                scope.launch {
+                    runCatching { container.library.assets(ids.take(MAX_CLUSTER)) }
+                        .onSuccess { assets -> nav.navigate(Routes.list(container.timelines.putList("map-${System.nanoTime()}", assets), title)) }
+                        .onFailure { container.snackbar.error("Couldn't load those photos: ${ImmichApi.describe(it)}") }
+                }
+            }, onBack = { nav.popBackStack() })
+        }
+        composable(
+            Routes.LIST,
+            arguments = listOf(navArgument("filter") { type = NavType.StringType }, navArgument("title") { type = NavType.StringType; defaultValue = "" }),
+        ) { entry ->
+            val filter = remember { TimelineFilter.decode(entry.arguments?.getString("filter").orEmpty()) }
+            TimelineDestination(container, nav, entry, filter) { timeline, open, reveal, revealed ->
+                TimelineScreen(timeline, entry.arguments?.getString("title").orEmpty().ifBlank { "Photos" }, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+            }
+        }
         composable(Routes.SETTINGS) { SettingsScreen(container, onBack = { nav.popBackStack() }) }
     }
     }
