@@ -94,7 +94,8 @@ fun EditorSlider(
     val lo = param.range.start
     val hi = param.range.endInclusive
     val span = hi - lo
-    val zero = param.default.coerceIn(lo, hi)
+    // Where the fill starts and the centre tick sits: 0 for two-sided sliders, the left end for one-sided ones.
+    val zero = if (lo < 0f) 0f else lo
     val changed = abs(value - param.default) > 1e-4f
 
     Column(

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,7 +106,8 @@ fun FiltersPanel(session: EditorSession, recipe: State<Recipe>, modifier: Modifi
     val current by remember(recipe) { derivedStateOf { recipe.value.filter?.lutId.orEmpty() } }
     val entries = remember { listOf("" to "None") + Presets.all.map { it.id to it.name } }
     Column(modifier.padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val listState = rememberLazyListState(initialFirstVisibleItemIndex = (entries.indexOfFirst { it.first == current } - 1).coerceAtLeast(0))
+        LazyRow(state = listState, contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.first }) { (id, name) ->
                 FilterThumb(name, thumbs[id], selected = id == current) {
                     session.history.update { r ->

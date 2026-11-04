@@ -42,7 +42,7 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Crop
-import androidx.compose.material.icons.rounded.Lens
+import androidx.compose.material.icons.rounded.InvertColors
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoFilter
@@ -68,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -100,7 +101,7 @@ enum class EditorTool(val label: String, val icon: ImageVector) {
     LIGHT("Light", Icons.Rounded.WbSunny),
     COLOR("Color", Icons.Rounded.Palette),
     CURVE("Curve", Icons.AutoMirrored.Rounded.ShowChart),
-    HSL("HSL", Icons.Rounded.Lens),
+    HSL("HSL", Icons.Rounded.InvertColors),
     EFFECTS("Effects", Icons.Rounded.AutoAwesome),
     FILTERS("Filters", Icons.Rounded.PhotoFilter);
 
@@ -225,7 +226,11 @@ fun EditorWorkspace(
                 Column(Modifier.fillMaxSize()) {
                     header()
                     canvas(Modifier.weight(1f).fillMaxWidth())
-                    panel(Modifier.fillMaxWidth().height(PhonePanelHeight))
+                    panel(
+                        Modifier.fillMaxWidth().height(PhonePanelHeight).drawBehind {
+                            drawLine(BrutalDark.Line.copy(alpha = 0.14f), Offset(0f, 0f), Offset(size.width, 0f), 2.dp.toPx())
+                        }.padding(top = 6.dp),
+                    )
                     ToolRail(tool, recipe, onSelect = { tool = it }, vertical = false, modifier = Modifier.fillMaxWidth().navigationBarsPadding())
                 }
             }
@@ -455,7 +460,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectTa
 // --- Non-ready phases ---
 
 @Composable
-private fun EditorLoading(p: EditorPhase.Loading, onClose: () -> Unit) {
+internal fun EditorLoading(p: EditorPhase.Loading, onClose: () -> Unit) {
     EditorBackdrop {
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth().padding(24.dp)) {
             Text(p.title.uppercase(), style = Type.Label, color = BrutalDark.Orange)
@@ -475,7 +480,7 @@ private fun EditorLoading(p: EditorPhase.Loading, onClose: () -> Unit) {
 }
 
 @Composable
-private fun ReEditChoice(p: EditorPhase.Choose, onContinue: () -> Unit, onThisVersion: () -> Unit, onClose: () -> Unit) {
+internal fun ReEditChoice(p: EditorPhase.Choose, onContinue: () -> Unit, onThisVersion: () -> Unit, onClose: () -> Unit) {
     EditorBackdrop {
         Column(Modifier.widthIn(max = 460.dp).fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("EDITED IN PHOTOS", style = Type.Label, color = BrutalDark.Orange)
