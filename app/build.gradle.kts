@@ -124,6 +124,8 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.transformer)
+    implementation(libs.media3.effect)
     implementation(libs.maplibre.android)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

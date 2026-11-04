@@ -13,6 +13,7 @@ import com.roylet.photos.domain.library.AlbumStore
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.MemoryStore
 import com.roylet.photos.editor.save.EditSaveManager
+import com.roylet.photos.video.save.VideoSaveManager
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichLibrary
 import com.roylet.photos.immich.ImmichTimelineSource
@@ -124,6 +125,9 @@ class AppContainer(context: Context) {
 
     /** Photo-editor saves (WorkManager jobs) and the viewer's "Original moved to Trash · UNDO". */
     val edits: EditSaveManager by lazy { EditSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }
+
+    /** Video-editor saves (download → export → upload WorkManager jobs), originals cache and REPLACE undo. */
+    val videoEdits: VideoSaveManager by lazy { VideoSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }
 
     companion object {
         /**
