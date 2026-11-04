@@ -29,6 +29,7 @@ data class EditAssetInfo(
     val isEdited: Boolean = false,
     val isTrashed: Boolean = false,
     val checksum: String = "",
+    val deviceAssetId: String = "",
     val width: Int? = null,
     val height: Int? = null,
 )

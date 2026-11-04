@@ -41,7 +41,7 @@ import com.roylet.photos.ui.theme.Palette
  * it with their own [timeline], [title] and [onBack].
  *
  * @param headerActions trailing header content, e.g. the ConnectionChip and a settings button.
- * @param selectionActions the selection bar's buttons; defaults to [DefaultSelectionActions].
+ * @param selectionActions the selection bar's buttons; defaults to [defaultSelectionActions].
  */
 @Composable
 fun TimelineScreen(
@@ -57,7 +57,7 @@ fun TimelineScreen(
     emptyTitle: String = "No photos yet",
     emptyText: String = "Photos and videos you upload to your server show up here, newest first.",
     headerActions: @Composable RowScope.() -> Unit = {},
-    selectionActions: @Composable RowScope.(SelectionScope) -> Unit = { DefaultSelectionActions(it) },
+    selectionActions: @Composable (SelectionScope) -> List<SelectionAction> = { defaultSelectionActions(it) },
     topContent: (@Composable () -> Unit)? = null,
 ) {
     val status by timeline.status.collectAsState()
@@ -75,7 +75,7 @@ fun TimelineScreen(
         ) { selecting ->
             if (selecting) {
                 val scope = SelectionScope(selection.ids.toList(), timeline, selection::clear)
-                SelectionTopBar(selection.ids.size, onClose = selection::clear) { selectionActions(scope) }
+                SelectionTopBar(selection.ids.size, onClose = selection::clear, actions = selectionActions(scope))
             } else {
                 ScreenHeader(title, subtitle = subtitle, onBack = onBack, actions = headerActions)
             }
@@ -118,7 +118,7 @@ fun PhotosScreen(
     onRevealed: () -> Unit = {},
     selection: GridSelection = remember { GridSelection() },
     connectionChip: @Composable () -> Unit = {},
-    selectionActions: @Composable RowScope.(SelectionScope) -> Unit = { DefaultSelectionActions(it) },
+    selectionActions: @Composable (SelectionScope) -> List<SelectionAction> = { defaultSelectionActions(it) },
     topContent: (@Composable () -> Unit)? = null,
 ) {
     TimelineScreen(

@@ -12,6 +12,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import com.roylet.photos.data.ThemeMode
 import com.roylet.photos.ui.AppNav
 import com.roylet.photos.ui.theme.DarkBrutalColors
@@ -35,7 +39,8 @@ class MainActivity : ComponentActivity() {
                 rememberNightMode(mode)
             }
             PhotosTheme(dark = dark, animate = true) {
-                AppNav(container)
+                // Test tags double as resource ids so the baseline-profile generator (UiAutomator) can find the grid and pager.
+                Box(Modifier.semantics { testTagsAsResourceId = true }) { AppNav(container) }
             }
         }
     }

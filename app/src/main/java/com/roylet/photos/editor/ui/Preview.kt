@@ -45,7 +45,11 @@ fun GlPreview(session: EditorSession, modifier: Modifier = Modifier) {
         renderer.imageBounds.collect { session.bounds.value = it }
     }
     AndroidView(
-        factory = { ctx -> GlTextureView(ctx, renderer).also { v -> session.invalidate = v::requestRender } },
+        factory = { ctx ->
+            // `adb shell setprop log.tag.EditGl DEBUG` logs draft vs full frame times (see EditRenderer.measureFrames).
+            renderer.measureFrames = Log.isLoggable("EditGl", Log.DEBUG)
+            GlTextureView(ctx, renderer).also { v -> session.invalidate = v::requestRender }
+        },
         modifier = modifier,
         onRelease = { v -> if (session.invalidate == v::requestRender) session.invalidate = {} },
     )
@@ -53,30 +57,36 @@ fun GlPreview(session: EditorSession, modifier: Modifier = Modifier) {
 
 /**
  * A CPU-rendered stand-in for [GlPreview] where GL is unavailable (Robolectric screenshots,
- * previews). Same fit, crop-mode margin and bounds reporting as the GPU path.
+ * previews). Same fit, crop-mode margin, bounds reporting and compare crossfade as the GPU path.
  */
 @Composable
-fun StaticPreview(session: EditorSession, modifier: Modifier = Modifier, cropMode: Boolean = false, showOriginal: Boolean = false) {
+fun StaticPreview(session: EditorSession, modifier: Modifier = Modifier, cropMode: Boolean = false, compareMix: Float = 0f) {
     val recipe by session.history.current.collectAsState()
     val small = remember(session) { downscale(session.proxy, 560).toArgbImage() }
-    val image = remember(recipe, cropMode, showOriginal) {
-        val r = if (showOriginal) Recipe() else recipe
-        ReferenceRenderer.render(small, r, ignoreCrop = cropMode).toBitmap().asImageBitmap()
-    }
+    val edited = remember(recipe, cropMode) { ReferenceRenderer.render(small, recipe, ignoreCrop = cropMode).toBitmap().asImageBitmap() }
+    val original = remember(small) { ReferenceRenderer.render(small, Recipe()).toBitmap().asImageBitmap() }
     Canvas(modifier.fillMaxSize()) {
-        val g = (if (showOriginal) Recipe() else recipe).geometry
-        val aspect = GeometryMath.outputAspect(g, session.fullWidth, session.fullHeight, cropMode)
-        val zoom = if (cropMode) EditorSession.CROP_ZOOM else 1f
-        val viewAspect = size.width / size.height
-        val fw = (if (aspect > viewAspect) size.width else size.height * aspect) * zoom
-        val fh = (if (aspect > viewAspect) size.width / aspect else size.height) * zoom
-        val l = (size.width - fw) / 2f
-        val t = (size.height - fh) / 2f
-        val b = RectF(l, t, l + fw, t + fh)
+        fun place(r: Recipe, ignoreCrop: Boolean): RectF {
+            val aspect = GeometryMath.outputAspect(r.geometry, session.fullWidth, session.fullHeight, ignoreCrop)
+            val zoom = if (cropMode) EditorSession.CROP_ZOOM else 1f
+            val viewAspect = size.width / size.height
+            val fw = (if (aspect > viewAspect) size.width else size.height * aspect) * zoom
+            val fh = (if (aspect > viewAspect) size.width / aspect else size.height) * zoom
+            val l = (size.width - fw) / 2f
+            val t = (size.height - fh) / 2f
+            return RectF(l, t, l + fw, t + fh)
+        }
+        val mix = compareMix.coerceIn(0f, 1f)
+        val editRect = place(recipe, cropMode)
+        val originalRect = place(Recipe(), false)
+        val b = if (mix < 0.5f) editRect else originalRect
         if (session.bounds.value != b) session.bounds.value = b
         drawIntoCanvas {
-            drawImage(image, dstOffset = IntOffset(l.roundToInt(), t.roundToInt()),
-                dstSize = IntSize(fw.roundToInt(), fh.roundToInt()), filterQuality = FilterQuality.High)
+            // Each layer fades over the letterbox, so differently cropped frames crossfade cleanly.
+            if (mix < 1f) drawImage(edited, dstOffset = IntOffset(editRect.left.roundToInt(), editRect.top.roundToInt()),
+                dstSize = IntSize(editRect.width().roundToInt(), editRect.height().roundToInt()), alpha = 1f - mix, filterQuality = FilterQuality.High)
+            if (mix > 0f) drawImage(original, dstOffset = IntOffset(originalRect.left.roundToInt(), originalRect.top.roundToInt()),
+                dstSize = IntSize(originalRect.width().roundToInt(), originalRect.height().roundToInt()), alpha = mix, filterQuality = FilterQuality.High)
         }
     }
 }

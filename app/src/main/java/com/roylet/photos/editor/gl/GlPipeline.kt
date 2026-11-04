@@ -152,8 +152,10 @@ internal class GlPipeline {
         srcRect: FloatArray,
         grainScale: Pair<Float, Float>,
     ) {
-        uploadCurve(p.curveLut)
-        uploadLut(p.lut)
+        // Disabled tables are never sampled (curveOn / lutAmount are 0), so keep whatever is bound:
+        // the compare crossfade draws the original between edit frames without re-uploading.
+        if (p.curveLut != null) uploadCurve(p.curveLut)
+        if (p.lut != null) uploadLut(p.lut)
         GLES30.glUseProgram(program)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texSource)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texBlur)
