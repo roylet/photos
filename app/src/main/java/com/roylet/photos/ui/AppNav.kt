@@ -72,6 +72,7 @@ import com.roylet.photos.ui.gallery.LocalMediaUrls
 import com.roylet.photos.ui.gallery.LocalNavAnimatedScope
 import com.roylet.photos.ui.gallery.LocalSharedTransitionScope
 import com.roylet.photos.ui.gallery.PhotosScreen
+import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.viewer.ViewerScreen
 import com.roylet.photos.ui.library.LibraryScreen
 import com.roylet.photos.ui.search.SearchScreen
@@ -89,11 +90,13 @@ object Routes {
     const val VIEWER = "viewer?filter={filter}&index={index}&id={id}"
     const val EDIT = "edit/{assetId}"
     const val ALBUM = "album/{albumId}"
+    const val PERSON = "person/{personId}?name={name}"
 
     /** Opens the viewer on [index] of the timeline described by [filter]. */
     fun viewer(filter: TimelineFilter, index: Int, id: String) = "viewer?filter=${filter.encode()}&index=$index&id=$id"
     fun edit(assetId: String) = "edit/$assetId"
     fun album(id: String) = "album/$id"
+    fun person(id: String, name: String) = "person/$id?name=${android.net.Uri.encode(name)}"
 
     /** Saved-state key the viewer sets on the screen below it: the index it ended on, so the grid can reveal it. */
     const val REVEAL_INDEX = "revealIndex"
@@ -134,7 +137,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
 
     val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
     // A new account (or sign-out) starts the library caches afresh.
-    LaunchedEffect(server?.publicUrl, server?.userId) { container.albums.clear(); container.memories.clear() }
+    LaunchedEffect(server?.publicUrl, server?.userId) { container.albums.clear(); container.memories.clear(); container.search.reset() }
     CompositionLocalProvider(
         LocalMediaUrls provides urls,
         LocalMediaHttpClient provides container.http,
@@ -274,7 +277,27 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                 AlbumDetailScreen(id, container.albums, timeline, container.actions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
-        composable(Routes.SEARCH) { SearchScreen(container) }
+        composable(Routes.SEARCH) {
+            CompositionLocalProvider(LocalNavAnimatedScope provides this) {
+                SearchScreen(
+                    container.search,
+                    timelineFor = { container.timelines.get(it) },
+                    onOpen = { timeline, index, asset -> nav.navigate(Routes.viewer(timeline.filter, index, asset.id)) },
+                    onPerson = { nav.navigate(Routes.person(it.id, it.name)) },
+                    onAllPeople = {},
+                )
+            }
+        }
+        composable(
+            Routes.PERSON,
+            arguments = listOf(navArgument("personId") { type = NavType.StringType }, navArgument("name") { type = NavType.StringType; defaultValue = "" }),
+        ) { entry ->
+            val id = entry.arguments?.getString("personId").orEmpty()
+            val name = entry.arguments?.getString("name").orEmpty()
+            TimelineDestination(container, nav, entry, TimelineFilter.person(id)) { timeline, open, reveal, revealed ->
+                TimelineScreen(timeline, name.ifBlank { "Person" }, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+            }
+        }
         composable(Routes.LIBRARY) { LibraryScreen(container, onSettings = { nav.navigate(Routes.SETTINGS) }) }
         composable(Routes.SETTINGS) { SettingsScreen(container, onBack = { nav.popBackStack() }) }
     }

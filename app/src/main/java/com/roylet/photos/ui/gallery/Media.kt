@@ -26,6 +26,7 @@ import com.roylet.photos.domain.timeline.ThumbHash
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ThumbSize
 import com.roylet.photos.immich.originalUrl
+import com.roylet.photos.immich.personThumbnailUrl
 import com.roylet.photos.immich.thumbnailUrl
 import com.roylet.photos.immich.videoPlaybackUrl
 import com.roylet.photos.ui.components.reducedMotion
@@ -41,6 +42,8 @@ interface MediaUrls {
     fun fullsize(id: String): String
     fun original(id: String): String
     fun video(id: String): String
+    /** A person's face crop. */
+    fun person(id: String): String = "fake://person/$id"
 }
 
 class ImmichMediaUrls(private val api: ImmichApi) : MediaUrls {
@@ -49,6 +52,7 @@ class ImmichMediaUrls(private val api: ImmichApi) : MediaUrls {
     override fun fullsize(id: String) = api.thumbnailUrl(id, ThumbSize.FULLSIZE)
     override fun original(id: String) = api.originalUrl(id)
     override fun video(id: String) = api.videoPlaybackUrl(id)
+    override fun person(id: String) = api.personThumbnailUrl(id)
 }
 
 /** Placeholder URLs for previews and signed-out states; screenshot tests answer them with a Coil preview handler. */

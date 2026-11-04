@@ -29,6 +29,7 @@ import com.roylet.photos.ui.actions.AndroidShareLauncher
 import com.roylet.photos.ui.actions.LibraryActions
 import com.roylet.photos.ui.components.SnackbarController
 import java.io.File
+import com.roylet.photos.ui.search.SearchModel
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -96,6 +97,9 @@ class AppContainer(context: Context) {
             timelines = timelines,
         )
     }
+
+    /** The Search tab's state, kept while switching tabs. */
+    val search by lazy { SearchModel({ library }, timelines, uiPrefs, uiScope) }
 
     /**
      * The API for the saved server, or null when signed out. It's built on the public URL (the
