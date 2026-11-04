@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 /** One destination in the bottom bar / rail. */
@@ -53,11 +54,12 @@ private val PillShape = RoundedCornerShape(50)
  */
 @Composable
 fun BrutalTabBar(tabs: List<NavTab>, selected: String?, onSelect: (NavTab) -> Unit, modifier: Modifier = Modifier) {
+    val rule = Palette.border
     Row(
         modifier
             .fillMaxWidth()
-            .background(Brutal.Paper)
-            .drawBehind { drawLine(Brutal.Ink, Offset.Zero, Offset(size.width, 0f), 2.dp.toPx()) }
+            .background(Palette.paper)
+            .drawBehind { drawLine(rule, Offset.Zero, Offset(size.width, 0f), 2.dp.toPx()) }
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 8.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -72,12 +74,13 @@ fun BrutalTabBar(tabs: List<NavTab>, selected: String?, onSelect: (NavTab) -> Un
 /** The tablet / landscape rail: a paper column with a 2dp ink rule on its right edge. */
 @Composable
 fun BrutalRail(tabs: List<NavTab>, selected: String?, onSelect: (NavTab) -> Unit, modifier: Modifier = Modifier, header: (@Composable () -> Unit)? = null) {
+    val rule = Palette.border
     Column(
         modifier
             .fillMaxHeight()
             .width(96.dp)
-            .background(Brutal.Paper)
-            .drawBehind { drawLine(Brutal.Ink, Offset(size.width, 0f), Offset(size.width, size.height), 2.dp.toPx()) }
+            .background(Palette.paper)
+            .drawBehind { drawLine(rule, Offset(size.width, 0f), Offset(size.width, size.height), 2.dp.toPx()) }
             .windowInsetsPadding(
                 WindowInsets.statusBars.union(WindowInsets.navigationBars).union(WindowInsets.displayCutout)
                     .only(WindowInsetsSides.Vertical + WindowInsetsSides.Start),
@@ -115,13 +118,13 @@ private fun TabItem(tab: NavTab, selected: Boolean, onClick: () -> Unit, modifie
                 .height(32.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(tab.icon, null, tint = Brutal.Ink, modifier = Modifier.size(22.dp))
+            Icon(tab.icon, null, tint = if (selected) Brutal.Ink else Palette.ink, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.height(2.dp))
         Text(
             tab.label.uppercase(),
             style = Type.Tiny,
-            color = if (selected) Brutal.Ink else Brutal.MutedInk,
+            color = if (selected) Palette.ink else Palette.mutedInk,
             textAlign = TextAlign.Center,
             maxLines = 1,
         )

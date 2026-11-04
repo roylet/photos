@@ -42,9 +42,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -53,6 +55,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -65,6 +69,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.LocalBrutalColors
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 val BrutalShape = RoundedCornerShape(6.dp)
@@ -74,13 +80,24 @@ val BrutalShape = RoundedCornerShape(6.dp)
  * Space for the shadow is reserved in layout so neighbours never overlap it.
  */
 fun Modifier.brutal(
-    fill: Color = Brutal.Card,
+    fill: Color = Color.Unspecified,
     shape: Shape = BrutalShape,
     shadow: Dp = 4.dp,
-    border: Color = Brutal.Ink,
+    border: Color = Color.Unspecified,
     reserve: Dp = shadow,
-    shadowColor: Color = Brutal.Ink,
-): Modifier = this
+    shadowColor: Color = Color.Unspecified,
+): Modifier =
+    if (fill.isSpecified && border.isSpecified && (shadowColor.isSpecified || shadow <= 0.dp)) {
+        brutalResolved(fill, shape, shadow, border, reserve, shadowColor)
+    } else {
+        // Unspecified colours come from the theme: card fill, border outline, shadow.
+        composed {
+            val c = LocalBrutalColors.current
+            brutalResolved(fill.takeOrElse { c.card }, shape, shadow, border.takeOrElse { c.border }, reserve, shadowColor.takeOrElse { c.shadow })
+        }
+    }
+
+private fun Modifier.brutalResolved(fill: Color, shape: Shape, shadow: Dp, border: Color, reserve: Dp, shadowColor: Color): Modifier = this
     .padding(end = reserve, bottom = reserve)
     .drawBehind {
         if (shadow > 0.dp) {
@@ -95,7 +112,7 @@ fun Modifier.brutal(
 @Composable
 fun BrutalCard(
     modifier: Modifier = Modifier,
-    fill: Color = Brutal.Card,
+    fill: Color = Palette.card,
     onClick: (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(16.dp),
     content: @Composable ColumnScope.() -> Unit,
@@ -112,14 +129,14 @@ fun BrutalCard(
 fun Pressable(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    fill: Color = Brutal.Card,
+    fill: Color = Palette.card,
     shadow: Dp = 4.dp,
     enabled: Boolean = true,
     shape: Shape = BrutalShape,
-    border: Color = Brutal.Ink,
-    shadowColor: Color = Brutal.Ink,
-    /** What a disabled fill fades towards: paper on the light theme, the ink canvas on the dark one. */
-    disabledBlend: Color = Brutal.Paper,
+    border: Color = Palette.border,
+    shadowColor: Color = Palette.shadow,
+    /** What a disabled fill fades towards: the theme's paper. */
+    disabledBlend: Color = Palette.paper,
     content: @Composable () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -150,10 +167,10 @@ fun BrutalButton(
 ) {
     val (fill, ink) = when (style) {
         ButtonStyle.Primary -> Brutal.Orange to Brutal.Ink
-        ButtonStyle.Outline -> Brutal.Card to Brutal.Ink
-        ButtonStyle.Danger -> Brutal.Red to Color.White
-        ButtonStyle.Dark -> Brutal.Ink to Brutal.Paper
-        ButtonStyle.Ghost -> Color.Transparent to Brutal.Ink
+        ButtonStyle.Outline -> Palette.card to Palette.ink
+        ButtonStyle.Danger -> Palette.red to Palette.onStrong
+        ButtonStyle.Dark -> Palette.ink to Palette.paper
+        ButtonStyle.Ghost -> Color.Transparent to Palette.ink
     }
     val inner: @Composable () -> Unit = {
         Row(
@@ -184,29 +201,29 @@ fun BrutalButton(
 }
 
 @Composable
-fun SquareIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit, fill: Color = Brutal.Card, modifier: Modifier = Modifier) {
+fun SquareIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit, fill: Color = Palette.card, modifier: Modifier = Modifier) {
     Pressable(onClick, modifier, fill = fill, shadow = 3.dp) {
         Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription, tint = Brutal.Ink, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription, tint = if (fill == Brutal.Orange) Brutal.Ink else Palette.ink, modifier = Modifier.size(20.dp))
         }
     }
 }
 
 @Composable
 fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null) {
-    Pressable(onClick, modifier, fill = if (selected) Brutal.Ink else Brutal.Card, shadow = if (selected) 0.dp else 3.dp, shape = RoundedCornerShape(50)) {
+    Pressable(onClick, modifier, fill = if (selected) Palette.ink else Palette.card, shadow = if (selected) 0.dp else 3.dp, shape = RoundedCornerShape(50)) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) {
-                Icon(icon, null, tint = if (selected) Brutal.Paper else Brutal.Ink, modifier = Modifier.size(16.dp))
+                Icon(icon, null, tint = if (selected) Palette.paper else Palette.ink, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
             }
-            Text(text, style = Type.Label, color = if (selected) Brutal.Paper else Brutal.Ink, maxLines = 1)
+            Text(text, style = Type.Label, color = if (selected) Palette.paper else Palette.ink, maxLines = 1)
         }
     }
 }
 
 @Composable
-fun Tag(text: String, fill: Color = Brutal.Yellow, ink: Color = Brutal.Ink, modifier: Modifier = Modifier) {
+fun Tag(text: String, fill: Color = Palette.yellow, ink: Color = Palette.ink, modifier: Modifier = Modifier) {
     Text(
         text.uppercase(),
         style = Type.Tiny,
@@ -214,7 +231,7 @@ fun Tag(text: String, fill: Color = Brutal.Yellow, ink: Color = Brutal.Ink, modi
         maxLines = 1,
         modifier = modifier
             .background(fill, RoundedCornerShape(3.dp))
-            .border(1.5.dp, Brutal.Ink, RoundedCornerShape(3.dp))
+            .border(1.5.dp, Palette.border, RoundedCornerShape(3.dp))
             .padding(horizontal = 5.dp, vertical = 2.dp),
     )
 }
@@ -224,8 +241,8 @@ fun BrutalCheck(checked: Boolean, modifier: Modifier = Modifier, size: Dp = 24.d
     Box(
         modifier
             .size(size)
-            .background(if (checked) Brutal.Orange else Brutal.Card, RoundedCornerShape(4.dp))
-            .border(2.dp, Brutal.Ink, RoundedCornerShape(4.dp))
+            .background(if (checked) Brutal.Orange else Palette.card, RoundedCornerShape(4.dp))
+            .border(2.dp, Palette.border, RoundedCornerShape(4.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
@@ -244,13 +261,14 @@ fun BrutalProgress(fraction: Float, modifier: Modifier = Modifier, height: Dp = 
         val t = rememberInfiniteTransition(label = "stripes")
         t.animateFloat(0f, 1f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "phase").value
     } else 0f
+    val border = Palette.border
     Box(
         modifier
             .fillMaxWidth()
             .height(height)
             .clip(RoundedCornerShape(4.dp))
-            .background(Brutal.Sand)
-            .border(2.dp, Brutal.Ink, RoundedCornerShape(4.dp))
+            .background(Palette.sand)
+            .border(2.dp, border, RoundedCornerShape(4.dp))
             .drawBehind {
                 val w = size.width * animated
                 if (w <= 0f) return@drawBehind
@@ -269,7 +287,7 @@ fun BrutalProgress(fraction: Float, modifier: Modifier = Modifier, height: Dp = 
                         }
                     }
                 }
-                drawLine(Brutal.Ink, Offset(w, 0f), Offset(w, size.height), 2.dp.toPx())
+                drawLine(border, Offset(w, 0f), Offset(w, size.height), 2.dp.toPx())
             },
     )
 }
@@ -287,14 +305,14 @@ fun BrutalTextField(
 ) {
     Column(modifier) {
         if (label != null) {
-            Text(label.uppercase(), style = Type.Tiny, color = Brutal.MutedInk)
+            Text(label.uppercase(), style = Type.Tiny, color = Palette.mutedInk)
             Spacer(Modifier.height(6.dp))
         }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
-            textStyle = Type.Body.copy(color = Brutal.Ink),
+            textStyle = Type.Body.copy(color = Palette.ink),
             cursorBrush = SolidColor(Brutal.Orange),
             keyboardOptions = keyboard,
             visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
@@ -305,11 +323,11 @@ fun BrutalTextField(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (leading != null) {
-                        Icon(leading, null, tint = Brutal.MutedInk, modifier = Modifier.size(18.dp))
+                        Icon(leading, null, tint = Palette.mutedInk, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(10.dp))
                     }
                     Box(Modifier.weight(1f)) {
-                        if (value.isEmpty()) Text(placeholder, style = Type.Body, color = Brutal.MutedInk.copy(alpha = 0.7f), maxLines = 1)
+                        if (value.isEmpty()) Text(placeholder, style = Type.Body, color = Palette.mutedInk.copy(alpha = 0.7f), maxLines = 1)
                         inner()
                     }
                 }
@@ -322,19 +340,20 @@ enum class NoticeTone { Info, Warning, Error, Success }
 
 @Composable
 fun Notice(text: String, tone: NoticeTone = NoticeTone.Info, icon: ImageVector? = null, modifier: Modifier = Modifier, actions: (@Composable RowScope.() -> Unit)? = null) {
+    val c = Palette.current
     val fill = when (tone) {
-        NoticeTone.Info -> Brutal.Card
-        NoticeTone.Warning -> Color(0xFFFFF0C2)
-        NoticeTone.Error -> Color(0xFFFFE1E3)
-        NoticeTone.Success -> Brutal.Mint
+        NoticeTone.Info -> c.card
+        NoticeTone.Warning -> c.noticeWarning
+        NoticeTone.Error -> c.noticeError
+        NoticeTone.Success -> c.noticeSuccess
     }
     Column(modifier.fillMaxWidth().brutal(fill, shadow = 3.dp).padding(14.dp)) {
         Row(verticalAlignment = Alignment.Top) {
             if (icon != null) {
-                Icon(icon, null, tint = if (tone == NoticeTone.Error) Brutal.Red else Brutal.Ink, modifier = Modifier.size(20.dp))
+                Icon(icon, null, tint = if (tone == NoticeTone.Error) c.danger else c.ink, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
             }
-            Text(text, style = Type.Small, color = Brutal.Ink, modifier = Modifier.weight(1f))
+            Text(text, style = Type.Small, color = c.ink, modifier = Modifier.weight(1f))
         }
         if (actions != null) {
             Spacer(Modifier.height(10.dp))
@@ -346,7 +365,7 @@ fun Notice(text: String, tone: NoticeTone = NoticeTone.Info, icon: ImageVector? 
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
     Row(modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text.uppercase(), style = Type.Label, color = Brutal.MutedInk, modifier = Modifier.weight(1f))
+        Text(text.uppercase(), style = Type.Label, color = Palette.mutedInk, modifier = Modifier.weight(1f))
         trailing?.invoke()
     }
 }
@@ -360,12 +379,13 @@ fun ScreenHeader(
     actions: @Composable RowScope.() -> Unit = {},
     below: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
+    val rule = Palette.border
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Brutal.Paper)
+            .background(Palette.paper)
             .windowInsetsPadding(WindowInsets.statusBars)
-            .drawBehind { drawLine(Brutal.Ink, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
+            .drawBehind { drawLine(rule, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -374,8 +394,8 @@ fun ScreenHeader(
                 Spacer(Modifier.width(10.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = if (onBack != null) Type.Headline else Type.Display, color = Brutal.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (subtitle != null) Text(subtitle, style = Type.Small, color = Brutal.MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = if (onBack != null) Type.Headline else Type.Display, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle != null) Text(subtitle, style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
         }
@@ -386,11 +406,12 @@ fun ScreenHeader(
 /** Sticky footer for a screen's main action, with a 2dp rule on top. */
 @Composable
 fun BottomBar(content: @Composable ColumnScope.() -> Unit) {
+    val rule = Palette.border
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Brutal.Paper)
-            .drawBehind { drawLine(Brutal.Ink, Offset.Zero, Offset(size.width, 0f), 2.dp.toPx()) }
+            .background(Palette.paper)
+            .drawBehind { drawLine(rule, Offset.Zero, Offset(size.width, 0f), 2.dp.toPx()) }
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 12.dp),
         content = content,
@@ -399,27 +420,29 @@ fun BottomBar(content: @Composable ColumnScope.() -> Unit) {
 
 /** Little square badge holding an icon, used for device and status glyphs. */
 @Composable
-fun IconBadge(icon: ImageVector, fill: Color = Brutal.Peach, size: Dp = 48.dp, tint: Color = Brutal.Ink, modifier: Modifier = Modifier) {
+fun IconBadge(icon: ImageVector, fill: Color = Palette.peach, size: Dp = 48.dp, tint: Color = Palette.ink, modifier: Modifier = Modifier) {
     Box(
-        modifier.size(size).background(fill, RoundedCornerShape(6.dp)).border(2.dp, Brutal.Ink, RoundedCornerShape(6.dp)),
+        modifier.size(size).background(fill, RoundedCornerShape(6.dp)).border(2.dp, Palette.border, RoundedCornerShape(6.dp)),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = tint, modifier = Modifier.size(size * 0.5f)) }
 }
 
 /** Thin ink border helper for things that shouldn't get a shadow. */
-val InkBorder = BorderStroke(2.dp, Brutal.Ink)
+val InkBorder: BorderStroke @Composable @ReadOnlyComposable get() = BorderStroke(2.dp, Palette.border)
 
 /** Ring spinner drawn in ink/orange, for indeterminate states. */
 @Composable
 fun BrutalSpinner(modifier: Modifier = Modifier, size: Dp = 22.dp) {
     val t = rememberInfiniteTransition(label = "spin")
     val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(800, easing = LinearEasing)), label = "angle")
+    val track = Palette.sand
+    val ring = Palette.border
     Box(
         modifier.size(size).drawBehind {
             val stroke = 3.dp.toPx()
-            drawCircle(Brutal.Sand, style = Stroke(stroke))
+            drawCircle(track, style = Stroke(stroke))
             drawArc(Brutal.Orange, angle, 100f, false, style = Stroke(stroke))
-            drawCircle(Brutal.Ink, radius = this.size.minDimension / 2, style = Stroke(1f))
+            drawCircle(ring, radius = this.size.minDimension / 2, style = Stroke(1f))
         },
     )
 }

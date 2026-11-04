@@ -33,18 +33,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.net.ConnState
-import com.roylet.photos.ui.theme.Brutal
+import com.roylet.photos.ui.theme.BrutalColors
+import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 private val ChipShape = RoundedCornerShape(50)
 
 private data class ChipLook(val label: String, val fill: Color, val ink: Color, val description: String)
 
-private fun look(state: ConnState) = when (state) {
-    ConnState.Home -> ChipLook("HOME", Brutal.Mint, Brutal.Ink, "Connected on your home network")
-    ConnState.Remote -> ChipLook("REMOTE", Brutal.Blue, Brutal.Card, "Connected over the internet")
-    ConnState.Offline -> ChipLook("OFFLINE", Brutal.Red, Brutal.Card, "Can't reach your server")
-    ConnState.Checking -> ChipLook("CHECKING", Brutal.Card, Brutal.Ink, "Checking connection")
+private fun look(state: ConnState, c: BrutalColors) = when (state) {
+    ConnState.Home -> ChipLook("HOME", c.mint, c.ink, "Connected on your home network")
+    ConnState.Remote -> ChipLook("REMOTE", c.blue, c.onStrong, "Connected over the internet")
+    ConnState.Offline -> ChipLook("OFFLINE", c.red, c.onStrong, "Can't reach your server")
+    ConnState.Checking -> ChipLook("CHECKING", c.card, c.ink, "Checking connection")
 }
 
 /**
@@ -56,7 +57,7 @@ private fun look(state: ConnState) = when (state) {
  */
 @Composable
 fun ConnectionChip(state: ConnState, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
-    val target = look(state)
+    val target = look(state, Palette.current)
     val fill by animateColorAsState(target.fill, tween(220), label = "chipFill")
     val ink by animateColorAsState(target.ink, tween(220), label = "chipInk")
     Box(
@@ -87,7 +88,7 @@ fun ConnectionChip(state: ConnState, modifier: Modifier = Modifier, onClick: (()
                     ConnState.Offline -> Icon(Icons.Rounded.CloudOff, null, tint = ink, modifier = Modifier.size(14.dp))
                     ConnState.Checking -> BrutalSpinner(size = 12.dp)
                 }
-                Text(look(s).label, style = Type.Tiny, color = ink, maxLines = 1)
+                Text(look(s, Palette.current).label, style = Type.Tiny, color = ink, maxLines = 1)
             }
         }
     }
