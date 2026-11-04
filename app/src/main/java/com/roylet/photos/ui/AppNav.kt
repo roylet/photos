@@ -42,6 +42,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.roylet.photos.AppContainer
 import com.roylet.photos.ui.albums.AlbumsScreen
+import com.roylet.photos.ui.albums.AlbumDetailScreen
+import androidx.compose.animation.AnimatedContentScope
+import com.roylet.photos.domain.timeline.TimelineAsset
+import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.ui.components.AppMark
 import com.roylet.photos.ui.components.BrutalRail
 import com.roylet.photos.ui.components.BrutalTabBar
@@ -84,10 +88,12 @@ object Routes {
     const val SETTINGS = "settings"
     const val VIEWER = "viewer?filter={filter}&index={index}&id={id}"
     const val EDIT = "edit/{assetId}"
+    const val ALBUM = "album/{albumId}"
 
     /** Opens the viewer on [index] of the timeline described by [filter]. */
     fun viewer(filter: TimelineFilter, index: Int, id: String) = "viewer?filter=${filter.encode()}&index=$index&id=$id"
     fun edit(assetId: String) = "edit/$assetId"
+    fun album(id: String) = "album/$id"
 
     /** Saved-state key the viewer sets on the screen below it: the index it ended on, so the grid can reveal it. */
     const val REVEAL_INDEX = "revealIndex"
@@ -157,6 +163,30 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
                     .padding(start = 16.dp, end = 16.dp, bottom = if (route == Routes.VIEWER) 150.dp else if (showBar && !wide) 84.dp else 16.dp),
             )
         }
+    }
+}
+
+/**
+ * Common plumbing for a destination that shows a timeline: the shared timeline repository, the
+ * viewer opener and the index to reveal when coming back from the viewer.
+ */
+@Composable
+private fun AnimatedContentScope.TimelineDestination(
+    container: AppContainer,
+    nav: NavHostController,
+    entry: NavBackStackEntry,
+    filter: TimelineFilter,
+    content: @Composable (TimelineRepository, (Int, TimelineAsset) -> Unit, Int?, () -> Unit) -> Unit,
+) {
+    CompositionLocalProvider(LocalNavAnimatedScope provides this) {
+        val timeline = remember(filter) { container.timelines.get(filter) }
+        val reveal by entry.savedStateHandle.getStateFlow<Int?>(Routes.REVEAL_INDEX, null).collectAsState()
+        content(
+            timeline,
+            { index, asset -> nav.navigate(Routes.viewer(timeline.filter, index, asset.id)) },
+            reveal,
+            { entry.savedStateHandle.remove<Int>(Routes.REVEAL_INDEX) },
+        )
     }
 }
 
@@ -235,7 +265,15 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                 }
             }
         }
-        composable(Routes.ALBUMS) { AlbumsScreen(container) }
+        composable(Routes.ALBUMS) {
+            AlbumsScreen(container.albums, container.actions, container.uiPrefs, onOpen = { nav.navigate(Routes.album(it.id)) })
+        }
+        composable(Routes.ALBUM, arguments = listOf(navArgument("albumId") { type = NavType.StringType })) { entry ->
+            val id = entry.arguments?.getString("albumId").orEmpty()
+            TimelineDestination(container, nav, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
+                AlbumDetailScreen(id, container.albums, timeline, container.actions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+            }
+        }
         composable(Routes.SEARCH) { SearchScreen(container) }
         composable(Routes.LIBRARY) { LibraryScreen(container, onSettings = { nav.navigate(Routes.SETTINGS) }) }
         composable(Routes.SETTINGS) { SettingsScreen(container, onBack = { nav.popBackStack() }) }

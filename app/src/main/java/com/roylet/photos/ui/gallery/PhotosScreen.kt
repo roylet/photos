@@ -63,6 +63,8 @@ fun TimelineScreen(
     val snapshot by timeline.snapshot.collectAsState()
     val listState = rememberLazyListState()
     BackHandler(enabled = selection.active) { selection.clear() }
+    // Re-fetch if something elsewhere changed this timeline (e.g. photos were added to this album).
+    androidx.compose.runtime.LaunchedEffect(timeline) { timeline.startOrRefresh() }
 
     Column(modifier.fillMaxSize().background(Brutal.Paper)) {
         AnimatedContent(
