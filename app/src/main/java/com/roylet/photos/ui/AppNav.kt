@@ -75,6 +75,8 @@ import com.roylet.photos.ui.gallery.PhotosScreen
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.viewer.ViewerScreen
 import com.roylet.photos.ui.library.LibraryScreen
+import com.roylet.photos.ui.memories.MemoriesCarousel
+import com.roylet.photos.ui.memories.MemoryStoryScreen
 import com.roylet.photos.ui.library.LibraryEntry
 import com.roylet.photos.ui.library.MapScreen
 import com.roylet.photos.ui.library.PeopleScreen
@@ -247,6 +249,8 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
         composable(Routes.TIMELINE) { entry ->
             CompositionLocalProvider(LocalNavAnimatedScope provides this) {
                 val timeline = remember { container.timelines.get(TimelineFilter.Timeline) }
+                LaunchedEffect(Unit) { container.memories.start() }
+                val memories by container.memories.memories.collectAsState()
                 val reveal by entry.savedStateHandle.getStateFlow<Int?>(Routes.REVEAL_INDEX, null).collectAsState()
                 PhotosScreen(
                     timeline = timeline,
@@ -254,6 +258,7 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                     onSettings = { nav.navigate(Routes.SETTINGS) },
                     revealIndex = reveal,
                     onRevealed = { entry.savedStateHandle.remove<Int>(Routes.REVEAL_INDEX) },
+                    topContent = memories.takeIf { it.isNotEmpty() }?.let { list -> { MemoriesCarousel(list, onOpen = { nav.navigate(Routes.memories(it)) }) } },
                     connectionChip = {
                         val conn by container.connection.state.collectAsState()
                         ConnectionChip(conn, onClick = { nav.navigate(Routes.SETTINGS) })
@@ -336,6 +341,12 @@ private fun Host(container: AppContainer, nav: NavHostController, signedIn: Bool
                     LibraryEntry.Settings -> nav.navigate(Routes.SETTINGS)
                 }
             })
+        }
+        composable(Routes.MEMORIES, arguments = listOf(navArgument("index") { type = NavType.IntType; defaultValue = 0 })) { entry ->
+            val memories by container.memories.memories.collectAsState()
+            PhotosTheme(dark = true) {
+                MemoryStoryScreen(memories, entry.arguments?.getInt("index") ?: 0, onClose = { nav.popBackStack() })
+            }
         }
         composable(Routes.FAVORITES) { entry ->
             TimelineDestination(container, nav, entry, TimelineFilter.Favorites) { timeline, open, reveal, revealed ->
