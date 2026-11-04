@@ -16,7 +16,7 @@ telephoto = "0.19.0"
 media3 = "1.9.4"  # last line that builds with compileSdk 35; 1.10+ needs compileSdk 36
 maplibre = "13.7.1"
 junit = "4.13.2"
-robolectric = "4.14.1"
+robolectric = "4.17"
 androidxTestCore = "1.6.1"
 
 [libraries]
