@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
@@ -89,13 +90,26 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.material.icons.rounded.Refresh
+import coil3.SingletonImageLoader
+import coil3.compose.AsyncImagePainter
+import coil3.size.Precision
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.roylet.photos.domain.timeline.TimelineAsset
@@ -152,6 +166,9 @@ fun ViewerScreen(
     val reduced = reducedMotion()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val inspection = LocalInspectionMode.current
+    var loadedPage by remember { mutableIntStateOf(-1) }
 
     val pager = rememberPagerState(initialPage = startIndex.coerceAtLeast(0)) { snapshot.total }
     // If months were added/removed since the grid computed startIndex, find the asset by id.
@@ -188,6 +205,34 @@ fun ViewerScreen(
         val dismiss = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
         val progress = (dismiss.value.y / heightPx).coerceIn(0f, 1f)
         val dismissThreshold = with(LocalDensity.current) { 1100.dp.toPx() }
+
+        // Preload: the pager composes one page either side; the prefetcher also warms the memory
+        // and disk caches with the previews of ±2 pages at their exact on-screen size, once the
+        // current page has its image.
+        val pageSize = IntSize(constraints.maxWidth, constraints.maxHeight)
+        val prefetcher = remember(timeline, urls, pageSize) {
+            NeighbourPrefetcher(object : PrefetchTarget {
+                override fun ensureLoadedAt(index: Int) = timeline.ensureLoadedAt(index)
+                override fun enqueue(index: Int): PrefetchHandle? {
+                    if (inspection) return null
+                    // Videos too: only their poster (the preview frame), never the media.
+                    val a = timeline.snapshot.value.assetAt(index) ?: return null
+                    val request = previewRequest(context, urls, a.id, fitPx(a.ratio, pageSize.width, pageSize.height)).build()
+                    val job = SingletonImageLoader.get(context).enqueue(request)
+                    return PrefetchHandle { job.dispose() }
+                }
+            })
+        }
+        DisposableEffect(prefetcher) { onDispose { prefetcher.clear() } }
+        LaunchedEffect(prefetcher, pager) {
+            snapshotFlow { pager.settledPage }.collectLatest { page ->
+                prefetcher.moveTo(page, timeline.snapshot.value.total)
+                // Neighbours wait for the current page (bounded, so a stuck load can't block them).
+                withTimeoutOrNull(1500) { snapshotFlow { loadedPage }.first { it == page } }
+                // Buckets arriving later make more neighbours known: prefetch them as they come.
+                timeline.snapshot.collect { prefetcher.prefetch(page, it.total) }
+            }
+        }
 
         Box(
             Modifier.fillMaxSize()
@@ -226,12 +271,21 @@ fun ViewerScreen(
             ) { page ->
                 val asset = snapshot.assetAt(page)
                 if (asset == null) {
-                    LaunchedEffect(page) { timeline.ensureLoadedAt(page) }
+                    // A failed bucket fetch isn't retried by the repository; keep asking (with backoff) until it lands.
+                    LaunchedEffect(page) {
+                        var attempt = 0
+                        while (true) {
+                            timeline.ensureLoadedAt(page)
+                            delay(retryDelayMs(attempt.coerceAtMost(MAX_AUTO_RETRIES - 1))!!)
+                            attempt++
+                        }
+                    }
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { BrutalSpinner(size = 32.dp) }
                 } else {
                     val isCurrent = page == pager.settledPage
                     if (asset.isVideo) {
                         VideoPage(asset, urls, isCurrent, chrome, scrub, onTap = { chrome = !chrome })
+                        if (isCurrent) LaunchedEffect(page) { loadedPage = page }
                     } else {
                         PhotoPage(
                             asset, urls, isCurrent,
@@ -243,6 +297,7 @@ fun ViewerScreen(
                             playingLive = liveFor == asset.id,
                             onLiveEnded = { if (liveFor == asset.id) liveFor = null },
                             onPinchClose = onBack,
+                            onLoaded = { if (page == pager.settledPage) loadedPage = page },
                         )
                     }
                 }
@@ -327,14 +382,9 @@ private fun SystemBars(visible: Boolean) {
     }
 }
 
-/** Pinching an unzoomed photo below this scale closes the viewer. */
-private const val PINCH_CLOSE = 0.72f
-
-/** Size of an image of [ratio] fitted inside [maxW]×[maxH]. */
-private fun fit(ratio: Float, maxW: Dp, maxH: Dp): Pair<Dp, Dp> {
-    val r = if (ratio > 0f) ratio else 1f
-    return if (maxW / maxH > r) (maxH * r) to maxH else maxW to (maxW / r)
-}
+/** How far a photo page is zoomed in (0 = fitted, 1 = max); exposed for gesture tests. */
+internal val ZoomFractionKey = SemanticsPropertyKey<Float>("ZoomFraction")
+internal var SemanticsPropertyReceiver.viewerZoom by ZoomFractionKey
 
 @Composable
 private fun PhotoPage(
@@ -347,8 +397,12 @@ private fun PhotoPage(
     playingLive: Boolean,
     onLiveEnded: () -> Unit,
     onPinchClose: () -> Unit = {},
+    onLoaded: () -> Unit = {},
 ) {
-    val zoom = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 8f))
+    // The zoom is applied by hand (not by `zoomable`) so it never moves the shared-element node: with
+    // the grid cell underneath registered as the same shared element, a transformed node is drawn
+    // through the shared-transition overlay at its untransformed bounds and the zoom never shows.
+    val zoom = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 8f), autoApplyTransformations = false)
     val pinchClose by rememberUpdatedState(onPinchClose)
     val zoomFraction = zoom.zoomFraction ?: 0f
     val zoomedIn = zoomFraction > 0.02f
@@ -362,55 +416,133 @@ private fun PhotoPage(
     val reduced = reducedMotion()
 
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        val (w, h) = fit(asset.ratio, maxWidth, maxHeight)
         val px = LocalDensity.current
+        val fitted = fitPx(asset.ratio, constraints.maxWidth, constraints.maxHeight)
+        val w = with(px) { fitted.width.toDp() }
+        val h = with(px) { fitted.height.toDp() }
+        val screenW = maxWidth
+        val screenH = maxHeight
+        val loaded by rememberUpdatedState(onLoaded)
+        // Preview load state: failures retry on their own with backoff, then on tap.
+        var attempt by remember(asset.id) { mutableIntStateOf(0) }
+        var autoRetries by remember(asset.id) { mutableIntStateOf(0) }
+        var failed by remember(asset.id) { mutableStateOf(false) }
+        LaunchedEffect(failed, autoRetries) {
+            if (!failed) return@LaunchedEffect
+            val wait = retryDelayMs(autoRetries) ?: return@LaunchedEffect
+            delay(wait)
+            autoRetries++
+            failed = false
+            attempt++
+        }
         LaunchedEffect(w, h) { zoom.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(with(px) { Size(w.toPx(), h.toPx()) })) }
         Box(
             Modifier.fillMaxSize()
-                // Pinching in on an unzoomed photo goes back to the grid (observed, not consumed, so zoom still works).
+                // Pinching in on an unzoomed photo goes back to the grid. Observed, never consumed,
+                // so telephoto still owns every pinch; see [PinchToClose].
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        val unzoomed = (zoom.zoomFraction ?: 0f) < 0.02f
-                        var total = 1f
+                        val pinch = PinchToClose(startedUnzoomed = (zoom.zoomFraction ?: 0f) < 0.02f)
                         do {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.count { it.pressed } >= 2) total *= event.calculateZoom()
+                            if (event.changes.count { it.pressed } >= 2) pinch.onZoom(event.calculateZoom())
                         } while (event.changes.any { it.pressed })
-                        if (unzoomed && total < PINCH_CLOSE) pinchClose()
+                        if (pinch.shouldClose(zoomFractionNow = zoom.zoomFraction ?: 0f)) pinchClose()
                     }
                 }
-                .zoomable(zoom, onClick = { onTap() }, onLongClick = { onLongPress() }),
+                .zoomable(zoom, onClick = { onTap() }, onLongClick = { onLongPress() })
+                .testTag("viewer-page-${asset.id}")
+                .semantics { viewerZoom = zoom.zoomFraction ?: 0f },
             contentAlignment = Alignment.Center,
         ) {
             val hash = remember(asset.thumbhash) { ThumbHashCache.get(asset.thumbhash) }
-            Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true).thumbHashBackground(hash, BrutalDark.Raised)) {
-                val wPx = with(px) { w.roundToPx() }
-                val hPx = with(px) { h.roundToPx() }
-                val preview = remember(asset.id, wPx, hPx) {
-                    ImageRequest.Builder(context).data(urls.preview(asset.id))
-                        // The grid's thumbnail is already in memory: show it instantly (and during the shared-element morph).
-                        .placeholderMemoryCacheKey(urls.thumbnail(asset.id))
-                        .size(wPx, hPx)
-                        .crossfade(if (reduced) 0 else 200)
-                        .build()
-                }
-                AsyncImage(preview, contentDescription = null, modifier = Modifier.fillMaxSize())
-                if (deep) {
-                    val full = remember(asset.id) {
-                        ImageRequest.Builder(context).data(urls.fullsize(asset.id))
-                            .placeholderMemoryCacheKey(urls.preview(asset.id))
-                            .size(4096, 4096)
-                            .crossfade(if (reduced) 0 else 200)
-                            .build()
+            // Untransformed: the morph's start/end bounds.
+            Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true)) {
+                // Screen-sized and centred, so telephoto's transformation (computed in the zoomable
+                // node's coordinates) applies unchanged.
+                Box(
+                    Modifier.requiredSize(screenW, screenH).graphicsLayer {
+                        val t = zoom.contentTransformation
+                        if (t.isSpecified) {
+                            scaleX = t.scale.scaleX
+                            scaleY = t.scale.scaleY
+                            rotationZ = t.rotationZ
+                            translationX = t.offset.x
+                            translationY = t.offset.y
+                            transformOrigin = t.transformOrigin
+                        }
+                    },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(w, h).testTag("viewer-photo-${asset.id}").thumbHashBackground(hash, BrutalDark.Raised)) {
+                        // The floor the page never drops below: the grid's thumbnail, straight from the
+                        // memory cache when the grid showed it (same plain-URL key), else from disk/network.
+                        val thumb = remember(asset.id) {
+                            val url = urls.thumbnail(asset.id)
+                            ImageRequest.Builder(context).data(url).memoryCacheKey(url).placeholderMemoryCacheKey(url)
+                                .size(THUMB_PX, THUMB_PX).precision(Precision.INEXACT).build()
+                        }
+                        AsyncImage(thumb, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        val preview = remember(asset.id, fitted, reduced) {
+                            previewRequest(context, urls, asset.id, fitted).crossfade(if (reduced) 0 else 200).build()
+                        }
+                        // A new painter per attempt, so a retry really goes back to the network.
+                        key(attempt) {
+                            AsyncImage(
+                                preview, contentDescription = null, modifier = Modifier.fillMaxSize(),
+                                onState = { st ->
+                                    when (st) {
+                                        is AsyncImagePainter.State.Success -> { failed = false; loaded() }
+                                        is AsyncImagePainter.State.Error -> { failed = true; loaded() }
+                                        else -> {}
+                                    }
+                                },
+                            )
+                        }
+                        if (deep) {
+                            val full = remember(asset.id) {
+                                ImageRequest.Builder(context).data(urls.fullsize(asset.id))
+                                    .placeholderMemoryCacheKey(urls.preview(asset.id))
+                                    .size(4096, 4096)
+                                    .crossfade(if (reduced) 0 else 200)
+                                    .build()
+                            }
+                            AsyncImage(full, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        }
+                        if (playingLive && asset.livePhotoVideoId != null) {
+                            LivePhotoMotion(urls.video(asset.livePhotoVideoId), onLiveEnded)
+                        }
                     }
-                    AsyncImage(full, contentDescription = null, modifier = Modifier.fillMaxSize())
-                }
-                if (playingLive && asset.livePhotoVideoId != null) {
-                    LivePhotoMotion(urls.video(asset.livePhotoVideoId), onLiveEnded)
                 }
             }
+            if (failed) {
+                LoadError(
+                    asset.id,
+                    retrying = retryDelayMs(autoRetries) != null,
+                    onRetry = { autoRetries = 0; failed = false; attempt++ },
+                )
+            }
         }
+    }
+}
+
+/** Decode size for the thumbnail floor under a photo; about what the grid loads. */
+private const val THUMB_PX = 320
+
+/** Shown over the thumbnail when the preview couldn't load. Tapping retries now. */
+@Composable
+private fun LoadError(id: String, retrying: Boolean, onRetry: () -> Unit) {
+    Row(
+        Modifier.testTag("viewer-load-error-$id")
+            .brutalDark(BrutalDark.Panel, shape = RoundedCornerShape(50), shadow = 3.dp)
+            .clickable(onClick = onRetry)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.Refresh, null, tint = BrutalDark.Text, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(if (retrying) "Couldn't load · retrying" else "Couldn't load · tap to retry", style = Type.Label, color = BrutalDark.Text)
     }
 }
 
@@ -435,8 +567,10 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
         Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null, onClick = onTap),
         contentAlignment = Alignment.Center,
     ) {
-        val (w, h) = fit(asset.ratio, maxWidth, maxHeight)
         val px = LocalDensity.current
+        val fitted = fitPx(asset.ratio, constraints.maxWidth, constraints.maxHeight)
+        val w = with(px) { fitted.width.toDp() }
+        val h = with(px) { fitted.height.toDp() }
         val url = urls.video(asset.id)
         val player = if (isCurrent) rememberPlayer(url) else null
         val playback = rememberPlaybackState(player, asset.durationMs ?: 0)
@@ -445,7 +579,7 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
         LaunchedEffect(playback.playing) { if (playback.playing) wantFrames = true }
         val frames = rememberVideoFrames(asset.id, url, playback.duration, active = isCurrent && wantFrames)
         Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true)) {
-            AssetImage(urls.preview(asset.id), asset.thumbhash, with(px) { w.roundToPx() }, with(px) { h.roundToPx() }, Modifier.fillMaxSize())
+            AssetImage(urls.preview(asset.id), asset.thumbhash, fitted.width, fitted.height, Modifier.fillMaxSize())
             if (player != null) VideoSurface(player, Modifier.fillMaxSize())
         }
         if (player == null && !scrub.scrubbing) {
