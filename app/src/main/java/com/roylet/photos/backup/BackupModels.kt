@@ -57,6 +57,8 @@ data class BackupFolder(
     /** MediaStore id of the newest item (the cover). */
     val coverId: Long,
     val coverIsVideo: Boolean = false,
+    /** The cover's generation (its thumbnail cache key). */
+    val coverGeneration: Long = 0,
     val status: FolderBackupStatus,
 )
 

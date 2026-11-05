@@ -139,11 +139,11 @@ interface BackupMediaDao {
     )
     fun countsFlow(videos: Boolean, since: Long): Flow<List<BucketBackupCount>>
 
-    /** The phone's folders, newest first (as MediaDao.folders), re-emitted on index changes. */
+    /** The phone's folders, newest first (the same grouped query as MediaDao.folders), re-emitted on index changes. */
     @Query(
         """SELECT bucketId, bucketName, relativePath, COUNT(*) AS count, MAX(takenAt) AS latest,
-                  (SELECT m2.id FROM media m2 WHERE m2.bucketId = m.bucketId AND m2.trashed = 0 ORDER BY m2.takenAt DESC, m2.id DESC LIMIT 1) AS coverId
-           FROM media m WHERE trashed = 0 AND bucketId IS NOT NULL
+                  id AS coverId, isVideo AS coverIsVideo, generation AS coverGeneration, mimeType AS coverMimeType, volume
+           FROM media WHERE trashed = 0 AND bucketId IS NOT NULL
            GROUP BY bucketId ORDER BY latest DESC""",
     )
     fun foldersFlow(): Flow<List<FolderRow>>

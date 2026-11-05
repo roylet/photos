@@ -2,6 +2,8 @@ package com.roylet.photos.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.roylet.photos.domain.library.FolderPrefs
+import com.roylet.photos.domain.library.PhotosFolderMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +43,29 @@ class UiPrefs(context: Context?) {
         _backupBadges.value = show
         prefs?.edit()?.putBoolean("showBackupBadges", show)?.apply()
     }
+
+    /** Library → On this device: hidden folders and which folders show in Photos (bucket ids). */
+    var folderPrefs: FolderPrefs
+        get() = prefs?.let { p ->
+            FolderPrefs(
+                hidden = p.ids("folderHidden"),
+                inPhotos = p.ids("folderInPhotos"),
+                notInPhotos = p.ids("folderNotInPhotos"),
+                mode = p.getString("folderPhotosMode", null)?.let { v -> PhotosFolderMode.entries.firstOrNull { it.name == v } } ?: PhotosFolderMode.All,
+            )
+        } ?: memFolders
+        set(v) {
+            memFolders = v
+            prefs?.edit()
+                ?.putStringSet("folderHidden", v.hidden.mapTo(HashSet()) { it.toString() })
+                ?.putStringSet("folderInPhotos", v.inPhotos.mapTo(HashSet()) { it.toString() })
+                ?.putStringSet("folderNotInPhotos", v.notInPhotos.mapTo(HashSet()) { it.toString() })
+                ?.putString("folderPhotosMode", v.mode.name)
+                ?.apply()
+        }
+    private var memFolders = FolderPrefs()
+
+    private fun SharedPreferences.ids(key: String): Set<Long> = getStringSet(key, null).orEmpty().mapNotNullTo(HashSet()) { it.toLongOrNull() }
 
     private val _recent = MutableStateFlow(prefs?.getString("recentSearches", null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList())
     val recentSearches: StateFlow<List<String>> = _recent.asStateFlow()

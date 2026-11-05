@@ -91,6 +91,8 @@ import com.roylet.photos.ui.memories.MemoryStoryScreen
 import com.roylet.photos.ui.library.LibraryEntry
 import com.roylet.photos.ui.library.MapScreen
 import com.roylet.photos.ui.library.DeviceScreen
+import com.roylet.photos.ui.library.DeviceFolderScreen
+import com.roylet.photos.ui.library.DeviceFoldersScreen
 import com.roylet.photos.ui.library.PeopleScreen
 import com.roylet.photos.ui.library.TrashScreen
 import com.roylet.photos.immich.ImmichApi
@@ -140,8 +142,9 @@ object Routes {
     const val MAP = "map"
     const val LIST = "list/{filter}?title={title}"
     const val MEMORIES = "memories?index={index}"
-    /** Library → On this device (with a server): the phone's timeline, folders and trash. */
+    /** With a server, from On this device: the phone's own timeline. */
     const val DEVICE = "device"
+    /** Library → On this device → VIEW ALL: every folder on the phone. */
     const val DEVICE_FOLDERS = "device/folders"
     const val DEVICE_TRASH = "device/trash"
 
@@ -473,14 +476,18 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
         }
         composable(Routes.ALBUM, arguments = listOf(navArgument("albumId") { type = NavType.StringType })) { entry ->
             val id = entry.arguments?.getString("albumId").orEmpty()
-            // Phone folders are read-only; with a server they come from the device folder list.
+            // Phone folders are read-only: Library → On this device's folder page (name, count, path, ⋯).
             val folder = id.startsWith(TimelineFilter.FOLDER_PREFIX)
-            val store = if (folder && sources.hasImmich) container.deviceFolders else container.albums
             TimelineDestination(container, viewer, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
-                AlbumDetailScreen(
-                    id, store, timeline, if (Capability.SERVER_ALBUMS in caps && !folder) container.actions else null, open,
-                    onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
-                )
+                val bucket = id.removePrefix(TimelineFilter.FOLDER_PREFIX).toLongOrNull()
+                if (folder && bucket != null) {
+                    DeviceFolderScreen(bucket, container.phoneFolders, timeline, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+                } else {
+                    AlbumDetailScreen(
+                        id, container.albums, timeline, if (Capability.SERVER_ALBUMS in caps) container.actions else null, open,
+                        onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
+                    )
+                }
             }
         }
         composable(Routes.SEARCH) { entry ->
@@ -505,7 +512,11 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.LIBRARY) {
-            LibraryScreen(onOpen = { e ->
+            LibraryScreen(
+                folders = container.phoneFolders,
+                onFolder = { nav.navigate(Routes.album(it.id)) },
+                onAccessChanged = { container.device.onAccessChanged() },
+                onOpen = { e ->
                 when (e) {
                     LibraryEntry.Favorites -> nav.navigate(Routes.FAVORITES)
                     LibraryEntry.People -> nav.navigate(Routes.PEOPLE)
@@ -515,9 +526,10 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                     LibraryEntry.Trash -> nav.navigate(Routes.TRASH)
                     LibraryEntry.Settings -> nav.navigate(Routes.SETTINGS)
                     LibraryEntry.ConnectImmich -> nav.navigate(Routes.CONNECT)
-                    LibraryEntry.OnThisDevice -> nav.navigate(Routes.DEVICE)
+                    LibraryEntry.OnThisDevice -> nav.navigate(Routes.DEVICE_FOLDERS)
                 }
-            })
+            },
+            )
         }
         composable(Routes.DEVICE) { entry ->
             TimelineDestination(container, viewer, entry, TimelineFilter.Device) { timeline, open, reveal, revealed ->
@@ -532,11 +544,14 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.DEVICE_FOLDERS) {
-            AlbumsScreen(
-                container.deviceFolders, null, container.uiPrefs,
-                onOpen = { nav.navigate(Routes.album(it.id)) },
-                folders = true,
+            DeviceFoldersScreen(
+                container.phoneFolders,
+                onFolder = { nav.navigate(Routes.album(it.id)) },
                 onBack = { nav.popBackStack() },
+                onAccessChanged = { container.device.onAccessChanged() },
+                // With a server the Photos tab is merged: the phone's own timeline and trash live here.
+                onPhoneTimeline = if (sources.hasImmich) { { nav.navigate(Routes.DEVICE) } } else null,
+                onPhoneTrash = if (sources.hasImmich) { { nav.navigate(Routes.DEVICE_TRASH) } } else null,
             )
         }
         composable(Routes.DEVICE_TRASH) { entry ->

@@ -264,9 +264,22 @@ ExifInterface (it needs ACCESS_MEDIA_LOCATION and `MediaStore.setRequireOriginal
 ### UI
 
 - No server: the Photos tab, Albums (Folders), Favorites and Trash read the phone.
-- With a server: Library shows an "On this device" card. It opens `device` (the phone
-  timeline), `device/folders` (`container.deviceFolders`) and `device/trash`
-  (`container.deviceActions`).
+- Library → ON THIS DEVICE (with or without a server, `ui/library/DeviceFolders.kt`): a row of
+  the phone's folders, VIEW ALL for the grid (`device/folders`), each folder on `album/folder:<id>`
+  (`DeviceFolderScreen`: the folder's timeline, name, count and path, ⋯ menu). Without access a
+  GRANT ACCESS card; with partial access a MANAGE card above the row. With a server the grid's
+  header also opens `device` (the phone timeline) and `device/trash` (`container.deviceActions`).
+  - `container.phoneFolders` (`DeviceFolderStore`, `domain/library/DeviceFolders.kt`) loads
+    `MediaStoreLibrary.deviceFolders()`: one grouped query (`MediaDao.folders()`, the cover's
+    kind and generation from the newest row), refreshed by `onDeviceChanged`.
+  - Order: Camera (DCIM/Camera), Screenshots, then newest item first. Friendly names and icons
+    for Camera, Screenshots, Screen recordings, Downloads, WhatsApp, Telegram, Instagram,
+    Snapchat, Pictures, Movies and Edited (`Photos Edited`). Same-name folders get a path hint.
+  - `FolderPrefs` (in `UiPrefs`): hidden from Library, and Show in Photos per folder over the
+    Settings mode (All folders / Camera + selected). The Photos timeline (`TimelineFilter.Timeline`,
+    and the merged one through it) leaves out folders turned off (`MediaDao.monthsExcluding`).
+  - With a server every timeline goes through `MergedTimelineSource`; phone-only ones (folders,
+    `device`) get their cached Immich copies filled in, so the backup badges apply there too.
 - The grid shows "N days" on trashed items with `TimelineAsset.expiresAt`.
 - Screenshots are in `DeviceScreenshotTest` (`device-*.png`).
 

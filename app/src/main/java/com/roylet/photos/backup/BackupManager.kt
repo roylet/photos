@@ -1,5 +1,7 @@
 package com.roylet.photos.backup
 
+import com.roylet.photos.domain.library.DeviceFolders
+import com.roylet.photos.domain.library.FolderKind
 import com.roylet.photos.local.FolderRow
 import com.roylet.photos.local.MediaDao
 import com.roylet.photos.local.SQL_VARS
@@ -90,7 +92,7 @@ class BackupManager(
         val byBucket = counts.associateBy { it.bucketId }
         val failedIn = failures.groupingBy { it.bucketId }.eachCount()
         val excludedIn = exclusions.groupingBy { it.bucketId }.eachCount()
-        folders.map { f ->
+        orderFolders(folders).map { f ->
             val c = byBucket[f.bucketId]
             val total = c?.total ?: 0
             val done = c?.backedUp ?: 0
@@ -98,10 +100,12 @@ class BackupManager(
             val excluded = excludedIn[f.bucketId] ?: 0
             BackupFolder(
                 bucketId = f.bucketId,
-                name = f.bucketName ?: f.relativePath?.trimEnd('/')?.substringAfterLast('/') ?: "Folder",
+                name = DeviceFolders.displayName(f.bucketName, f.relativePath),
                 relativePath = f.relativePath,
                 count = f.count,
                 coverId = f.coverId,
+                coverIsVideo = f.coverIsVideo,
+                coverGeneration = f.coverGeneration,
                 status = FolderBackupStatus(
                     enabled = chosen[f.bucketId] ?: isCamera(f),
                     eligible = total, backedUp = done, failed = failed, excluded = excluded,
@@ -299,9 +303,13 @@ class BackupManager(
 
     companion object {
         /** The default suggestion: the camera's own folder (DCIM/Camera). */
-        fun isCamera(f: FolderRow): Boolean {
-            val path = f.relativePath?.trimEnd('/')
-            return if (path != null) path.equals("DCIM/Camera", ignoreCase = true) else f.bucketName.equals("Camera", ignoreCase = true)
+        fun isCamera(f: FolderRow): Boolean = DeviceFolders.kindOf(f.bucketName, f.relativePath) == FolderKind.Camera
+
+        /** Library's order: Camera, Screenshots, then newest first. */
+        private fun orderFolders(rows: List<FolderRow>): List<FolderRow> {
+            val byId = rows.associateBy { it.bucketId }
+            return DeviceFolders.order(rows.map { DeviceFolders.of(it.bucketId, it.bucketName, it.relativePath, it.volume, it.count, it.latest, null) })
+                .mapNotNull { byId[it.bucketId] }
         }
 
         internal fun stateOf(

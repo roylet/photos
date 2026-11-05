@@ -78,8 +78,22 @@ data class MetaEntity(@PrimaryKey val key: String, val value: String)
 /** A month and how many items it holds. */
 data class MonthCount(val month: Int, val count: Int)
 
-/** A folder (BUCKET_ID) with its newest item as the cover. */
-data class FolderRow(val bucketId: Long, val bucketName: String?, val relativePath: String?, val count: Int, val latest: Long, val coverId: Long)
+/**
+ * A folder (BUCKET_ID) with its newest item as the cover: the cover's kind and generation come
+ * with it, so its thumbnail URL needs no second lookup.
+ */
+data class FolderRow(
+    val bucketId: Long,
+    val bucketName: String?,
+    val relativePath: String?,
+    val count: Int,
+    val latest: Long,
+    val coverId: Long,
+    val coverIsVideo: Boolean = false,
+    val coverGeneration: Long = 0,
+    val coverMimeType: String? = null,
+    val volume: String? = null,
+)
 
 @Dao
 interface MediaDao {
@@ -99,6 +113,21 @@ interface MediaDao {
     )
     suspend fun inMonth(month: Int, trashed: Boolean, favorite: Boolean, bucketId: Long?): List<MediaEntity>
 
+    /** [months] for the Photos timeline, leaving out the folders in [excluded] (Settings → device folders in Photos). */
+    @Query(
+        """SELECT month, COUNT(*) AS count FROM media
+           WHERE trashed = 0 AND (bucketId IS NULL OR bucketId NOT IN (:excluded))
+           GROUP BY month ORDER BY month DESC""",
+    )
+    suspend fun monthsExcluding(excluded: List<Long>): List<MonthCount>
+
+    @Query(
+        """SELECT * FROM media
+           WHERE month = :month AND trashed = 0 AND (bucketId IS NULL OR bucketId NOT IN (:excluded))
+           ORDER BY takenAt DESC, id DESC""",
+    )
+    suspend fun inMonthExcluding(month: Int, excluded: List<Long>): List<MediaEntity>
+
     @Query("SELECT * FROM media WHERE id IN (:ids)")
     suspend fun byIds(ids: List<Long>): List<MediaEntity>
 
@@ -110,10 +139,15 @@ interface MediaDao {
 
     /* ---- Folders ---- */
 
+    /**
+     * Every folder in one grouped pass. With a single MAX() aggregate SQLite takes the bare columns
+     * (name, path, the cover's id, kind, generation, volume) from the row holding that maximum,
+     * i.e. the newest item, so the cover needs no correlated subquery.
+     */
     @Query(
         """SELECT bucketId, bucketName, relativePath, COUNT(*) AS count, MAX(takenAt) AS latest,
-                  (SELECT m2.id FROM media m2 WHERE m2.bucketId = m.bucketId AND m2.trashed = 0 ORDER BY m2.takenAt DESC, m2.id DESC LIMIT 1) AS coverId
-           FROM media m WHERE trashed = 0 AND bucketId IS NOT NULL
+                  id AS coverId, isVideo AS coverIsVideo, generation AS coverGeneration, mimeType AS coverMimeType, volume
+           FROM media WHERE trashed = 0 AND bucketId IS NOT NULL
            GROUP BY bucketId ORDER BY latest DESC""",
     )
     suspend fun folders(): List<FolderRow>

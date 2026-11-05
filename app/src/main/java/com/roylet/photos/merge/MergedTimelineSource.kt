@@ -45,7 +45,8 @@ interface MonthMatcher {
  *   one side only are just that side.
  * - Favourites: the union (a favourite on either side); a cached match fills in the other ref.
  * - Trash: both trashes, unmerged, each item labelled by its own source.
- * - Archive, albums, people, tags: Immich only. Phone folders and [TimelineFilter.Device]: phone only.
+ * - Archive, albums, people, tags: Immich only. Phone folders and [TimelineFilter.Device]: phone
+ *   only, with cached Immich copies filled in (so the badges say what's backed up).
  * - Immich unreachable: the phone's side alone, so the gallery still works offline.
  *
  * Bucket counts before a month loads are estimates (phone + Immich − known pairs); once loaded,
@@ -104,7 +105,7 @@ class MergedTimelineSource(
 
     override suspend fun bucket(filter: TimelineFilter, key: String): List<TimelineAsset> {
         val mode = modeOf(filter)
-        if (mode == Mode.LocalOnly) return local.bucket(filter, key)
+        if (mode == Mode.LocalOnly) return local.bucket(filter, key).let { if (filter.isTrashed == true) it else withKnownCopies(it) }
         if (mode == Mode.RemoteOnly) return remote.bucket(filter, key)
         val (l, r) = coroutineScope {
             // The phone's spelling of the month (the key may be Immich's).
@@ -131,6 +132,24 @@ class MergedTimelineSource(
             .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Matching $key failed", it) }
             .getOrNull().orEmpty()
         return pair(phone, server, matches, newestFirst)
+    }
+
+    /**
+     * Phone-only timelines (a folder, Library → On this device): the phone's items alone, each
+     * with its cached Immich copy filled in, so backed-up photos are badged as on both.
+     */
+    private suspend fun withKnownCopies(phone: List<TimelineAsset>): List<TimelineAsset> {
+        val m = matcher() ?: return phone
+        if (phone.isEmpty()) return phone
+        val known = runCatching { m.cachedRemote(phone.mapNotNull { it.ref?.mediaStoreId }) }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull().orEmpty()
+        if (known.isEmpty()) return phone
+        return phone.map { a ->
+            val lid = a.ref?.mediaStoreId ?: return@map a
+            val rid = known[lid]?.remoteId ?: return@map a
+            a.copy(localRef = AssetRef.local(lid), remoteRef = AssetRef.immich(rid))
+        }
     }
 
     private suspend fun favorites(phone: List<TimelineAsset>, server: List<TimelineAsset>, newestFirst: Boolean): List<TimelineAsset> {
