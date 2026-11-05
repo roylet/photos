@@ -1,6 +1,8 @@
 package com.roylet.photos.local
 
 import com.roylet.photos.domain.library.Album
+import com.roylet.photos.domain.library.DeviceFolder
+import com.roylet.photos.domain.library.DeviceFolders
 import com.roylet.photos.domain.library.AssetDetails
 import com.roylet.photos.domain.library.ConsentDeniedException
 import com.roylet.photos.domain.library.LocalLibrary
@@ -212,20 +214,25 @@ class MediaStoreLibrary(
 
     /* ---------------- Folders ---------------- */
 
-    override suspend fun albums(): List<Album> {
-        val folders = dao.folders()
-        // Covers render through LocalMediaUrls, which needs to know image or video.
-        folders.map { it.coverId }.chunked(SQL_VARS).forEach { chunk -> dao.byIds(chunk).forEach(LocalAssetInfo::remember) }
-        return folders.map { f ->
-            Album(
-                id = TimelineFilter.FOLDER_PREFIX + f.bucketId,
-                name = f.bucketName?.takeIf { it.isNotBlank() } ?: f.relativePath?.trimEnd('/')?.substringAfterLast('/') ?: "Folder",
-                description = f.relativePath?.trimEnd('/').orEmpty(),
-                assetCount = f.count,
-                coverAssetId = AssetRef.local(f.coverId).id,
-                updatedAt = f.latest,
-            )
-        }
+    override suspend fun albums(): List<Album> = folderRows().map { f ->
+        Album(
+            id = TimelineFilter.FOLDER_PREFIX + f.bucketId,
+            name = f.bucketName?.takeIf { it.isNotBlank() } ?: f.relativePath?.trimEnd('/')?.substringAfterLast('/') ?: "Folder",
+            description = f.relativePath?.trimEnd('/').orEmpty(),
+            assetCount = f.count,
+            coverAssetId = AssetRef.local(f.coverId).id,
+            updatedAt = f.latest,
+        )
+    }
+
+    /** Library → On this device: every folder from one grouped query, named ([DeviceFolders]), newest first. */
+    suspend fun deviceFolders(): List<DeviceFolder> = folderRows().map { f ->
+        DeviceFolders.of(f.bucketId, f.bucketName, f.relativePath, f.volume, f.count, f.latest, AssetRef.local(f.coverId).id)
+    }
+
+    /** The grouped folder query; remembers each cover's kind and generation for its thumbnail URL. */
+    private suspend fun folderRows(): List<FolderRow> = dao.folders().onEach { f ->
+        LocalAssetInfo.put(f.coverId, LocalAssetInfo.Info(f.coverIsVideo, f.coverGeneration, mimeType = f.coverMimeType))
     }
 
     override suspend fun album(id: String): Album = albums().firstOrNull { it.id == id } ?: throw NoSuchElementException("No folder $id")

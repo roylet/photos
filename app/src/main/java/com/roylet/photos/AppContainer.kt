@@ -33,6 +33,13 @@ import com.roylet.photos.ui.gallery.MediaUrls
 import com.roylet.photos.ui.gallery.SourceMediaUrls
 import com.roylet.photos.ui.permissions.ConsentLauncher
 import com.roylet.photos.domain.library.AlbumStore
+import com.roylet.photos.domain.library.DeviceFolder
+import com.roylet.photos.domain.library.DeviceFolderStore
+import com.roylet.photos.domain.library.DeviceFolders
+import com.roylet.photos.domain.library.PhotosFolderMode
+import com.roylet.photos.local.MediaStoreLibrary
+import com.roylet.photos.ui.permissions.MediaAccess
+import com.roylet.photos.ui.permissions.MediaPermissions
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.MemoryStore
 import com.roylet.photos.editor.save.EditSaveManager
@@ -121,6 +128,7 @@ class AppContainer(context: Context) {
             markOfferedManageMedia = { settings.offeredManageMedia = true },
             onChanged = ::onDeviceChanged,
             wantHashes = { hasServer },
+            excludedFromPhotos = { phoneFolders.excludedFromPhotos() },
         )
     }
 
@@ -199,8 +207,9 @@ class AppContainer(context: Context) {
 
     /** The timeline source for the active configuration; [TimelineRegistry.source] can still pin one in tests. */
     private val activeTimeline = object : TimelineSource {
-        // Phone folders and timelines pinned to the phone (Library → On this device) read the index even with a server.
-        private fun current(filter: TimelineFilter) = if (hasServer && !filter.isLocal) mergedTimeline else localTimeline
+        // With a server everything goes through the merged source: phone folders and timelines pinned to
+        // the phone (Library → On this device) still read only the index, with Immich's copies marked.
+        private fun current(filter: TimelineFilter) = if (hasServer) mergedTimeline else localTimeline
         override suspend fun buckets(filter: TimelineFilter) = current(filter).buckets(filter)
         override suspend fun bucket(filter: TimelineFilter, key: String) = current(filter).bucket(filter, key)
     }
@@ -241,6 +250,45 @@ class AppContainer(context: Context) {
         }
         if (deviceFolders.albums.value != null) deviceFolders.refresh()
         if (!hasServer && albums.albums.value != null) albums.refresh()
+        // Covers and counts follow the index; with "Camera + selected" a new folder must be known
+        // before the Photos timeline reloads, or it would show there until the next change.
+        if (phoneFolders.folders.value != null || phoneFolders.prefs.value.mode != PhotosFolderMode.All) {
+            appScope.launch {
+                phoneFolders.reload()
+                if (phoneFolders.prefs.value.mode != PhotosFolderMode.All) refreshPhotosTimeline()
+            }
+        }
+    }
+
+    /**
+     * Library → On this device: the phone's folders, named and ordered Google Photos style, with
+     * the user's hidden folders and which ones show in Photos (kept in [uiPrefs]).
+     */
+    val phoneFolders: DeviceFolderStore by lazy {
+        DeviceFolderStore(::loadPhoneFolders, uiPrefs.folderPrefs, { uiPrefs.folderPrefs = it }, appScope).also { store ->
+            store.onPhotosChanged = { mergedTimeline.reset(); refreshPhotosTimeline() }
+        }
+    }
+
+    private suspend fun loadPhoneFolders(): List<DeviceFolder> {
+        val lib = localLibrary
+        if (lib is MediaStoreLibrary) {
+            if (MediaPermissions.access(app) == MediaAccess.Denied) return emptyList()
+            device.indexer.awaitReady()
+            return lib.deviceFolders()
+        }
+        // A pinned library (tests, screenshots): its folders as albums.
+        return lib.albums().mapNotNull { a ->
+            val bucket = a.id.removePrefix(TimelineFilter.FOLDER_PREFIX).takeIf { a.id.startsWith(TimelineFilter.FOLDER_PREFIX) }?.toLongOrNull() ?: return@mapNotNull null
+            DeviceFolders.of(bucket, a.name, a.description, null, a.assetCount, a.updatedAt, a.coverAssetId)
+        }
+    }
+
+    /** The Photos timeline, after what it shows from the phone's folders changed. */
+    private fun refreshPhotosTimeline() {
+        timelines.forEachRepo { r ->
+            if (r.filter == TimelineFilter.Timeline && r.status.value != TimelineRepository.Status.Idle) r.refresh(keepLoaded = true)
+        }
     }
 
     /** Today's memories for the carousel above the timeline. */

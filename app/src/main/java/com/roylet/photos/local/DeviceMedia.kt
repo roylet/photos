@@ -32,6 +32,8 @@ class DeviceMedia(
     onChanged: () -> Unit,
     /** Whether phone items should be hashed (only worth it while an Immich server is connected, for matching). */
     private val wantHashes: () -> Boolean = { false },
+    /** Folders the Photos timeline leaves out (Settings → device folders in Photos). */
+    private val excludedFromPhotos: suspend () -> Set<Long> = { emptySet() },
 ) {
     private val app = context.applicationContext
     private val access: () -> MediaAccess = { MediaPermissions.access(app) }
@@ -49,7 +51,7 @@ class DeviceMedia(
         MediaIndexer(dao, AndroidMediaStoreReader(app), access, scope, onChanged = { onChanged(); scheduleHashing() }, legacyFavorites = { appDao.legacyFavorites() })
     }
 
-    val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, appDao, indexer, access, mediaStoreTrash = mediaStoreWrites) }
+    val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, appDao, indexer, access, mediaStoreTrash = mediaStoreWrites, excludedFromPhotos = excludedFromPhotos) }
 
     private val offer = ManageMediaOffer(app, snackbar, scope, offeredManageMedia, markOfferedManageMedia)
 
