@@ -8,6 +8,8 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,5 +65,46 @@ class AppContainerTest {
         org.junit.Assert.assertSame(before, container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline))
         container.settings.saveServer(cfg.copy(userId = "u-2"))
         org.junit.Assert.assertNotSame(before, container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline))
+    }
+
+    @Test fun `without a server the app runs on the phone`() {
+        assertNull(container.settings.server.value)
+        assertEquals(AppContainer.DEVICE_SESSION, container.sessionKey())
+        assertSame(container.localLibrary, container.library)
+        assertEquals(com.roylet.photos.domain.source.ActiveSources.LocalOnly, container.sources())
+        // Phone assets go to the local URL provider, with the bare MediaStore id.
+        container.localMediaUrls = object : com.roylet.photos.ui.gallery.MediaUrls by com.roylet.photos.ui.gallery.FakeMediaUrls {
+            override fun thumbnail(id: String) = "content://media/external/images/media/$id"
+        }
+        assertEquals("content://media/external/images/media/42", container.mediaUrls().thumbnail("local:42"))
+        val empty = kotlinx.coroutines.runBlocking { container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline).let { container.localTimeline.buckets(it.filter) } }
+        assertEquals(emptyList<Any>(), empty)
+    }
+
+    @Test fun `connecting switches library, capabilities and caches to Immich and back`() {
+        val phone = container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline)
+        container.settings.saveServer(ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1"))
+        assertSame(container.immichLibrary, container.library)
+        assertEquals(com.roylet.photos.domain.source.Capabilities.Immich, container.sources().capabilities)
+        assertTrue(container.sources().hasImmich)
+        assertEquals("https://photos.example.com/api/assets/abc/thumbnail?size=thumbnail", container.mediaUrls().thumbnail("abc").substringBefore("&"))
+        val immich = container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline)
+        org.junit.Assert.assertNotSame(phone, immich)
+        container.settings.signOut()
+        assertSame(container.localLibrary, container.library)
+        org.junit.Assert.assertNotSame(immich, container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline))
+    }
+
+    @Test fun `onboarding is remembered, and existing servers count as onboarded`() {
+        val settings = container.settings
+        org.junit.Assert.assertFalse(settings.onboarded.value)
+        settings.completeOnboarding()
+        assertTrue(settings.onboarded.value)
+        assertTrue(com.roylet.photos.data.Settings(ApplicationProvider.getApplicationContext()).onboarded.value)
+    }
+
+    @Test fun `signing in marks onboarding done`() {
+        container.settings.saveServer(ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1"))
+        assertTrue(container.settings.onboarded.value)
     }
 }
