@@ -97,7 +97,8 @@ object FakeGallery {
         ),
     )
 
-    private val idPattern = Regex("""(?:/assets/|fake://\w+/)([^/?]+)""")
+    // Immich URLs, fake:// placeholders and the phone's localmedia:// thumbnails.
+    private val idPattern = Regex("""(?:/assets/|fake://\w+/|localmedia://\w+/)([^/?]+)""")
     private val byId: Map<String, TimelineAsset> by lazy { buckets.flatMap { assetsOf(it.key) }.associateBy { it.id } }
     private val bitmaps = ConcurrentHashMap<String, Bitmap>()
 

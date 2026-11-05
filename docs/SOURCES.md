@@ -65,9 +65,12 @@ bit set. It supports `in`, `+`, `-`, `union` and `intersect`.
   - `isTrashed`: `QUERY_ARG_MATCH_TRASHED`.
   - `albumId`: `folder:<bucket>`.
 - Bucket keys use Immich's format, `yyyy-MM-01T00:00:00.000Z`.
-- The placeholder is `EmptyLocalTimelineSource`.
-- Plug it in with `container.localTimeline = ...`. The container routes the registry to it
-  whenever there's no server.
+- Implemented by `local/MediaStoreTimelineSource` (section 8). `EmptyLocalTimelineSource` stays
+  for tests. `container.localTimeline` defaults to `container.device.timeline`; assigning it
+  pins another one.
+- The container routes the registry to it whenever there's no server, and with a server for
+  filters where `TimelineFilter.isLocal` holds: `source = MediaSourceKind.Local`
+  (`TimelineFilter.Device`, `DeviceTrash`) or a `folder:` album.
 
 ### `LocalLibrary : LibrarySource`
 
@@ -76,10 +79,17 @@ bit set. It supports `in`, `+`, `-`, `union` and `intersect`.
 - You implement these: `setFavorite`, `details`, `albums`/`album` (folders), `trash`, `restore`,
   `deleteForever`, `restoreAll`, `emptyTrash`, `assets`, `download` (or share the content URI
   directly) and `basicSearch` (file name, folder or date).
-- The placeholder is `EmptyLocalLibrary`. Plug it in with `container.localLibrary = ...`.
-- `container.library` returns the Immich library with a server, else the local one. Tests can
-  pin a fake by assigning `container.library = ...`.
-- **Agent C:** swap this choice in `AppContainer.library` and `sources()` for a merged library.
+- Implemented by `local/MediaStoreLibrary` (section 8). `EmptyLocalLibrary` stays for tests.
+  `container.localLibrary` defaults to `container.device.library`.
+- `container.library` returns, with a server, a `SourceRoutingLibrary` (Immich, but calls about
+  `local:` ids and `folder:` albums go to the phone, for Library → On this device), else the
+  local one. Tests can pin a fake by assigning `container.library = ...`.
+- **Agent C:** swap this choice in `AppContainer.library` and `sources()` for a merged library
+  (it replaces `SourceRoutingLibrary`).
+- `LibrarySource.shareUri(id)` (default null) returns a `SharedUri` for items other apps can
+  read directly; `LibraryActions.sendFiles` shares those without downloading.
+- `ConsentDeniedException` is thrown when the user declines a MediaStore dialog; LibraryActions
+  rolls back.
 
 ### Favourite
 
@@ -176,3 +186,96 @@ ExifInterface (it needs ACCESS_MEDIA_LOCATION and `MediaStore.setRequireOriginal
 - **Reading it.** `AppContainer.serverSessionToken()` returns it. It returns null without a
   server and after an API-key sign-in (that path has no session). In that case the cast UI
   should explain that casting needs an email sign-in.
+
+## 8. Phone index (agent B, `local/`)
+
+### Room index (`MediaDatabase.kt`, `media-index.db`)
+
+- `media`: one row per MediaStore image/video. Columns: `id` (`_ID`), `isVideo`, `takenAt`
+  (UTC ms: DATE_TAKEN, else DATE_ADDED × 1000, else DATE_MODIFIED × 1000), `month`
+  (`yyyy*100+MM` in the device zone), `offsetMinutes`, `width`/`height`/`orientation`
+  (`ratio` applies it), `durationMs`, `mimeType`, `displayName`, `sizeBytes`, `bucketId`,
+  `bucketName`, `relativePath`, `volume`, `favorite`, `trashed`, `expiresAt` (DATE_EXPIRES ms),
+  `generation` (GENERATION_MODIFIED; DATE_MODIFIED on 10).
+- **`sha1` / `sha1Generation` (agent C).** Nullable. A hash is valid only while
+  `sha1Generation == generation`; the indexer keeps a valid one across syncs and drops it when
+  the item changes. Use `MediaDao.needingSha1(limit)` for the queue (newest first) and
+  `MediaDao.setSha1(id, hex, generation)`, which only writes if the row is still at that
+  generation (returns 0 otherwise). Read the bytes with `mediaUri(id, isVideo)`.
+- `index_meta`: version, access level, zone, per-volume generation.
+- `legacy_trash`, `legacy_favorite`: Android 10's app-side trash and favourites.
+- The schema is exported to `app/schemas/`. It's a cache: a version bump falls back to a
+  destructive rebuild (bump `version` and add a migration if agent C stores anything that
+  can't be recomputed).
+
+### Sync (`MediaIndexer`)
+
+- Full sync: first run, `MediaStore.getVersion()` changed, access level changed (partial grants
+  show a different set), or Android 10 (no generations). It reads every row and rewrites only
+  rows that differ.
+- Incremental: rows with GENERATION_MODIFIED above the last stored generation, per volume.
+- Deletions: `_ID` set diff, every sync.
+- No access: nothing is queried and the index is wiped.
+- Device zone change: months are re-bucketed.
+- Writes are in batches of 500, one transaction each (50k rows take about a second in tests).
+- Triggers: `DeviceMedia.start()` (from `PhotosApp`) syncs on every return to the foreground
+  and registers a ContentObserver (debounced 800 ms) while there. `device.onAccessChanged()`
+  forces a full sync (AppNav calls it when the permission level changes or the selection is
+  edited).
+- `MediaIndexer.sync()` returns a `SyncResult`; when it changed anything,
+  `AppContainer.onDeviceChanged` refreshes the shown phone timelines and folder lists.
+- `MediaStoreReader` is the seam for tests (`FakeMediaStore` in `src/test/.../local/`).
+
+### Library behaviour (`MediaStoreLibrary`)
+
+- Android 11+: `MediaRequest.Favorite/Trash/Delete`, chunked at 500 URIs, become
+  `createFavoriteRequest` / `createTrashRequest` / `createDeleteRequest` in
+  `ConsentRequestRunner`, through `container.consent`. The index is updated right after.
+- After the first dialog, `ManageMediaOffer` shows a one-time "Skip dialogs" snackbar
+  (`Settings.offeredManageMedia`) opening ACTION_REQUEST_MANAGE_MEDIA.
+- Android 10: trash copies the original to `files/trash/` (`AndroidLegacyFiles`), deletes it
+  (RecoverableSecurityException consent) and lists it with id `local:-<rowId>`. Restore inserts
+  it back at its RELATIVE_PATH with IS_PENDING. Favourites live in `legacy_favorite`. Items are
+  purged after 30 days on app start.
+- Folders: `folder:<BUCKET_ID>`, read-only, newest first, cover = newest item.
+- `basicSearch`: file name, folder or path (LIKE), and dates (`DateQuery`: "2024",
+  "March 2023", "2023-03", "May").
+- Details: MediaStore columns plus ExifInterface. It uses `setRequireOriginal` when
+  ACCESS_MEDIA_LOCATION is granted, so GPS is included. Videos use MediaMetadataRetriever for
+  location.
+- `capabilities` = `Capabilities.Local`. **Agent C** adds EDIT_SAVE by overriding it here.
+
+### Pixels
+
+- `LocalMediaUrls` (bare MediaStore id in):
+  - thumbnail: `localmedia://thumb/<id>?v=<0|1>&g=<generation>`;
+  - preview: `localmedia://full/...` for images, `thumb` for videos;
+  - fullsize, original and video: `content://media/external/{images|video}/media/<id>`;
+  - Android 10 trash: `file://` of the private copy.
+- The generation in the URL is the memory-cache key. MediaStore caches thumbnails on disk.
+- `LocalAssetInfo` remembers kind and generation for every asset the index hands out.
+- `LocalThumbnailFetcher` (in the image loader) serves `localmedia://`:
+  - `thumb` uses `ContentResolver.loadThumbnail`, cancelled through a CancellationSignal when
+    the request is cancelled;
+  - `full` decodes the content URI with sampling and EXIF rotation.
+- ExoPlayer (`rememberPlayer`) uses `DefaultDataSource.Factory(context, OkHttpDataSource...)`.
+- Scrub frames use `extractFrames(context, client, url, ...)`: `content://` goes through
+  `MediaMetadataRetriever.setDataSource(context, uri)`, http through Range requests.
+- Share: `AndroidShareLauncher.send(files, uris)` grants read access to the content URIs.
+
+### UI
+
+- No server: the Photos tab, Albums (Folders), Favorites and Trash read the phone.
+- With a server: Library shows an "On this device" card. It opens `device` (the phone
+  timeline), `device/folders` (`container.deviceFolders`) and `device/trash`
+  (`container.deviceActions`).
+- The grid shows "N days" on trashed items with `TimelineAsset.expiresAt`.
+- Screenshots are in `DeviceScreenshotTest` (`device-*.png`).
+
+### Needs a device
+
+- Consent dialogs and the MANAGE_MEDIA skip.
+- Android 10's RecoverableSecurityException flow.
+- loadThumbnail speed on a 50k library.
+- SD-card volumes.
+- Partial-access re-selection.

@@ -1,5 +1,6 @@
 package com.roylet.photos.local
 
+import android.annotation.SuppressLint
 import android.content.ContentResolver
 import android.net.Uri
 import android.os.CancellationSignal
@@ -138,6 +139,8 @@ class LocalThumbnailFetcher(
     private val isVideo: Boolean,
     private val options: Options,
 ) : Fetcher {
+    // The descriptor is closed with the ImageSource once Coil has decoded it.
+    @SuppressLint("Recycle")
     override suspend fun fetch(): FetchResult? {
         val uri = mediaUri(id, isVideo)
         if (mode == "full") {

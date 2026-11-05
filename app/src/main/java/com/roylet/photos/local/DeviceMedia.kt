@@ -56,7 +56,7 @@ class DeviceMedia(
             dao = dao,
             indexer = indexer,
             mediaStoreWrites = mediaStoreWrites,
-            runner = if (mediaStoreWrites) ConsentRequestRunner(app, consent, offer::maybeOffer) else MediaRequestRunner { false },
+            runner = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ConsentRequestRunner(app, consent, offer::maybeOffer) else MediaRequestRunner { false },
             legacy = if (mediaStoreWrites) null else AndroidLegacyFiles(app, consent),
             io = AndroidLocalIo(app),
         )
