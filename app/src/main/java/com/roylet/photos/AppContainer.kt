@@ -186,6 +186,13 @@ class AppContainer(context: Context) {
      * The API for the saved server, or null when signed out. It's built on the public URL (the
      * "logical" address); [http] rewrites each request to whichever address is active.
      */
+    /**
+     * The Immich session (bearer) token from an email+password sign-in, for casting: create
+     * short-lived child sessions with `POST /api/sessions` (which refuses API keys) and hand the
+     * Chromecast `?sessionKey=` URLs. Null without a server or after an API-key sign-in; never log it.
+     */
+    fun serverSessionToken(): String? = settings.server.value?.castSessionToken
+
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }
 
     /** Photo-editor saves (WorkManager jobs) and the viewer's "Original moved to Trash · UNDO". */

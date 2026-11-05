@@ -84,10 +84,13 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit, onBack: (() 
                     return@launch
                 }
                 val probe = ImmichApi(origin, null, container.http)
+                // An email sign-in also keeps its session token: casting needs one (POST /sessions refuses API keys).
+                var sessionToken: String? = null
                 val key = if (useKey) {
                     apiKey.trim()
                 } else {
                     val login = step("Sign-in failed") { probe.login(email.trim(), password) }
+                    sessionToken = login.accessToken
                     step("Signed in, but couldn't create an API key") { probe.createApiKey(login.accessToken, ImmichApi.KEY_NAME) }
                 }
                 // Proves the key works, and gives us the user id the LAN check matches against.
@@ -100,6 +103,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit, onBack: (() 
                         userId = me.id,
                         email = me.email.ifEmpty { email.trim() }.takeIf { it.isNotEmpty() },
                         name = me.name.takeIf { it.isNotEmpty() },
+                        castSessionToken = sessionToken,
                     ),
                 )
                 // Picks LAN vs public, learns the public URL if this was a LAN address, and

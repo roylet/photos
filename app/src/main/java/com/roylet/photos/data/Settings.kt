@@ -37,10 +37,23 @@ data class ServerConfig(
      * despite a differing config field keeps working.
      */
     val localFingerprint: String? = null,
-)
+    /**
+     * The session (bearer) token from an email+password sign-in, kept for casting: Immich's
+     * `POST /sessions` (child sessions for `?sessionKey=` URLs) refuses API keys. Null after an
+     * API-key sign-in. Stored encrypted (see [TokenCipher]), cleared on sign-out; never log it.
+     */
+    val castSessionToken: String? = null,
+) {
+    /** Keeps the key and token out of logs and crash reports. */
+    override fun toString(): String =
+        "ServerConfig(publicUrl=$publicUrl, localUrl=$localUrl, userId=$userId, email=$email, mode=$mode, localVerified=$localVerified, " +
+            "apiKey=<redacted>, castSessionToken=${if (castSessionToken == null) "null" else "<redacted>"})"
+}
 
-class Settings(context: Context) : ServerStore {
+class Settings(context: Context, private val cipher: TokenCipher = KeystoreTokenCipher()) : ServerStore {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    /** Encrypted secrets only (ciphertext from [cipher]); kept apart from the plain settings. */
+    private val secrets = context.getSharedPreferences("secrets", Context.MODE_PRIVATE)
 
     private val _server = MutableStateFlow(readServer())
     override val server: StateFlow<ServerConfig?> = _server.asStateFlow()
@@ -75,7 +88,10 @@ class Settings(context: Context) : ServerStore {
             .putBoolean(KEY_LOCAL_VERIFIED, config.localVerified)
             .putString(KEY_LOCAL_FINGERPRINT, config.localFingerprint)
             .apply()
-        _server.value = config
+        // Encrypted or not at all: if the Keystore can't seal it, casting just won't be offered.
+        val sealed = config.castSessionToken?.let(cipher::encrypt)
+        secrets.edit().apply { if (sealed != null) putString(KEY_CAST_TOKEN, sealed) else remove(KEY_CAST_TOKEN) }.apply()
+        _server.value = config.copy(castSessionToken = if (sealed != null) config.castSessionToken else null)
         if (!_onboarded.value) completeOnboarding()
     }
 
@@ -96,6 +112,7 @@ class Settings(context: Context) : ServerStore {
 
     fun signOut() {
         prefs.edit().apply { SERVER_KEYS.forEach(::remove) }.apply()
+        secrets.edit().remove(KEY_CAST_TOKEN).apply()
         _server.value = null
     }
 
@@ -113,6 +130,7 @@ class Settings(context: Context) : ServerStore {
             fingerprint = prefs.getString(KEY_FINGERPRINT, null),
             localVerified = prefs.getBoolean(KEY_LOCAL_VERIFIED, false),
             localFingerprint = prefs.getString(KEY_LOCAL_FINGERPRINT, null),
+            castSessionToken = secrets.getString(KEY_CAST_TOKEN, null)?.let(cipher::decrypt),
         )
     }
 
@@ -128,6 +146,7 @@ class Settings(context: Context) : ServerStore {
         const val KEY_LOCAL_VERIFIED = "localVerified"
         const val KEY_LOCAL_FINGERPRINT = "localFingerprint"
         const val KEY_ONBOARDED = "onboarded"
+        const val KEY_CAST_TOKEN = "castSessionToken"
         const val KEY_ASKED_MEDIA = "askedMediaPermission"
         val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED, KEY_LOCAL_FINGERPRINT)
     }
