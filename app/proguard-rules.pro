@@ -14,3 +14,8 @@
 -keep class org.maplibre.android.geometry.** { *; }
 -keepclasseswithmembers class org.maplibre.** { native <methods>; }
 -dontwarn org.maplibre.**
+
+# Cast: the Cast SDK instantiates the options provider by the name in the manifest's
+# OPTIONS_PROVIDER_CLASS_NAME meta-data (reflection R8 can't see). The SDK's consumer rules keep
+# OptionsProvider implementations too; this keeps ours explicitly in case they ever change.
+-keep class com.roylet.photos.cast.PhotosCastOptionsProvider { public <init>(); public *; }

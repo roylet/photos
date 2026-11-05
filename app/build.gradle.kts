@@ -157,6 +157,11 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.transformer)
     implementation(libs.media3.effect)
+    // Chromecast (docs/SOURCES.md §11): CastPlayer + the Cast framework, a MediaSessionService, and
+    // NanoHTTPD (BSD-3, ~60 KB) for serving phone-only photos and videos to the TV.
+    implementation(libs.media3.cast)
+    implementation(libs.media3.session)
+    implementation(libs.nanohttpd)
     implementation(libs.maplibre.android)
     // Installs the bundled baseline profile on devices without Play's cloud profiles.
     implementation(libs.androidx.profileinstaller)

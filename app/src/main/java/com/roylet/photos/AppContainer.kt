@@ -8,6 +8,7 @@ import okio.Path.Companion.toOkioPath
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
+import com.roylet.photos.cast.Media3CastDevice
 import com.roylet.photos.domain.library.LocalLibrary
 import com.roylet.photos.domain.library.LocalTimelineSource
 import com.roylet.photos.domain.timeline.TimelineRepository
@@ -417,6 +418,11 @@ class AppContainer(context: Context) {
      * Chromecast `?sessionKey=` URLs. Null without a server or after an API-key sign-in; never log it.
      */
     fun serverSessionToken(): String? = settings.server.value?.castSessionToken
+
+    /* ---------------- Casting (docs/SOURCES.md §11) ---------------- */
+
+    /** The Cast SDK and Media3's remote player; [Media3CastDevice.init] runs from MainActivity (main thread). */
+    val castDevice: Media3CastDevice by lazy { Media3CastDevice(app) }
 
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }
 

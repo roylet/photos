@@ -27,6 +27,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = (application as PhotosApp).container
         applySystemBars(container.uiPrefs.themeMode.value)
+        // Chromecast: the shared CastContext (device discovery, sessions), if Play services are here.
+        container.castDevice.init()
         setContent {
             val mode by container.uiPrefs.themeMode.collectAsState()
             val dark = when (mode) {

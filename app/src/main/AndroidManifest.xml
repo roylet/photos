@@ -8,6 +8,15 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Casting: the Media3 session service shows the TV's playback as a media notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!--
+        Casting phone-only photos: the TV fetches them from a small HTTP server on the phone, bound
+        to its Wi-Fi address. INTERNET is all that needs at targetSdk 35.
+        TODO(targetSdk 37): Android 17 gates local-network access behind ACCESS_LOCAL_NETWORK (a
+        runtime permission in the NEARBY_DEVICES group); declare and request it before casting
+        phone photos once targetSdk is raised. See cast/LocalMediaServer.kt.
+    -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- The phone's own photos and videos (see ui/permissions/MediaPermissions.kt). -->
@@ -71,6 +80,26 @@
         <receiver
             android:name=".backup.BackupActionReceiver"
             android:exported="false" />
+
+        <!-- Chromecast (docs/SOURCES.md §11): Default Media Receiver options, read by the Cast SDK. -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.roylet.photos.cast.PhotosCastOptionsProvider" />
+
+        <!-- Runs only while casting: the Media3 session (lock screen, notification, Output Switcher). -->
+        <service
+            android:name=".cast.CastService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <!-- Lets the system Output Switcher move this app's media between the phone and a cast device. -->
+        <receiver
+            android:name="androidx.mediarouter.media.MediaTransferReceiver"
+            android:exported="true" />
 
         <!-- WorkManager's foreground service must declare the type we promote save/upload work to. -->
         <service
