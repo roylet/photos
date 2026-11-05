@@ -62,6 +62,34 @@ class Sha1HasherTest {
         assertEquals("a9993e364706816aba3e25717850c26c9cd0d89d", Sha1Hasher.sha1Hex(ByteArrayInputStream("abc".toByteArray())))
     }
 
+    @Test fun `hashing waits while the user scrolls`() {
+        var busyChecks = 0
+        // Busy for the first three checks (the user is scrolling), then idle.
+        val h = Sha1Hasher(dao, ::open, batchSize = 5, busy = { busyChecks++ < 3 }, pauseMs = 1)
+        val run = runBlocking { h.run() }
+        assertEquals(5, run.hashed)
+        assertTrue(busyChecks >= 4)
+        assertEquals(listOf(5L, 4L, 3L, 2L, 1L), opened)
+        // Nothing is opened while busy, and a stop while waiting ends the run.
+        opened.clear()
+        store.put(photo(6, taken = utc(2026, 10, 9)))
+        runBlocking { indexer.sync() }
+        var stopChecks = 0
+        val stopped = runBlocking { Sha1Hasher(dao, ::open, busy = { true }, pauseMs = 1).run(shouldStop = { stopChecks++ > 10 }) }
+        assertTrue(stopped.stopped)
+        assertTrue(opened.isEmpty())
+    }
+
+    @Test fun `a long file stops hashing part-way when the job is stopped`() {
+        val big = object : InputStream() {
+            var read = 0L
+            override fun read(): Int = if (read++ < 100L * 1024 * 1024) 0 else -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int { read += len; return len }
+        }
+        assertNull(Sha1Hasher.sha1Hex(big) { big.read > 8L * 1024 * 1024 })
+        assertTrue(big.read < 16L * 1024 * 1024)
+    }
+
     @Test fun `a stopped run resumes where it left off`() {
         var calls = 0
         val first = runBlocking { hasher().run(shouldStop = { calls++ >= 3 }) }

@@ -1,5 +1,6 @@
 package com.roylet.photos.ui.gallery
 
+import com.roylet.photos.util.UserActivity
 import android.content.Context
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
@@ -44,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -131,6 +133,15 @@ fun TimelineGrid(
 ) {
     val snapshot by timeline.snapshot.collectAsState()
     LaunchedEffect(timeline) { timeline.startOrRefresh() }
+    // Background hashing waits while the user scrolls (UserActivity), so the grid keeps the disk.
+    LaunchedEffect(state) {
+        var on = false
+        try {
+            snapshotFlow { state.isScrollInProgress }.collect { if (it != on) { on = it; UserActivity.scrolling(it) } }
+        } finally {
+            if (on) UserActivity.scrolling(false)
+        }
+    }
     val urls = LocalMediaUrls.current
     val haptics = LocalHapticFeedback.current
     val reduced = reducedMotion()

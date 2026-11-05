@@ -14,6 +14,7 @@ import com.roylet.photos.PhotosApp
 import com.roylet.photos.ui.permissions.MediaPermissions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.security.MessageDigest
@@ -44,6 +45,9 @@ class Sha1Hasher(
     private val batchSize: Int = 25,
     /** After each batch: the ids hashed in it (matching picks them up). */
     private val onBatch: suspend (List<Long>) -> Unit = {},
+    /** True while the user is scrolling a timeline: hashing waits so the grid keeps the disk. */
+    private val busy: () -> Boolean = { false },
+    private val pauseMs: Long = 500,
 ) {
     data class Run(val hashed: Int, val stale: Int, val failed: Int, val stopped: Boolean)
 
@@ -57,9 +61,10 @@ class Sha1Hasher(
             if (batch.isEmpty()) return Run(hashed, stale, skipped.size, stopped = false)
             val done = ArrayList<Long>(batch.size)
             for (item in batch) {
+                while (busy() && !shouldStop()) delay(pauseMs)
                 if (shouldStop()) break
                 val hex = try {
-                    withContext(Dispatchers.IO) { open(item)?.use(::sha1Hex) }
+                    withContext(Dispatchers.IO) { open(item)?.use { sha1Hex(it, shouldStop) } }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -77,17 +82,25 @@ class Sha1Hasher(
     companion object {
         private const val TAG = "Sha1Hasher"
 
-        /** Lower-case hex SHA-1 of everything in [input], read in 64 KiB chunks. */
-        fun sha1Hex(input: InputStream): String {
+        /**
+         * Lower-case hex SHA-1 of everything in [input], streamed in 64 KiB chunks (a 4 GB video
+         * never sits in memory). [stop] is checked as it goes, so a long video doesn't keep a
+         * stopped job reading; it returns null then.
+         */
+        fun sha1Hex(input: InputStream, stop: () -> Boolean): String? {
             val md = MessageDigest.getInstance("SHA-1")
             val buf = ByteArray(64 * 1024)
+            var chunks = 0
             while (true) {
+                if (++chunks % 64 == 0 && stop()) return null
                 val n = input.read(buf)
                 if (n < 0) break
                 md.update(buf, 0, n)
             }
             return md.digest().joinToString("") { "%02x".format(it) }
         }
+
+        fun sha1Hex(input: InputStream): String = sha1Hex(input) { false }!!
     }
 }
 

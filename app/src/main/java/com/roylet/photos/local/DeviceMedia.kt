@@ -69,7 +69,7 @@ class DeviceMedia(
     var onHashed: suspend (List<Long>) -> Unit = {}
 
     /** Hashes phone items for matching; run by [Sha1Worker]. */
-    val hasher: Sha1Hasher by lazy { Sha1Hasher(dao, { Sha1Worker.openOriginal(app, it) }, onBatch = { onHashed(it) }) }
+    val hasher: Sha1Hasher by lazy { Sha1Hasher(dao, { Sha1Worker.openOriginal(app, it) }, onBatch = { onHashed(it) }, busy = { com.roylet.photos.util.UserActivity.busy() }) }
 
     private val _matching = MutableStateFlow<Sha1Progress?>(null)
     /** Hashing progress for Settings ("Matching with Immich: 1,234 / 5,000"); null until first read. */
