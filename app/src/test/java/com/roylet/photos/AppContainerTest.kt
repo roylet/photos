@@ -2,6 +2,11 @@ package com.roylet.photos
 
 import androidx.test.core.app.ApplicationProvider
 import com.roylet.photos.data.ServerConfig
+import com.roylet.photos.domain.library.LocalTimelineSource
+import com.roylet.photos.domain.timeline.TimeBucket
+import com.roylet.photos.domain.timeline.TimelineAsset
+import com.roylet.photos.domain.timeline.TimelineFilter
+import kotlinx.coroutines.Dispatchers
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -109,5 +114,34 @@ class AppContainerTest {
     @Test fun `signing in marks onboarding done`() {
         container.settings.saveServer(ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1"))
         assertTrue(container.settings.onboarded.value)
+    }
+
+    @Test fun `hiding or showing a folder reloads Photos and Favorites at once`() {
+        val key = "2026-10-01T00:00:00.000Z"
+        val calls = HashMap<TimelineFilter, Int>()
+        container.timelines.context = Dispatchers.Unconfined
+        container.localTimeline = object : LocalTimelineSource {
+            // Three items this month, one of them in folder 30.
+            override suspend fun buckets(filter: TimelineFilter): List<TimeBucket> {
+                synchronized(calls) { calls[filter] = (calls[filter] ?: 0) + 1 }
+                val hidden = 30L in container.phoneFolders.excludedFromPhotos()
+                return listOf(TimeBucket(key, if (hidden && !filter.isLocal) 2 else 3))
+            }
+            override suspend fun bucket(filter: TimelineFilter, key: String) = emptyList<TimelineAsset>()
+        }
+        val folder = TimelineFilter.album("folder:30")
+        val repos = listOf(TimelineFilter.Timeline, TimelineFilter.Favorites, folder).map { container.timelines.get(it).apply { start() } }
+        fun counts() = repos.map { r -> r.snapshot.value.buckets.single().count }
+        assertEquals(listOf(3, 3, 3), counts())
+
+        container.phoneFolders.setHidden(30, true)
+        assertEquals(listOf(2, 2, 3), counts())
+        // The folder's own page isn't filtered, so it isn't reloaded.
+        assertEquals(1, calls[folder])
+        assertEquals(2, calls[TimelineFilter.Timeline])
+
+        container.phoneFolders.setHidden(30, false)
+        assertEquals(listOf(3, 3, 3), counts())
+        assertEquals(3, calls[TimelineFilter.Favorites])
     }
 }

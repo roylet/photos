@@ -32,8 +32,10 @@ class DeviceMedia(
     onChanged: () -> Unit,
     /** Whether phone items should be hashed (only worth it while an Immich server is connected, for matching). */
     private val wantHashes: () -> Boolean = { false },
-    /** Folders the Photos timeline leaves out (Settings → device folders in Photos). */
+    /** Folders the Photos timeline leaves out (hidden ones, and Settings → device folders in Photos). */
     private val excludedFromPhotos: suspend () -> Set<Long> = { emptySet() },
+    /** Hidden folders: also left out of the phone's favourites and search. */
+    private val hiddenFolders: suspend () -> Set<Long> = { emptySet() },
 ) {
     private val app = context.applicationContext
     private val access: () -> MediaAccess = { MediaPermissions.access(app) }
@@ -51,7 +53,7 @@ class DeviceMedia(
         MediaIndexer(dao, AndroidMediaStoreReader(app), access, scope, onChanged = { onChanged(); scheduleHashing() }, legacyFavorites = { appDao.legacyFavorites() })
     }
 
-    val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, appDao, indexer, access, mediaStoreTrash = mediaStoreWrites, excludedFromPhotos = excludedFromPhotos) }
+    val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, appDao, indexer, access, mediaStoreTrash = mediaStoreWrites, excludedFromPhotos = excludedFromPhotos, hiddenFolders = hiddenFolders) }
 
     private val offer = ManageMediaOffer(app, snackbar, scope, offeredManageMedia, markOfferedManageMedia)
 
@@ -64,6 +66,7 @@ class DeviceMedia(
             runner = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ConsentRequestRunner(app, consent, offer::maybeOffer) else MediaRequestRunner { false },
             legacy = if (mediaStoreWrites) null else AndroidLegacyFiles(app, consent),
             io = AndroidLocalIo(app),
+            hiddenFolders = hiddenFolders,
         )
     }
 

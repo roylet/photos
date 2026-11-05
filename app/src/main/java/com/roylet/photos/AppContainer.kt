@@ -138,6 +138,7 @@ class AppContainer(context: Context) {
             onChanged = ::onDeviceChanged,
             wantHashes = { hasServer },
             excludedFromPhotos = { phoneFolders.excludedFromPhotos() },
+            hiddenFolders = { phoneFolders.hiddenFolders() },
         )
     }
 
@@ -295,10 +296,13 @@ class AppContainer(context: Context) {
         }
     }
 
-    /** The Photos timeline, after what it shows from the phone's folders changed. */
+    /**
+     * The Photos timeline and Favorites, after what they show from the phone's folders changed (a
+     * folder hidden or shown, Show in Photos, the mode): counts, months and the scrubber follow.
+     */
     private fun refreshPhotosTimeline() {
         timelines.forEachRepo { r ->
-            if (r.filter == TimelineFilter.Timeline && r.status.value != TimelineRepository.Status.Idle) r.refresh(keepLoaded = true)
+            if (r.filter in PHONE_FOLDER_FILTERED && r.status.value != TimelineRepository.Status.Idle) r.refresh(keepLoaded = true)
         }
     }
 
@@ -451,6 +455,9 @@ class AppContainer(context: Context) {
     companion object {
         /** [sessionKey] for the phone-only configuration. */
         const val DEVICE_SESSION = "device"
+
+        /** Timelines that leave out phone folders (hidden, or Show in Photos off): reloaded when those choices change. */
+        val PHONE_FOLDER_FILTERED = setOf(TimelineFilter.Timeline, TimelineFilter.Favorites)
 
         /**
          * Builds the shared client. Order matters:

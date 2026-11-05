@@ -57,8 +57,9 @@ data class DeviceFolder(
 enum class PhotosFolderMode { All, CameraAndSelected }
 
 /**
- * What the user chose per folder: [hidden] from Library → On this device, and whether each shows in
- * the Photos timeline ([inPhotos] / [notInPhotos] override [mode]'s default). Bucket ids.
+ * What the user chose per folder: [hidden] from Library → On this device (and so from Photos,
+ * Favorites and search too; backup is unchanged), and whether each shows in the Photos timeline
+ * ([inPhotos] / [notInPhotos] override [mode]'s default). Bucket ids.
  */
 data class FolderPrefs(
     val hidden: Set<Long> = emptySet(),
@@ -68,17 +69,20 @@ data class FolderPrefs(
 ) {
     fun isHidden(f: DeviceFolder) = f.bucketId in hidden
 
-    /** Whether [f]'s photos appear in the Photos timeline. */
+    /** The "Show in Photos" choice for [f] (what its toggle shows); [inPhotos] is what applies. */
     fun showsInPhotos(f: DeviceFolder): Boolean = when (f.bucketId) {
         in notInPhotos -> false
         in inPhotos -> true
         else -> mode == PhotosFolderMode.All || f.kind == FolderKind.Camera
     }
 
-    /** Bucket ids of [folders] the Photos timeline leaves out. */
+    /** Whether [f]'s photos appear in the Photos timeline: not hidden, and Show in Photos on. */
+    fun inPhotos(f: DeviceFolder): Boolean = !isHidden(f) && showsInPhotos(f)
+
+    /** Bucket ids the Photos timeline leaves out: every hidden folder, and those of [folders] turned off. */
     fun excludedFromPhotos(folders: List<DeviceFolder>): Set<Long> =
-        if (mode == PhotosFolderMode.All && notInPhotos.isEmpty()) emptySet()
-        else folders.filterNot(::showsInPhotos).mapTo(HashSet()) { it.bucketId }
+        if (mode == PhotosFolderMode.All && notInPhotos.isEmpty()) hidden
+        else folders.filterNot(::showsInPhotos).mapTo(HashSet(hidden)) { it.bucketId }
 
     fun withHidden(bucketId: Long, hide: Boolean) = copy(hidden = if (hide) hidden + bucketId else hidden - bucketId)
 
@@ -173,7 +177,7 @@ object DeviceFolders {
 /**
  * The phone's folder list for Library → On this device, ordered ([DeviceFolders.order]), with the
  * user's choices ([FolderPrefs]) kept in [save]. [onPhotosChanged] runs when what the Photos
- * timeline shows changed (a folder turned on or off, or the mode), so it can reload.
+ * timeline shows changed (a folder hidden or shown, turned on or off, or the mode), so it can reload.
  */
 class DeviceFolderStore(
     private val load: suspend () -> List<DeviceFolder>,
@@ -209,26 +213,30 @@ class DeviceFolderStore(
 
     fun find(bucketId: Long): DeviceFolder? = _folders.value?.firstOrNull { it.bucketId == bucketId }
 
+    /** Hides [bucketId] from Library and from Photos, Favorites and search (not from backup). */
     fun setHidden(bucketId: Long, hidden: Boolean) = update { it.withHidden(bucketId, hidden) }
 
-    fun setShowInPhotos(bucketId: Long, show: Boolean) = update(photos = true) { it.withInPhotos(bucketId, show) }
+    fun setShowInPhotos(bucketId: Long, show: Boolean) = update { it.withInPhotos(bucketId, show) }
 
-    fun setMode(mode: PhotosFolderMode) = update(photos = true) { it.copy(mode = mode) }
+    fun setMode(mode: PhotosFolderMode) = update { it.copy(mode = mode) }
 
-    /** Bucket ids the Photos timeline leaves out right now. */
+    /** Bucket ids the Photos timeline leaves out right now (hidden ones included). */
     suspend fun excludedFromPhotos(): Set<Long> {
         val p = _prefs.value
-        if (p.mode == PhotosFolderMode.All && p.notInPhotos.isEmpty()) return emptySet()
-        val list = _folders.value ?: reload() ?: return p.notInPhotos
+        if (p.mode == PhotosFolderMode.All && p.notInPhotos.isEmpty()) return p.hidden
+        val list = _folders.value ?: reload() ?: return p.notInPhotos + p.hidden
         return p.excludedFromPhotos(list)
     }
 
-    private fun update(photos: Boolean = false, change: (FolderPrefs) -> FolderPrefs) {
+    /** Hidden folders' bucket ids: left out of the phone's favourites and search too. */
+    fun hiddenFolders(): Set<Long> = _prefs.value.hidden
+
+    private fun update(change: (FolderPrefs) -> FolderPrefs) {
         val before = _prefs.value
         val after = change(before)
         if (after == before) return
         _prefs.value = after
         save(after)
-        if (photos) onPhotosChanged()
+        onPhotosChanged()
     }
 }

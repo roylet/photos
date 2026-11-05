@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -271,9 +272,9 @@ fun BoxScope.DialogButtons(confirm: String, onConfirm: () -> Unit, onCancel: () 
 
 /** A labelled on/off row used in option lists (share link settings). */
 @Composable
-fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Row(
-        modifier.fillMaxWidth().clip(BrutalShape).clickable { onChange(!checked) }.padding(vertical = 8.dp),
+        modifier.fillMaxWidth().clip(BrutalShape).clickable(enabled = enabled) { onChange(!checked) }.alpha(if (enabled) 1f else 0.45f).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

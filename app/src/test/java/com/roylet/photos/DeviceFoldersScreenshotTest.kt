@@ -73,7 +73,7 @@ import com.roylet.photos.local.LocalMediaUrls as PhoneUrls
 /**
  * Library → On this device through the real index and folder query (a fake MediaStore behind
  * them): the Library tab's section with and without Immich, VIEW ALL's grid (phone and tablet,
- * with a hidden folder), a folder's menu, a folder's page with backup badges, and no access.
+ * with a hidden folder), a folder's menu (and a hidden one's), a folder's page with backup badges, and no access.
  *   ./gradlew testDebugUnitTest -Pscreenshots --tests '*DeviceFoldersScreenshotTest*'
  * Output: app/build/screenshots/folders-*.png (and -dark).
  */
@@ -232,6 +232,18 @@ class DeviceFoldersScreenshotTest(private val darkTheme: Boolean) {
     @Test fun folderMenu() {
         val s = store(FolderPrefs(notInPhotos = setOf(100L)))
         shoot("folders-05-menu") {
+            val prefs by s.prefs.collectAsState()
+            Box(Modifier.fillMaxSize()) {
+                DeviceFoldersScreen(s, onFolder = {}, onBack = {}, onAccessChanged = {})
+                FolderMenuSheet(s.find(100), prefs, onDismiss = {}, onHidden = { _, _ -> }, onShowInPhotos = { _, _ -> })
+            }
+        }
+    }
+
+    /** A hidden folder's menu: Show in Photos greyed out ("Hidden folders don't appear in Photos"). */
+    @Test fun hiddenFolderMenu() {
+        val s = store(FolderPrefs(hidden = setOf(100L)))
+        shoot("folders-05b-menu-hidden") {
             val prefs by s.prefs.collectAsState()
             Box(Modifier.fillMaxSize()) {
                 DeviceFoldersScreen(s, onFolder = {}, onBack = {}, onAccessChanged = {})

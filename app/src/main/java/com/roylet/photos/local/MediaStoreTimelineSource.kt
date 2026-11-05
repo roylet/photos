@@ -22,10 +22,13 @@ class MediaStoreTimelineSource(
     /** Android 11+: MediaStore's own trash. Android 10 lists the app-private trash instead. */
     private val mediaStoreTrash: Boolean,
     /**
-     * Folders (bucket ids) the Photos timeline leaves out (Settings → device folders in Photos).
-     * Only [TimelineFilter.Timeline] uses it: folders, favourites and Library → On this device show everything.
+     * Folders (bucket ids) the Photos timeline leaves out: hidden ones, and those turned off in
+     * Settings → device folders in Photos. Only [TimelineFilter.Timeline] uses it: folders and
+     * Library → On this device show everything.
      */
     private val excludedFromPhotos: suspend () -> Set<Long> = { emptySet() },
+    /** Hidden folders (bucket ids): [TimelineFilter.Favorites] leaves them out too. */
+    private val hiddenFolders: suspend () -> Set<Long> = { emptySet() },
 ) : LocalTimelineSource {
 
     /** The index query for [filter], or null when nothing local can match it. */
@@ -39,13 +42,20 @@ class MediaStoreTimelineSource(
         }
         val trashed = filter.isTrashed == true
         val favorite = filter.isFavorite == true
-        // The main Photos timeline (not pinned to the phone, not a folder): device-folder choices apply.
-        val photos = !trashed && !favorite && bucket == null && filter.source == null
+        // The main Photos timeline and Favorites (not pinned to the phone, not a folder): device-folder choices apply.
+        val photos = !trashed && bucket == null && filter.source == null
         return Query(trashed = trashed, favorite = favorite, bucketId = bucket, photos = photos)
     }
 
-    /** Folders [q] leaves out (sorted, for a stable query); empty for everything but the Photos timeline. */
-    private suspend fun excluded(q: Query): List<Long> = if (q.photos) excludedFromPhotos().sorted() else emptyList()
+    /**
+     * Folders [q] leaves out (sorted, for a stable query): for the Photos timeline the hidden and
+     * turned-off ones, for Favorites the hidden ones; nothing for the rest.
+     */
+    private suspend fun excluded(q: Query): List<Long> = when {
+        !q.photos -> emptyList()
+        q.favorite -> hiddenFolders().sorted()
+        else -> excludedFromPhotos().sorted()
+    }
 
     private suspend fun ready(): Boolean {
         if (access() == MediaAccess.Denied) return false
@@ -60,7 +70,7 @@ class MediaStoreTimelineSource(
         if (!ready()) return emptyList()
         val months = if (legacyTrash(q)) {
             if (q.favorite || q.bucketId != null) emptyList() else appDao.legacyTrashMonths()
-        } else excluded(q).let { ex -> if (ex.isNotEmpty()) dao.monthsExcluding(ex) else dao.months(q.trashed, q.favorite, q.bucketId) }
+        } else excluded(q).let { ex -> if (ex.isNotEmpty()) dao.monthsExcluding(ex, q.favorite) else dao.months(q.trashed, q.favorite, q.bucketId) }
         val ordered = if (filter.newestFirst) months else months.reversed()
         return ordered.map { TimeBucket(MonthKeys.key(it.month), it.count) }
     }
@@ -73,7 +83,7 @@ class MediaStoreTimelineSource(
             if (q.favorite || q.bucketId != null) emptyList() else appDao.legacyTrashInMonth(month).map { it.toAsset() }
         } else {
             val ex = excluded(q)
-            (if (ex.isNotEmpty()) dao.inMonthExcluding(month, ex) else dao.inMonth(month, q.trashed, q.favorite, q.bucketId)).map { it.toAsset() }
+            (if (ex.isNotEmpty()) dao.inMonthExcluding(month, ex, q.favorite) else dao.inMonth(month, q.trashed, q.favorite, q.bucketId)).map { it.toAsset() }
         }
         return if (filter.newestFirst) assets else assets.reversed()
     }

@@ -125,16 +125,35 @@ class DeviceFoldersTest {
         assertEquals(emptySet<Long>(), p.excludedFromPhotos(all))
 
         val off = p.withInPhotos(3, false).withHidden(2, true)
-        assertEquals(setOf(3L), off.excludedFromPhotos(all))
+        assertEquals(setOf(2L, 3L), off.excludedFromPhotos(all))
         assertTrue(off.isHidden(shots))
-        // Hidden from Library is not hidden from Photos.
+        // Hidden from Library is hidden from Photos too, whatever its own Show in Photos says.
         assertTrue(off.showsInPhotos(shots))
+        assertFalse(off.inPhotos(shots))
+        assertFalse(off.inPhotos(memes))
+        assertTrue(off.inPhotos(camera))
+        // Unhiding brings it back.
         assertFalse(off.withHidden(2, false).isHidden(shots))
+        assertTrue(off.withHidden(2, false).inPhotos(shots))
+        assertEquals(setOf(3L), off.withHidden(2, false).excludedFromPhotos(all))
 
         val selected = FolderPrefs(mode = PhotosFolderMode.CameraAndSelected)
         assertEquals(setOf(2L, 3L), selected.excludedFromPhotos(all))
         assertEquals(setOf(3L), selected.withInPhotos(2, true).excludedFromPhotos(all))
         assertEquals(setOf(1L, 2L, 3L), selected.withInPhotos(1, false).excludedFromPhotos(all))
+    }
+
+    @Test fun `in Photos only when not hidden and Show in Photos is on`() {
+        val f = folder(5, "Memes", 1)
+        val gone = folder(9, "Gone", 1)
+        for (hidden in listOf(false, true)) for (show in listOf(false, true)) {
+            val p = FolderPrefs().withHidden(5, hidden).withInPhotos(5, show)
+            assertEquals("hidden=$hidden show=$show", !hidden && show, p.inPhotos(f))
+            assertEquals("hidden=$hidden show=$show", !(!hidden && show), 5L in p.excludedFromPhotos(listOf(f)))
+        }
+        // A hidden folder is left out even before (or without) the folder list knowing it.
+        assertEquals(setOf(9L), FolderPrefs(hidden = setOf(9)).excludedFromPhotos(emptyList()))
+        assertEquals(setOf(5L, 9L), FolderPrefs(hidden = setOf(9), mode = PhotosFolderMode.CameraAndSelected).excludedFromPhotos(listOf(f, gone)))
     }
 
     @Test fun `the store orders, persists choices and tells the timeline`() = runBlocking {
@@ -149,18 +168,25 @@ class DeviceFoldersTest {
 
         folders.setHidden(3, true)
         assertEquals(setOf(3L), saved?.hidden)
-        assertEquals(0, photosChanged)
+        // Hiding changes what Photos shows: the timelines reload.
+        assertEquals(1, photosChanged)
+        assertEquals(setOf(3L), folders.excludedFromPhotos())
+        assertEquals(setOf(3L), folders.hiddenFolders())
+        folders.setHidden(3, true)
+        assertEquals(1, photosChanged)
+        folders.setHidden(3, false)
+        assertEquals(2, photosChanged)
         assertEquals(emptySet<Long>(), folders.excludedFromPhotos())
 
         folders.setShowInPhotos(3, false)
-        assertEquals(1, photosChanged)
+        assertEquals(3, photosChanged)
         assertEquals(setOf(3L), folders.excludedFromPhotos())
         folders.setShowInPhotos(3, false)
-        assertEquals(1, photosChanged)
+        assertEquals(3, photosChanged)
 
         folders.setShowInPhotos(3, true)
         folders.setMode(PhotosFolderMode.CameraAndSelected)
-        assertEquals(3, photosChanged)
+        assertEquals(5, photosChanged)
         assertEquals(emptySet<Long>(), folders.excludedFromPhotos())
         assertEquals(PhotosFolderMode.CameraAndSelected, saved?.mode)
     }
@@ -213,6 +239,82 @@ class DeviceFoldersTest {
         assertEquals(5, ids(TimelineFilter.Device).size)
         excluded = emptySet()
         assertEquals(5, ids(TimelineFilter.Timeline).size)
+    }
+
+    @Test fun `hidden folders stay out of Photos, Favorites and search but not their folder page`() {
+        fill()
+        store.put(photo(7, taken = utc(2026, 10, 6), bucket = 30, bucketName = "Memes", name = "meme.jpg").copy(isFavorite = true))
+        store.put(photo(8, taken = utc(2026, 10, 7), bucket = 10, bucketName = "Camera", name = "meme-cam.jpg").copy(isFavorite = true))
+        runBlocking { indexer.sync() }
+        lateinit var lib: MediaStoreLibrary
+        val folders = DeviceFolderStore({ lib.deviceFolders() }, FolderPrefs(hidden = setOf(30)), scope = CoroutineScope(Dispatchers.Unconfined))
+        lib = MediaStoreLibrary(dao, appDb.app(), indexer, true, MediaRequestRunner { true }, null, NoIo, hiddenFolders = folders::hiddenFolders)
+        val source = MediaStoreTimelineSource(
+            dao, appDb.app(), indexer, { MediaAccess.Full }, true,
+            excludedFromPhotos = folders::excludedFromPhotos, hiddenFolders = folders::hiddenFolders,
+        )
+        fun ids(filter: TimelineFilter) = runBlocking { source.buckets(filter).flatMap { b -> source.bucket(filter, b.key).map { it.id } } }
+        fun counts(filter: TimelineFilter) = runBlocking { source.buckets(filter) }.map { it.count }
+
+        assertEquals(listOf("local:8", "local:2", "local:1", "local:3"), ids(TimelineFilter.Timeline))
+        assertEquals(listOf(3, 1), counts(TimelineFilter.Timeline))
+        assertEquals(listOf("local:8"), ids(TimelineFilter.Favorites))
+        assertEquals(listOf("local:8"), runBlocking { lib.basicSearch("meme") }.map { it.id })
+        // Still reachable: the folder page (VIEW ALL → Hidden) and the phone timeline.
+        assertEquals(listOf("local:7", "local:6", "local:5"), ids(TimelineFilter.album("folder:30")))
+        assertEquals(7, ids(TimelineFilter.Device).size)
+
+        // Show in Photos off on another folder: Photos leaves both out, Favorites only the hidden one.
+        folders.setShowInPhotos(10, false)
+        assertEquals(listOf("local:3"), ids(TimelineFilter.Timeline))
+        assertEquals(listOf("local:8"), ids(TimelineFilter.Favorites))
+
+        // Unhide brings everything back.
+        folders.setShowInPhotos(10, true)
+        folders.setHidden(30, false)
+        assertEquals(7, ids(TimelineFilter.Timeline).size)
+        assertEquals(listOf(5, 1, 1), counts(TimelineFilter.Timeline))
+        assertEquals(listOf("local:8", "local:7"), ids(TimelineFilter.Favorites))
+        assertEquals(setOf("local:5", "local:6", "local:7", "local:8"), runBlocking { lib.basicSearch("meme") }.map { it.id }.toSet())
+    }
+
+    @Test fun `merged, a hidden item Immich also has shows as its Immich copy`() {
+        fill()
+        val oct = "2026-10-01T00:00:00.000Z"
+        var hidden = setOf(30L)
+        val phone = MediaStoreTimelineSource(dao, appDb.app(), indexer, { MediaAccess.Full }, true, excludedFromPhotos = { hidden }, hiddenFolders = { hidden })
+        val remote = object : TimelineSource {
+            override suspend fun buckets(filter: TimelineFilter) = listOf(TimeBucket(oct, 2))
+            override suspend fun bucket(filter: TimelineFilter, key: String) = listOf(
+                TimelineAsset("uuid-6", 1f, true, false, fileCreatedAt = utc(2026, 10, 4)),
+                TimelineAsset("uuid-x", 1f, true, false, fileCreatedAt = utc(2026, 10, 2)),
+            )
+        }
+        val matcher = object : MonthMatcher {
+            // Memes' 6 (hidden) is also in Immich.
+            override suspend fun matchMonth(bucketKey: String, localIds: List<Long>, remoteIds: Set<String>) =
+                mapOf(6L to Match("uuid-6", tentative = false)).filterKeys { it in localIds }
+            override suspend fun cachedRemote(localIds: List<Long>) = emptyMap<Long, Match>()
+            override suspend fun cachedLocal(remoteIds: List<String>) = emptyMap<String, Long>()
+            override suspend fun pairsPerMonth() = emptyMap<String, Int>()
+        }
+        val merged = MergedTimelineSource(phone, remote) { matcher }
+        fun month() = runBlocking { merged.bucket(TimelineFilter.Timeline, oct) }
+
+        val items = month()
+        assertEquals(listOf("local:2", "uuid-6", "local:1", "uuid-x"), items.map { it.id })
+        // The hidden phone copy is gone; Immich's copy stays, without a phone badge.
+        assertEquals(SourceBadge.RemoteOnly, items[1].sourceBadge)
+        assertNull(items[1].localRef)
+        assertEquals(SourceBadge.RemoteOnly, items[3].sourceBadge)
+        assertEquals(SourceBadge.LocalOnly, items[0].sourceBadge)
+
+        // Unhidden: the pair is one cell again, on both.
+        hidden = emptySet()
+        merged.reset()
+        val back = month()
+        assertEquals(listOf("local:2", "local:6", "local:1", "uuid-x"), back.map { it.id })
+        assertEquals(SourceBadge.Both, back[1].sourceBadge)
     }
 
     /* ---------------- Backup badges in a folder ---------------- */

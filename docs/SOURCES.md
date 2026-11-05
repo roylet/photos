@@ -276,8 +276,14 @@ ExifInterface (it needs ACCESS_MEDIA_LOCATION and `MediaStore.setRequireOriginal
     for Camera, Screenshots, Screen recordings, Downloads, WhatsApp, Telegram, Instagram,
     Snapchat, Pictures, Movies and Edited (`Photos Edited`). Same-name folders get a path hint.
   - `FolderPrefs` (in `UiPrefs`): hidden from Library, and Show in Photos per folder over the
-    Settings mode (All folders / Camera + selected). The Photos timeline (`TimelineFilter.Timeline`,
-    and the merged one through it) leaves out folders turned off (`MediaDao.monthsExcluding`).
+    Settings mode (All folders / Camera + selected). An item shows in Photos only if its folder is
+    not hidden and Show in Photos is on (`FolderPrefs.inPhotos`); a hidden folder's toggle is
+    disabled. The Photos timeline (`TimelineFilter.Timeline`, and the merged one through it) leaves
+    out hidden folders and folders turned off (`MediaDao.monthsExcluding`); Favorites and the
+    phone's `basicSearch` leave out hidden folders. Merged, a hidden item that Immich also has shows
+    as its Immich copy (no phone badge). Hidden folders stay on VIEW ALL → Hidden and their folder
+    page; backup ignores hiding. Every change reloads Timeline and Favorites
+    (`AppContainer.PHONE_FOLDER_FILTERED`) and resets the merged counts.
   - With a server every timeline goes through `MergedTimelineSource`; phone-only ones (folders,
     `device`) get their cached Immich copies filled in, so the backup badges apply there too.
 - The grid shows "N days" on trashed items with `TimelineAsset.expiresAt`.

@@ -90,6 +90,8 @@ class MediaStoreLibrary(
     private val legacy: LegacyFiles?,
     private val io: LocalIo,
     private val now: () -> Long = System::currentTimeMillis,
+    /** Hidden folders (bucket ids): search leaves them out (their folder page still shows them). */
+    private val hiddenFolders: suspend () -> Set<Long> = { emptySet() },
 ) : LocalLibrary {
 
     /** FOLDERS, TRASH, FAVORITE, and EDIT_SAVE: edits are saved next to the original (LocalSaveSink). */
@@ -261,6 +263,8 @@ class MediaStoreLibrary(
             null -> emptyList()
         }.forEach { out[it.id] = it }
         dao.searchText("%" + likeEscape(q) + "%", SEARCH_LIMIT).forEach { out.putIfAbsent(it.id, it) }
+        val hidden = hiddenFolders()
+        if (hidden.isNotEmpty()) out.values.removeAll { it.bucketId in hidden }
         return out.values.sortedByDescending { it.takenAt }.take(SEARCH_LIMIT).map { it.toAsset() }
     }
 

@@ -206,7 +206,7 @@ fun DeviceFoldersSection(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         items(list, key = { it.bucketId }) { f ->
-                            FolderCard(f, hints[f.bucketId], onClick = { onFolder(f) }, onLongClick = { onMenu(f) }, modifier = Modifier.width(104.dp), notInPhotos = !prefs.showsInPhotos(f))
+                            FolderCard(f, hints[f.bucketId], onClick = { onFolder(f) }, onLongClick = { onMenu(f) }, modifier = Modifier.width(104.dp), notInPhotos = !prefs.inPhotos(f))
                         }
                     }
                 }
@@ -385,13 +385,18 @@ fun FolderMenuSheet(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            ToggleRow("Show in Photos", "Its photos and videos appear in the Photos timeline", prefs.showsInPhotos(f), { onShowInPhotos(f, it) })
-            LocalFolderBackup.current?.let { backup -> BackupToggle(f, backup) }
             val hidden = prefs.isHidden(f)
+            // Hidden wins: a hidden folder is out of Photos whatever its own Show in Photos says.
+            ToggleRow(
+                "Show in Photos",
+                if (hidden) "Hidden folders don't appear in Photos" else "Its photos and videos appear in the Photos timeline",
+                prefs.inPhotos(f), { onShowInPhotos(f, it) }, enabled = !hidden,
+            )
+            LocalFolderBackup.current?.let { backup -> BackupToggle(f, backup) }
             MenuRow(
                 if (hidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                 if (hidden) "Show in Library" else "Hide from Library",
-                if (hidden) "Back in On this device" else "Still in Photos and search; unhide from On this device",
+                if (hidden) "Back in On this device and Photos" else "Hide from Library and Photos (backup unchanged)",
             ) { onHidden(f, !hidden); onDismiss() }
         }
     }
@@ -489,7 +494,7 @@ fun DeviceFoldersScreen(
                         Text("Every folder is hidden from Library.", style = Type.Small, color = Palette.mutedInk)
                     }
                     items(shown, key = { it.bucketId }) { f ->
-                        FolderCard(f, hints[f.bucketId], onClick = { onFolder(f) }, onLongClick = { menu = f }, notInPhotos = !prefs.showsInPhotos(f), onMore = { menu = f })
+                        FolderCard(f, hints[f.bucketId], onClick = { onFolder(f) }, onLongClick = { menu = f }, notInPhotos = !prefs.inPhotos(f), onMore = { menu = f })
                     }
                     if (hidden.isNotEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }, key = "hidden-heading") {
@@ -578,7 +583,7 @@ fun DeviceFolderScreen(
 /** Above a folder's photos: its kind and whether it's in Photos / hidden from Library. */
 @Composable
 private fun FolderHeader(folder: DeviceFolder, prefs: FolderPrefs) {
-    val inPhotos = prefs.showsInPhotos(folder)
+    val inPhotos = prefs.inPhotos(folder)
     Row(
         Modifier.fillMaxWidth().background(Palette.paper).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),

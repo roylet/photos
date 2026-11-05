@@ -113,20 +113,23 @@ interface MediaDao {
     )
     suspend fun inMonth(month: Int, trashed: Boolean, favorite: Boolean, bucketId: Long?): List<MediaEntity>
 
-    /** [months] for the Photos timeline, leaving out the folders in [excluded] (Settings → device folders in Photos). */
+    /**
+     * [months] for the Photos timeline ([favorite]: Favorites), leaving out the folders in [excluded]
+     * (hidden folders, and Settings → device folders in Photos).
+     */
     @Query(
         """SELECT month, COUNT(*) AS count FROM media
-           WHERE trashed = 0 AND (bucketId IS NULL OR bucketId NOT IN (:excluded))
+           WHERE trashed = 0 AND (:favorite = 0 OR favorite = 1) AND (bucketId IS NULL OR bucketId NOT IN (:excluded))
            GROUP BY month ORDER BY month DESC""",
     )
-    suspend fun monthsExcluding(excluded: List<Long>): List<MonthCount>
+    suspend fun monthsExcluding(excluded: List<Long>, favorite: Boolean = false): List<MonthCount>
 
     @Query(
         """SELECT * FROM media
-           WHERE month = :month AND trashed = 0 AND (bucketId IS NULL OR bucketId NOT IN (:excluded))
+           WHERE month = :month AND trashed = 0 AND (:favorite = 0 OR favorite = 1) AND (bucketId IS NULL OR bucketId NOT IN (:excluded))
            ORDER BY takenAt DESC, id DESC""",
     )
-    suspend fun inMonthExcluding(month: Int, excluded: List<Long>): List<MediaEntity>
+    suspend fun inMonthExcluding(month: Int, excluded: List<Long>, favorite: Boolean = false): List<MediaEntity>
 
     @Query("SELECT * FROM media WHERE id IN (:ids)")
     suspend fun byIds(ids: List<Long>): List<MediaEntity>
