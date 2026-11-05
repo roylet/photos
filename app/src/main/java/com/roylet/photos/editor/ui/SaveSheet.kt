@@ -166,6 +166,7 @@ internal fun SaveSheetContent(
             title = "Replace original",
             body = when (destination) {
                 SaveDestination.DEVICE -> "The original goes to this phone's Trash and can be restored. The edit keeps its date and favourite."
+                SaveDestination.BOTH -> "The original goes to Trash on this phone and in Immich, and can be restored. Albums, favourite and sharing move to the edit."
                 else -> "The original goes to Trash and can be restored. Albums, favourite and sharing move to the edit."
             },
             primary = false,

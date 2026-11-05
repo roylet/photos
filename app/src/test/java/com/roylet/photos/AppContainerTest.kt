@@ -71,7 +71,8 @@ class AppContainerTest {
         assertNull(container.settings.server.value)
         assertEquals(AppContainer.DEVICE_SESSION, container.sessionKey())
         assertSame(container.localLibrary, container.library)
-        assertEquals(com.roylet.photos.domain.source.ActiveSources.LocalOnly, container.sources())
+        assertEquals(com.roylet.photos.domain.source.ActiveSources.LocalOnly.kinds, container.sources().kinds)
+        assertTrue(com.roylet.photos.domain.source.Capability.EDIT_SAVE in container.sources().capabilities) // phone saves
         // Phone assets go to the local URL provider, with the bare MediaStore id.
         container.localMediaUrls = object : com.roylet.photos.ui.gallery.MediaUrls by com.roylet.photos.ui.gallery.FakeMediaUrls {
             override fun thumbnail(id: String) = "content://media/external/images/media/$id"

@@ -126,6 +126,17 @@ class EditorScreenshotTest {
         EditorWorkspace(session(edited.copy(effects = Effects(clarity = 25f, vignette = -30f, grain = 12f))), {}, { _, _ -> }, null, initialTool = EditorTool.EFFECTS)
     }
 
+    /** A photo on the phone and in Immich: "Save to: This device · Immich · Both" (the editor is always dark). */
+    @Test fun saveSheetDestinations() = shoot("editor-07b-save-sheet-destination") {
+        val all = listOf(com.roylet.photos.editor.save.SaveDestination.BOTH, com.roylet.photos.editor.save.SaveDestination.DEVICE, com.roylet.photos.editor.save.SaveDestination.IMMICH)
+        EditorWorkspace(session(edited), {}, { _, _ -> }, null, initialSheet = true, destinations = all, destination = all.first())
+    }
+
+    /** A photo only on the phone: no destination row, no grouping (stacks are Immich's). */
+    @Test fun saveSheetPhone() = shoot("editor-07c-save-sheet-phone") {
+        EditorWorkspace(session(edited), {}, { _, _ -> }, null, initialSheet = true, destinations = listOf(com.roylet.photos.editor.save.SaveDestination.DEVICE))
+    }
+
     @Test fun saveSheet() = shoot("editor-07-save-sheet") {
         EditorWorkspace(session(edited), {}, { _, _ -> }, null, initialSheet = true)
     }

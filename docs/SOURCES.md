@@ -81,11 +81,8 @@ bit set. It supports `in`, `+`, `-`, `union` and `intersect`.
   directly) and `basicSearch` (file name, folder or date).
 - Implemented by `local/MediaStoreLibrary` (section 8). `EmptyLocalLibrary` stays for tests.
   `container.localLibrary` defaults to `container.device.library`.
-- `container.library` returns, with a server, a `SourceRoutingLibrary` (Immich, but calls about
-  `local:` ids and `folder:` albums go to the phone, for Library → On this device), else the
-  local one. Tests can pin a fake by assigning `container.library = ...`.
-- **Agent C:** swap this choice in `AppContainer.library` and `sources()` for a merged library
-  (it replaces `SourceRoutingLibrary`).
+- `container.library` returns, with a server, a `MergedLibrary` (section 9), else the local one.
+  Tests can pin a fake by assigning `container.library = ...`.
 - `LibrarySource.shareUri(id)` (default null) returns a `SharedUri` for items other apps can
   read directly; `LibraryActions.sendFiles` shares those without downloading.
 - `ConsentDeniedException` is thrown when the user declines a MediaStore dialog; LibraryActions
@@ -203,10 +200,11 @@ ExifInterface (it needs ACCESS_MEDIA_LOCATION and `MediaStore.setRequireOriginal
   `MediaDao.setSha1(id, hex, generation)`, which only writes if the row is still at that
   generation (returns 0 otherwise). Read the bytes with `mediaUri(id, isVideo)`.
 - `index_meta`: version, access level, zone, per-volume generation.
-- `legacy_trash`, `legacy_favorite`: Android 10's app-side trash and favourites.
-- The schema is exported to `app/schemas/`. It's a cache: a version bump falls back to a
-  destructive rebuild (bump `version` and add a migration if agent C stores anything that
-  can't be recomputed).
+- `immich_match` (v2): the matching cache (section 9).
+- Android 10's `legacy_trash` / `legacy_favorite` moved to `photos-app.db` in v2 (section 9).
+- Schemas are exported to `app/schemas/`. Every known version has a real migration
+  (`Migration1To2`); only a downgrade rebuilds the index, which holds nothing that can't be
+  recomputed.
 
 ### Sync (`MediaIndexer`)
 
@@ -243,7 +241,7 @@ ExifInterface (it needs ACCESS_MEDIA_LOCATION and `MediaStore.setRequireOriginal
 - Details: MediaStore columns plus ExifInterface. It uses `setRequireOriginal` when
   ACCESS_MEDIA_LOCATION is granted, so GPS is included. Videos use MediaMetadataRetriever for
   location.
-- `capabilities` = `Capabilities.Local`. **Agent C** adds EDIT_SAVE by overriding it here.
+- `capabilities` = `Capabilities.Local + EDIT_SAVE` (edits save next to the original, section 9).
 
 ### Pixels
 
@@ -279,3 +277,143 @@ ExifInterface (it needs ACCESS_MEDIA_LOCATION and `MediaStore.setRequireOriginal
 - loadThumbnail speed on a 50k library.
 - SD-card volumes.
 - Partial-access re-selection.
+
+## 9. Merged timeline, matching and phone saves (agent C)
+
+Packages: `merge/` (matching, merged timeline and library), `local/` (hashing, databases, the
+phone save sink), `editor/save/` (the editor seams).
+
+### Databases
+
+| File | What | Rule |
+|---|---|---|
+| `media-index.db` (`MediaDatabase`, v2) | `media`, `index_meta`, `immich_match` | A cache. Every version has a migration (`Migration1To2`); only a downgrade rebuilds it. |
+| `photos-app.db` (`PhotosDatabase`, v1) | `legacy_trash`, `legacy_favorite`, `local_edit` | Can't be recomputed. No destructive fallback, ever: each bump adds a `Migration` to `PhotosDatabase.MIGRATIONS` and a test in `DatabaseMigrationTest`. |
+
+- The 1 → 2 migration reads v1's Android 10 rows and hands them to `PhotosDatabase.importLegacy`
+  (keeping `rowId`, so `local:-<rowId>` still points at the same private copy) before dropping
+  them. If the hand-over throws, the migration fails and the v1 rows stay.
+- `AppDao` holds Android 10's trash and favourites (`MediaStoreLibrary`, `MediaStoreTimelineSource`
+  and `MediaIndexer` take it) and the edit table.
+
+### SHA-1 (`local/Sha1Index.kt`)
+
+- `Sha1Hasher` takes `needingSha1` in batches of 25, newest first. It streams each original
+  through SHA-1 (`setRequireOriginal` when ACCESS_MEDIA_LOCATION is granted, else GPS is
+  redacted and the hash differs from Immich's) and stores it with `setSha1`.
+  - A changed item (0 rows updated) comes round again at its new generation.
+  - Unreadable items are skipped for the run.
+- `Sha1Worker`: the unique work `sha1-index` (KEEP), with `setRequiresBatteryNotLow`, not
+  expedited.
+  - Resumable: every hash is stored as it's made. A stop returns `retry`.
+  - Scheduled by `DeviceMedia.scheduleHashing()` on foreground, after syncs that changed
+    something, and when the server changes. It's cancelled without a server or access.
+- Progress: `MediaDao.sha1Counts()` → `DeviceMedia.matching`. It shows in Settings, Accounts,
+  "Phone and Immich" as "Matching with Immich: 1,234 / 5,000". The same card has
+  "Show backup badges" (`UiPrefs.showBackupBadges`).
+
+### Matching (`merge/ImmichMatcher.kt`)
+
+- The bucket DTO has no checksum. Two ways in:
+  - Per month, `POST /search/metadata` with `takenAfter/takenBefore` (±1 day for time zones,
+    paged) returns name, size and the base64 checksum. It's fetched once per session per month,
+    only when a phone item needs an answer.
+  - After each hashing batch, `POST /assets/bulk-upload-check` (batches of 500) confirms SHA-1 →
+    asset id. A trashed Immich copy counts as no match.
+- `Matching.pair` (pure): SHA-1 first (confirmed, or no match), then the guess for items not
+  hashed yet: same name (case-insensitive), taken within ±2 s, same size when both know it. A
+  guess is `tentative`.
+- `immich_match` caches one row per phone item: `(localId, generation, remoteId?, tentative,
+  checkedAt)`.
+  - It's valid only at the item's current generation.
+  - A cached Immich id that's no longer in the month is re-checked.
+  - A tentative row is redone once the item has a hash.
+  - "Immich doesn't have it" is re-asked after 6 h.
+  - `forgetRemote` runs when Immich copies are trashed. `clear()` runs on a server or account
+    change.
+
+### Merged timeline (`merge/MergedTimelineSource.kt`)
+
+- With a server, `container.mergedTimeline` serves every filter that isn't `isLocal`.
+- **Timeline:** per month, the phone and Immich lists are fetched in parallel and matched
+  (`MonthMatcher.matchMonth`).
+  - A pair becomes one asset: `id` is the phone's (the viewer opens the local file), with
+    `localRef` + `remoteRef`, favourite if either side is, and Immich's thumbhash, place and stack.
+  - Unpaired items stay as they are. Months on one side only are just that side.
+- **Counts:** before a month loads, `phone + Immich − known pairs` (`MatchDao.pairsPerMonth`).
+  Once loaded, the merged size, which the snapshot uses anyway.
+- **Favourites:** the union. A cached match fills in the other ref.
+- **Trash:** both trashes, unmerged; badges tell them apart.
+- **Archive, albums, people, tags:** Immich only.
+- If Immich can't be reached, the phone's side shows alone.
+
+### Merged library (`merge/MergedLibrary.kt`, replaces SourceRoutingLibrary)
+
+- Capabilities: `Local union Immich`. Other copies come from the matcher's cache.
+- **Favourite:** both copies, the phone first (a declined dialog leaves Immich alone).
+- **Delete** (`TargetedTrash`):
+  - `LibraryActions.delete` asks with `ActionSheet.DeleteChoice` ("Delete from: This device /
+    Immich / Both") when a selection has paired items. The answer is remembered per session
+    (`LibraryActions.deleteTarget`).
+  - `MergedLibrary.plan` routes: one-sided items always go from their own side.
+  - Each side goes to its own Trash. Undo restores the `TrashReceipt`. If Immich fails, the phone
+    half is put back.
+  - After a one-sided delete of a pair, the timelines reload so the other copy shows on its own.
+- **Albums:** Immich's, then the folders. The Albums tab shows them under "On this device".
+- **Server features** (albums, links, archive) use the Immich copy and skip phone-only items.
+- **Search:** smart search plus phone file names not already shown.
+- **Details:** the phone's EXIF wins; Immich adds people, place, description and camera when the
+  phone has none.
+- **Share and download:** the phone file when there is one.
+
+### Grid and viewer
+
+- `SourceMark` sits top-right on each cell: a crossed-out cloud for "only on this device" and a
+  cloud for "only in Immich"; nothing for both. It shows only while both sources are active and
+  the setting is on (`LocalShowSourceBadges`, provided by AppNav).
+- In the viewer, a paired photo whose phone file fails to load falls back to the Immich copy
+  (photos only; videos don't fall back yet).
+
+### Editor saves (`editor/save/EditSource.kt`, `SaveSinks.kt`, `local/LocalSaveSink.kt`)
+
+- **`EditSource`** (`info`, `metadata`, `obtain`): `ImmichEditSource` (as before) and
+  `LocalEditSource` (index row → `EditAssetInfo`, the saved edit from `local_edit`, a copy of the
+  content URI). `RoutingEditSource` picks by id.
+  - Both editors use it, and so do `VideoOriginals` and `VideoSaveJob`.
+  - The old decoded-photo class `EditSource` is now `LoadedEdit`.
+- **`SaveDestination`:**
+  - Phone-only items: DEVICE.
+  - Immich items: IMMICH.
+  - Paired items: BOTH (the default), DEVICE or IMMICH, picked in the save sheet's "Save to" row.
+  - BOTH = the phone sink, then the existing Immich flow on the item's Immich copy.
+    `SaveResult.companion` carries the second result.
+- **`LocalSaveSink`:**
+  - Inserts with IS_PENDING into the original's RELATIVE_PATH (else `Pictures/Photos Edited/` or
+    `Movies/Photos Edited/`) as `<name>-edited.jpg|mp4`, with DATE_TAKEN and IS_FAVORITE.
+  - Writes the file (EXIF already transplanted by JpegExporter), then sets IS_PENDING = 0. A
+    failed write deletes the pending row.
+  - **Replace:** trashes the original after the insert. If Android refuses, it saves as a copy
+    with a warning.
+  - Stores the recipe or video edit in `local_edit` under the new id.
+  - Resumable through `LocalSaveCheckpoint`, kept in the job spec.
+  - **Undo:** restores the original and trashes the edit.
+- **Consent before enqueue** (`SaveStarter`): a phone Replace asks before the job is queued, with
+  `MediaStore.createWriteRequest` for the original through the app-wide `ConsentLauncher`.
+  MANAGE_MEDIA approves it without a dialog. A "no" queues nothing.
+  - The worker then sets IS_TRASHED itself (`AndroidLocalTrasher`), which the write grant allows.
+    A `createTrashRequest` from the UI would trash at once, before the edit exists.
+  - Android 10 has no such request: its trash (the app-private copy) asks when the save reaches it.
+- Photo saves to the phone alone need no network constraint.
+- "Original moved to Trash · UNDO" works for phone, Immich and both (`SaveResult.parts`).
+
+### Needs a device
+
+- `createWriteRequest` before Replace, the MANAGE_MEDIA skip, and IS_TRASHED from the worker
+  after the grant (including after a process restart).
+- Android 10's Replace (the RecoverableSecurityException dialog mid-save).
+- `bulk-upload-check` and `search/metadata` checksums against the real server.
+- Hashing speed and battery use on a 50k library, and the low-battery stop and resume.
+- Badges after a real backup.
+- The viewer's fallback when a phone file is deleted elsewhere.
+- Migrating a real v1 index that has Android 10 trash rows.
+- Inserting into unusual RELATIVE_PATHs (SD cards, Download/).

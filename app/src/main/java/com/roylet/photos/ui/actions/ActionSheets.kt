@@ -246,10 +246,14 @@ fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
 @Composable
 fun DeleteChoiceContent(sheet: ActionSheet.DeleteChoice, onChoose: (DeleteTarget) -> Unit) {
     val n = sheet.ids.size
-    SheetTitle(
-        "Delete from",
-        if (sheet.paired == n) (if (n == 1) "It's on this device and in Immich" else "All ${Format.plural(n, "item")} are on this device and in Immich")
-        else "${sheet.paired} of ${Format.plural(n, "item")} are on this device and in Immich",
+    Text("Delete from", style = Type.Headline, color = Palette.ink)
+    Text(
+        when {
+            n == 1 -> "This item is on this device and in Immich."
+            sheet.paired == n -> "All ${Format.plural(n, "item")} are on this device and in Immich."
+            else -> "${sheet.paired} of ${Format.plural(n, "item")} are on this device and in Immich. The others go from where they are."
+        },
+        style = Type.Small, color = Palette.mutedInk,
     )
     Spacer(Modifier.height(14.dp))
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

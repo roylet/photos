@@ -96,7 +96,11 @@ fun AlbumsScreen(
                 onBack = onBack,
                 subtitle = albums?.let { list ->
                     if (folders) "${Format.plural(list.size, "folder")} on this phone"
-                    else list.count { !it.id.startsWith(TimelineFilter.FOLDER_PREFIX) }.let { n -> "${Format.plural(n, "album")} · ${list.count { it.shared }} shared" }
+                    else {
+                        val phone = list.count { it.id.startsWith(TimelineFilter.FOLDER_PREFIX) }
+                        "${Format.plural(list.size - phone, "album")} · ${list.count { it.shared }} shared" +
+                            if (phone > 0) " · ${Format.plural(phone, "folder")}" else ""
+                    }
                 },
                 actions = { if (actions != null) BrutalButton("New album", { creating = true }, icon = Icons.Rounded.Add) },
                 below = {
