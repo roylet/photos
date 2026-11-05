@@ -25,6 +25,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import android.os.Looper
+import androidx.media3.common.C
+import org.robolectric.Shadows.shadowOf
 
 /** The playlist/parameter wiring of the preview (frames themselves need a device). */
 @RunWith(RobolectricTestRunner::class)
@@ -205,5 +208,36 @@ class VideoPreviewControllerTest {
         assertEquals(5_000L, controller.outputPosition.value)
         assertEquals(1, controller.player.currentMediaItemIndex)
         assertFalse(controller.player.playWhenReady)
+    }
+
+    // ---- true duration, ranges and threads ----
+
+    @Test fun theLastSegmentPlaysToTheRealEndAndEndsAreClampedToThePlayersDuration() {
+        val full = VideoEdit.initial(24_900)
+        controller.setEdit(full)
+        assertEquals(C.TIME_END_OF_SOURCE, controller.player.getMediaItemAt(0).clippingConfiguration.endPositionMs)
+        controller.setEdit(full.splitAt(20_000).trimEnd(24_900))
+        controller.onSourceDurationKnown(24_840) // the stream is shorter than the metadata said
+        assertEquals(24_840L, controller.realSourceMs)
+        assertEquals(24_840L, controller.outputDuration.value)
+        assertEquals(20_000L, controller.player.getMediaItemAt(1).clippingConfiguration.startPositionMs)
+        // A later edit keeps the clamp; a segment ending past the real end never reaches the player.
+        controller.setEdit(full.copy(segments = listOf(TimeRange(0, 3_000), TimeRange(10_000, 24_880))))
+        assertEquals(24_840L - 10_000 + 3_000, controller.outputDuration.value)
+        for (i in 0 until controller.player.mediaItemCount) {
+            val c = controller.player.getMediaItemAt(i).clippingConfiguration
+            assertTrue(c.endPositionMs == C.TIME_END_OF_SOURCE || c.endPositionMs <= 24_840)
+            assertTrue(c.startPositionMs < 24_840)
+        }
+    }
+
+    @Test fun callsFromOtherThreadsRunOnThePlayersLooper() {
+        val t = Thread { controller.setEdit(edit); controller.seekToOutputTime(5_000) }
+        t.start(); t.join()
+        assertEquals(0, controller.player.mediaItemCount) // posted, not run on the wrong thread
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(2, controller.player.mediaItemCount)
+        assertEquals(1, controller.player.currentMediaItemIndex)
+        assertEquals(2_000L, controller.player.currentPosition)
     }
 }

@@ -3,6 +3,8 @@ package com.roylet.photos.video.preview
 import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -23,6 +25,7 @@ import androidx.media3.common.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -129,7 +132,7 @@ object PreviewErrors {
  * - **speed** → `PlaybackParameters` (pitch kept); **volume** → a live [GainProcessor] in the audio
  *   sink (so 100–200 % is audible too); **mute** → player volume 0.
  *
- * All methods must be called on the main thread. Create one per editor screen; [release] it.
+ * Every player call runs on the player's application looper (main): calls from other threads are posted there. Create one per editor screen; [release] it.
  * Positions are output time (see [VideoEdit.outputToSource]).
  *
  * Scrubbing: [beginScrub] pauses and turns on Media3's scrubbing mode. With `sourceTime` (a trim
@@ -156,8 +159,18 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         .build()
         .apply { setSeekParameters(SeekParameters.EXACT) }
 
+    /** Every player call runs on its application looper (the main thread); calls from elsewhere are posted there. */
+    private val handler = Handler(player.applicationLooper)
+
     private var uri: Uri? = null
+
+    /** The edit as asked for (normalised); [edit] is it clamped to the player's real source length. */
+    private var requested: VideoEdit? = null
     private var edit: VideoEdit? = null
+
+    /** The source's length as the player measured it (ms), once known; can be shorter than the metadata's. */
+    internal var realSourceMs: Long? = null
+        private set
     private var playlist: List<TimeRange> = emptyList()
 
     /** The effects currently set on the player. */
@@ -207,7 +220,43 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) = publishPosition()
+
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) = learnSourceDuration(timeline)
         })
+    }
+
+    /** Runs [block] now on the player's looper, else posts it there (ExoPlayer is single-threaded). */
+    private fun onPlayerLooper(block: () -> Unit) {
+        if (Looper.myLooper() == player.applicationLooper) block() else handler.post(block)
+    }
+
+    private fun learnSourceDuration(timeline: Timeline) {
+        val unclipped = sourceScrub
+        val last = player.mediaItemCount - 1
+        if (last < 0 || (!unclipped && last != playlist.lastIndex)) return
+        val clip = player.getMediaItemAt(last).clippingConfiguration
+        val ms = PreviewRanges.sourceDurationMs(
+            timeline, unclipped,
+            lastEndOpen = clip.endPositionMs == C.TIME_END_OF_SOURCE,
+            lastStartMs = clip.startPositionMs,
+        ) ?: return
+        onSourceDurationKnown(ms)
+    }
+
+    /**
+     * The player measured the source as [ms] long. When that is shorter than the edit thinks (the
+     * metadata rounds up), every segment end is clamped to it and the edit is applied again.
+     */
+    internal fun onSourceDurationKnown(ms: Long) {
+        val r = requested ?: return
+        if (ms <= 0 || ms >= r.sourceDurationMs || ms == realSourceMs) return
+        Log.i(TAG, "Source is ${ms}ms per the player (metadata said ${r.sourceDurationMs}ms); clamping")
+        realSourceMs = ms
+        val old = edit
+        val e = PreviewRanges.clampToSource(r, ms)
+        edit = e
+        if (!sourceScrub) apply(e, if (old != null) currentOutputMs(old) else 0L)
+        else _outputDuration.value = e.outputDurationMs()
     }
 
     private fun wantsToPlay(): Boolean =
@@ -219,21 +268,29 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     /** Plays a remote URL (needs the `httpClient`), e.g. while the original downloads. */
     fun setSource(url: String) = setSource(Uri.parse(url))
 
-    fun setSource(uri: Uri) {
-        if (uri == this.uri) return
-        val keep = _outputPosition.value
-        this.uri = uri
-        playlist = emptyList()
-        renderedFrame = false
-        edit?.let { apply(it, keep, keepSourceMoment = false) }
+    fun setSource(uri: Uri) = onPlayerLooper {
+        if (uri != this.uri) {
+            val keep = _outputPosition.value
+            this.uri = uri
+            playlist = emptyList()
+            renderedFrame = false
+            realSourceMs = null
+            requested?.let { r -> edit = r; apply(r, keep, keepSourceMoment = false) }
+        }
     }
 
     /** Applies [edit]: cheap for colour/speed/volume changes; segments and geometry rebuild what they must. */
-    fun setEdit(edit: VideoEdit) {
-        val e = edit.normalized()
+    fun setEdit(edit: VideoEdit) = onPlayerLooper {
         val old = this.edit
-        this.edit = e
+        val e = accept(edit)
         apply(e, if (old != null) currentOutputMs(old) else 0L)
+    }
+
+    /** Stores [edit] (normalised, then clamped to the real source length) and returns what to play. */
+    private fun accept(edit: VideoEdit): VideoEdit {
+        val r = edit.normalized()
+        requested = r
+        return PreviewRanges.clampToSource(r, realSourceMs).also { this.edit = it }
     }
 
     private fun apply(e: VideoEdit, keepOutputMs: Long, keepSourceMoment: Boolean = true) {
@@ -256,11 +313,17 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
             val target = sourceMs?.let { e.sourceToOutput(it) } ?: keepOutputMs
             val out = target.coerceIn(0, e.outputDurationMs())
             val pos = e.outputToSource(out)
-            val items = e.segments.mapIndexed { i, s ->
+            val ranges = PreviewRanges.validated(e.segments, e.sourceDurationMs)
+            if (ranges.size != e.segments.size) {
+                // Can't happen for a normalised edit; never hand Media3 a bad range.
+                Log.w(TAG, "Dropping invalid ranges ${e.segments - ranges.toSet()} (source ${e.sourceDurationMs}ms)")
+                if (ranges.isEmpty()) return
+            }
+            val items = ranges.mapIndexed { i, s ->
                 MediaItem.Builder()
                     .setUri(u)
                     .setMediaId("segment-$i")
-                    .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(s.startMs).setEndPositionMs(s.endMs).build())
+                    .setClippingConfiguration(PreviewRanges.clipping(s, e.sourceDurationMs))
                     .build()
             }
             // Replaces the playlist in place: play/pause (playWhenReady) is untouched.
@@ -313,26 +376,32 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     }
 
     /** After a [PreviewNotice.Failed]: prepares again at the same spot. */
-    fun retry() {
+    fun retry() = onPlayerLooper { retryNow() }
+
+    private fun retryNow() {
         if (_notice.value is PreviewNotice.Failed) _notice.value = if (effectsDisabled) PreviewNotice.NoFilters else null
         if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
     }
 
     /** Plays from the playhead (from the start when it sits at the very end). */
-    fun play() {
+    fun play() = onPlayerLooper { playNow() }
+
+    private fun playNow() {
         if (sourceScrub) return
-        if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) retry()
+        if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) retryNow()
         val dur = _outputDuration.value
-        if (player.playbackState == Player.STATE_ENDED || _outputPosition.value >= dur - END_SLACK_MS) seekToOutputTime(0)
+        if (player.playbackState == Player.STATE_ENDED || _outputPosition.value >= dur - END_SLACK_MS) seekNow(0)
         player.play()
     }
 
-    fun pause() = player.pause()
+    fun pause() = onPlayerLooper { player.pause() }
 
-    fun togglePlay() = if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) pause() else play()
+    fun togglePlay() = onPlayerLooper { if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) player.pause() else playNow() }
 
     /** Seeks to [ms] of the edited video. */
-    fun seekToOutputTime(ms: Long) {
+    fun seekToOutputTime(ms: Long) = onPlayerLooper { seekNow(ms) }
+
+    private fun seekNow(ms: Long) {
         val e = edit ?: return
         if (playlist.isEmpty() || sourceScrub) return
         val out = ms.coerceIn(0, e.outputDurationMs())
@@ -346,7 +415,9 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
      * (fast, coalesced seeks). With [sourceTime] the player shows the unclipped source, so a trim
      * handle can preview time that is currently cut out ([scrubToSource]).
      */
-    fun beginScrub(sourceTime: Boolean) {
+    fun beginScrub(sourceTime: Boolean) = onPlayerLooper { beginScrubNow(sourceTime) }
+
+    private fun beginScrubNow(sourceTime: Boolean) {
         if (scrubbing) return
         scrubbing = true
         resumeAfterScrub = player.playWhenReady && player.playbackState != Player.STATE_ENDED
@@ -362,20 +433,20 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     }
 
     /** While scrubbing: shows source time [sourceMs] (cut-out time too, in source mode). */
-    fun scrubToSource(sourceMs: Long) {
-        if (!sourceScrub) {
-            edit?.let { e -> seekToOutputTime(sourceToOutputClamped(e, sourceMs)) }
-            return
-        }
-        player.seekTo(0, sourceMs.coerceAtLeast(0))
+    fun scrubToSource(sourceMs: Long) = onPlayerLooper {
+        val e = edit
+        if (!sourceScrub) { if (e != null) seekNow(sourceToOutputClamped(e, sourceMs)) }
+        else player.seekTo(0, sourceMs.coerceIn(0, realSourceMs ?: e?.sourceDurationMs ?: Long.MAX_VALUE))
     }
 
     /**
      * Ends scrubbing. [edit] (if given) is the edit to play now; the preview rests exactly on
      * output time [restOutputMs] (or where it is), and plays again if it was playing.
      */
-    fun endScrub(edit: VideoEdit? = null, restOutputMs: Long? = null) {
-        if (edit != null) this.edit = edit.normalized()
+    fun endScrub(edit: VideoEdit? = null, restOutputMs: Long? = null) = onPlayerLooper { endScrubNow(edit, restOutputMs) }
+
+    private fun endScrubNow(edit: VideoEdit?, restOutputMs: Long?) {
+        if (edit != null) accept(edit)
         val e = this.edit
         player.isScrubbingModeEnabled = false
         val wasSource = sourceScrub
@@ -384,9 +455,9 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
             val rest = (restOutputMs ?: _outputPosition.value).coerceIn(0, e.outputDurationMs())
             if (wasSource) playlist = emptyList()
             apply(e, rest, keepSourceMoment = false)
-            seekToOutputTime(rest) // the exact, final seek
+            seekNow(rest) // the exact, final seek
         }
-        if (scrubbing && resumeAfterScrub) play()
+        if (scrubbing && resumeAfterScrub) playNow()
         scrubbing = false
         resumeAfterScrub = false
     }
@@ -395,20 +466,21 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
      * The screen went to the background: pause and free the decoders (a 4K one is scarce); the
      * playlist, effects and position are kept for [onForeground].
      */
-    fun onBackground() {
-        if (scrubbing) endScrub()
+    fun onBackground() = onPlayerLooper {
+        if (scrubbing) endScrubNow(null, null)
         player.pause()
         player.stop()
     }
 
     /** Back from [onBackground]: prepares again at the same position (paused). */
-    fun onForeground() {
+    fun onForeground() = onPlayerLooper {
         if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0 && _notice.value !is PreviewNotice.Failed) player.prepare()
     }
 
     /** Stops playback and frees the decoder and GL pipeline. The controller can't be reused. */
-    fun release() {
+    fun release() = onPlayerLooper {
         scope.cancel()
+        handler.removeCallbacksAndMessages(null)
         player.release()
     }
 
