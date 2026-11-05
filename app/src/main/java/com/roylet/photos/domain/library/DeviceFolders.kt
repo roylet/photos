@@ -159,7 +159,13 @@ object DeviceFolders {
     }
 
     fun pathHint(f: DeviceFolder): String {
-        val path = f.path.ifBlank { "Device" }
+        // Deep app folders keep their last two levels: `…/Media/WhatsApp Images`.
+        val parts = f.path.split('/').filter { it.isNotBlank() }
+        val path = when {
+            parts.isEmpty() -> "Device"
+            parts.size > 3 -> "…/" + parts.takeLast(2).joinToString("/")
+            else -> parts.joinToString("/")
+        }
         return if (f.removable) "SD card · $path" else path
     }
 }

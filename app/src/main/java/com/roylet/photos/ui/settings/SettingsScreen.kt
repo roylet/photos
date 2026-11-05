@@ -88,6 +88,7 @@ import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.launch
+import com.roylet.photos.domain.library.PhotosFolderMode
 
 @Composable
 fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () -> Unit = {}) {
@@ -98,6 +99,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
     val check by container.connection.check.collectAsState()
     val theme by container.uiPrefs.themeMode.collectAsState()
     val badges by container.uiPrefs.showBackupBadges.collectAsState()
+    val folderPrefs by container.phoneFolders.prefs.collectAsState()
     val matching by remember(server != null) {
         if (server != null) container.device.matching else kotlinx.coroutines.flow.MutableStateFlow(null)
     }.collectAsState()
@@ -120,6 +122,8 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
         matching = matching,
         showBackupBadges = badges,
         onShowBackupBadges = container.uiPrefs::setShowBackupBadges,
+        photosFolderMode = folderPrefs.mode,
+        onPhotosFolderMode = container.phoneFolders::setMode,
     )
 }
 
@@ -151,6 +155,9 @@ fun SettingsContent(
     matching: Sha1Progress? = null,
     showBackupBadges: Boolean = true,
     onShowBackupBadges: (Boolean) -> Unit = {},
+    /** "Show device folders in Photos timeline": every folder, or Camera plus the ones turned on. */
+    photosFolderMode: PhotosFolderMode = PhotosFolderMode.All,
+    onPhotosFolderMode: (PhotosFolderMode) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Settings", onBack = onBack, actions = { if (server != null) ConnectionChip(state) })
@@ -160,7 +167,7 @@ fun SettingsContent(
         ) {
             SectionLabel("Accounts")
             ImmichAccountCard(server, onConnect = onConnect, onSignOut = onSignOut)
-            DeviceCard(permissions)
+            DeviceCard(permissions, photosFolderMode, onPhotosFolderMode)
 
             if (server != null) PhoneAndImmichCard(matching, showBackupBadges, onShowBackupBadges)
 
@@ -270,7 +277,7 @@ private fun PhoneAndImmichCard(matching: Sha1Progress?, showBadges: Boolean, onS
 
 /** Accounts → This device: media access (re-checked on resume) and "Skip confirmation dialogs". */
 @Composable
-private fun DeviceCard(permissions: MediaPermissionsState) {
+private fun DeviceCard(permissions: MediaPermissionsState, folderMode: PhotosFolderMode, onFolderMode: (PhotosFolderMode) -> Unit) {
     BrutalCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconBadge(Icons.Rounded.PhoneAndroid, fill = Palette.mint, size = 40.dp)
@@ -311,6 +318,21 @@ private fun DeviceCard(permissions: MediaPermissionsState) {
                 else -> BrutalButton("Manage", permissions::openSettings, style = ButtonStyle.Outline, icon = Icons.Rounded.Settings, modifier = Modifier.weight(1f))
             }
         }
+        Spacer(Modifier.height(14.dp))
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.sand))
+        Spacer(Modifier.height(12.dp))
+        Text("Show device folders in Photos timeline", style = Type.Title.copy(fontSize = Type.Body.fontSize), color = Palette.ink)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("All folders", selected = folderMode == PhotosFolderMode.All, onClick = { onFolderMode(PhotosFolderMode.All) })
+            Chip("Camera + selected", selected = folderMode == PhotosFolderMode.CameraAndSelected, onClick = { onFolderMode(PhotosFolderMode.CameraAndSelected) })
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (folderMode == PhotosFolderMode.All) "Every folder on this phone shows in Photos. Turn one off from its ⋯ menu in Library → On this device."
+            else "Photos shows Camera and the folders you turn on with Show in Photos. The rest stay in Library → On this device.",
+            style = Type.Small, color = Palette.mutedInk,
+        )
         val manageMedia = permissions.manageMedia
         if (manageMedia != null) {
             Spacer(Modifier.height(14.dp))
