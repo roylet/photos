@@ -104,6 +104,7 @@ class AppContainer(context: Context) {
             offeredManageMedia = { settings.offeredManageMedia },
             markOfferedManageMedia = { settings.offeredManageMedia = true },
             onChanged = ::onDeviceChanged,
+            wantHashes = { hasServer },
         )
     }
 

@@ -18,6 +18,10 @@ import com.roylet.photos.ui.permissions.ConsentLauncher
 import com.roylet.photos.ui.permissions.MediaAccess
 import com.roylet.photos.ui.permissions.MediaPermissions
 import kotlinx.coroutines.CoroutineScope
+import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -35,6 +39,8 @@ class DeviceMedia(
     markOfferedManageMedia: () -> Unit,
     /** After a sync changed the index: refresh the phone timelines on screen. */
     onChanged: () -> Unit,
+    /** Whether phone items should be hashed (only worth it while an Immich server is connected, for matching). */
+    private val wantHashes: () -> Boolean = { false },
 ) {
     private val app = context.applicationContext
     private val access: () -> MediaAccess = { MediaPermissions.access(app) }
@@ -49,7 +55,7 @@ class DeviceMedia(
     val dao: MediaDao get() = db.media()
 
     val indexer: MediaIndexer by lazy {
-        MediaIndexer(dao, AndroidMediaStoreReader(app), access, scope, onChanged = { onChanged() }, legacyFavorites = { appDao.legacyFavorites() })
+        MediaIndexer(dao, AndroidMediaStoreReader(app), access, scope, onChanged = { onChanged(); scheduleHashing() }, legacyFavorites = { appDao.legacyFavorites() })
     }
 
     val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, appDao, indexer, access, mediaStoreTrash = mediaStoreWrites) }
@@ -68,6 +74,29 @@ class DeviceMedia(
         )
     }
 
+    /** Called with the ids of each hashed batch (the Immich matcher picks them up). */
+    var onHashed: suspend (List<Long>) -> Unit = {}
+
+    /** Hashes phone items for matching; run by [Sha1Worker]. */
+    val hasher: Sha1Hasher by lazy { Sha1Hasher(dao, { Sha1Worker.openOriginal(app, it) }, onBatch = { onHashed(it) }) }
+
+    private val _matching = MutableStateFlow<Sha1Progress?>(null)
+    /** Hashing progress for Settings ("Matching with Immich: 1,234 / 5,000"); null until first read. */
+    val matching: StateFlow<Sha1Progress?> = _matching.asStateFlow()
+
+    internal fun publishMatching(p: Sha1Progress) { _matching.value = p }
+
+    /** Re-reads [matching] from the index. */
+    fun refreshMatching() {
+        scopeLaunch { val c = dao.sha1Counts(); _matching.value = Sha1Progress(c.done, c.total) }
+    }
+
+    /** Starts (or keeps) the hashing job when matching is wanted; cancels it otherwise. */
+    fun scheduleHashing() {
+        runCatching { if (wantHashes() && access() != MediaAccess.Denied) Sha1Worker.schedule(app) else Sha1Worker.cancel(app) }
+            .onFailure { Log.w("DeviceMedia", "Couldn't schedule hashing", it) }
+    }
+
     private val observer = MediaObserver(app) { indexer.requestSync() }
 
     /** Starts watching: a sync whenever the app comes to the foreground, the observer while it's there. */
@@ -76,6 +105,7 @@ class DeviceMedia(
             override fun onStart(owner: LifecycleOwner) {
                 if (access() != MediaAccess.Denied) observer.register()
                 indexer.requestSync(0)
+                scheduleHashing()
                 scopeLaunch { library.purgeExpiredLegacyTrash() }
             }
             override fun onStop(owner: LifecycleOwner) = observer.unregister()

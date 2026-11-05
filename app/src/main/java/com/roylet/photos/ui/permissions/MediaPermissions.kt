@@ -84,6 +84,10 @@ object MediaPermissions {
     fun isPermanentlyDenied(access: MediaAccess, askedBefore: Boolean, shouldShowRationale: Boolean): Boolean =
         access == MediaAccess.Denied && askedBefore && !shouldShowRationale
 
+    /** Whether photo locations are readable (ACCESS_MEDIA_LOCATION): without it MediaStore redacts GPS from the bytes. */
+    fun hasMediaLocation(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     /** Android 12+: whether the user let the app skip MediaStore's favourite/trash confirmation dialogs. */
     fun canManageMedia(context: Context): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && MediaStore.canManageMedia(context)

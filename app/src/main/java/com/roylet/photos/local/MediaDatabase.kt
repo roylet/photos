@@ -174,6 +174,14 @@ interface MediaDao {
     @Query("SELECT * FROM media WHERE trashed = 0 AND (sha1 IS NULL OR sha1Generation IS NOT generation) ORDER BY takenAt DESC LIMIT :limit")
     suspend fun needingSha1(limit: Int): List<MediaEntity>
 
+    /** How many live items have a current SHA-1, out of how many (Settings: "Matching with Immich: 1,234 / 5,000"). */
+    @Query("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN sha1 IS NOT NULL AND sha1Generation = generation THEN 1 ELSE 0 END), 0) AS done FROM media WHERE trashed = 0")
+    suspend fun sha1Counts(): Sha1Counts
+
+    /** Current hashes of [ids] (stale ones are left out). */
+    @Query("SELECT id, generation, sha1 FROM media WHERE id IN (:ids) AND sha1 IS NOT NULL AND sha1Generation = generation")
+    suspend fun sha1Of(ids: List<Long>): List<IdSha1>
+
     /* ---- Meta ---- */
 
     @Query("SELECT value FROM index_meta WHERE `key` = :key")
@@ -198,6 +206,8 @@ interface MediaDao {
 }
 
 data class IdTime(val id: Long, val takenAt: Long)
+data class Sha1Counts(val done: Int, val total: Int)
+data class IdSha1(val id: Long, val generation: Long, val sha1: String)
 data class IdMonth(val id: Long, val month: Int, val offsetMinutes: Int)
 
 /** SQLite's bound-parameter limit is 999 on older Androids; stay well under it. */
