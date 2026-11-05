@@ -1,5 +1,6 @@
 package com.roylet.photos
 
+import com.roylet.photos.immich.toDetails
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
@@ -190,7 +191,7 @@ class GalleryScreenshotTest {
         shoot("gallery-05-viewer-info", dark = true) {
             ViewerScreen(
                 repo, startIndex = index, onBack = {}, onEdit = {}, initialInfo = true,
-                loadDetails = { id -> FakeGallery.details(repo.snapshot.value.assetAt(repo.snapshot.value.indexOf(id))!!) },
+                loadDetails = { id -> FakeGallery.details(repo.snapshot.value.assetAt(repo.snapshot.value.indexOf(id))!!).toDetails() },
             )
         }
     }

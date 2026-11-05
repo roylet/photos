@@ -44,7 +44,7 @@ class AddToAlbumSheetTest {
     private val snackbar = SnackbarController()
     private val scope = CoroutineScope(Dispatchers.Unconfined)
     private val actions = LibraryActions(
-        { library }, AlbumStore({ library }, scope), snackbar, scope, favoriteCall = { _, _ -> },
+        { library }, AlbumStore({ library }, scope), snackbar, scope,
         launcher = object : ShareLauncher {
             override fun sendFiles(files: List<File>) {}
             override fun sendText(text: String) {}

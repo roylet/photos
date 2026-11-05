@@ -1,6 +1,9 @@
 package com.roylet.photos
 
 import com.roylet.photos.domain.library.Album
+import com.roylet.photos.domain.library.AssetDetails
+import com.roylet.photos.domain.source.Capabilities
+import com.roylet.photos.immich.toDetails
 import com.roylet.photos.domain.library.ExploreItem
 import com.roylet.photos.domain.library.ExploreSection
 import com.roylet.photos.domain.library.LibrarySource
@@ -41,6 +44,13 @@ class FakeLibrary : LibrarySource {
     var members = mutableMapOf("al-1" to setOf(asset(0, 0).id))
 
     private fun record(s: String) { calls += s; fail?.let { throw it } }
+
+    /** Immich-like by default; screenshots of the phone-only app swap in [Capabilities.Local]. */
+    override var capabilities: Capabilities = Capabilities.Immich
+
+    override suspend fun setFavorite(ids: List<String>, favorite: Boolean) = record("setFavorite ${ids.joinToString(",")} $favorite")
+    override suspend fun details(id: String): AssetDetails? =
+        FakeGallery.buckets.asSequence().flatMap { FakeGallery.assetsOf(it.key) }.firstOrNull { it.id == id }?.let { FakeGallery.details(it).toDetails() }
 
     override suspend fun albums(): List<Album> { record("albums"); return albums.toList() }
     override suspend fun albumsContaining(assetIds: List<String>): Set<String> =

@@ -1,5 +1,6 @@
 package com.roylet.photos.domain.library
 
+import com.roylet.photos.domain.source.Capabilities
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.Visibility
 import kotlinx.coroutines.CoroutineScope
@@ -72,7 +73,21 @@ enum class AlbumSort(val label: String) {
     }
 }
 
+/**
+ * One source's library: Immich ([com.roylet.photos.immich.ImmichLibrary]), the phone
+ * ([LocalLibrary]) or, later, both merged. Screens check [capabilities] before offering a feature;
+ * calls a source can't serve throw [UnsupportedCapabilityException].
+ */
 interface LibrarySource {
+    /** What this source can do. The UI hides everything else (see `LocalCapabilities`). */
+    val capabilities: Capabilities
+
+    /** Network/MediaStore part of a favourite toggle; callers update the UI first and roll back if this throws. */
+    suspend fun setFavorite(ids: List<String>, favorite: Boolean)
+
+    /** The info sheet's details for [id], or null when the source has nothing beyond the timeline's fields. */
+    suspend fun details(id: String): AssetDetails?
+
     suspend fun albums(): List<Album>
     /** Ids of the albums that contain every one of [assetIds]. */
     suspend fun albumsContaining(assetIds: List<String>): Set<String>
@@ -93,10 +108,16 @@ interface LibrarySource {
     suspend fun deleteForever(ids: List<String>)
     suspend fun restoreAll(): Int
     suspend fun emptyTrash(): Int
-    /** How long the server keeps trashed items. */
-    suspend fun trashDays(): Int
+    /** How long trashed items are kept, or null when the source doesn't say (the Trash note is hidden). */
+    suspend fun trashDays(): Int?
 
+    /** Content search (CLIP). Only called with [com.roylet.photos.domain.source.Capability.SMART_SEARCH]. */
     suspend fun smartSearch(query: String): List<TimelineAsset>
+    /**
+     * The fallback search without SMART_SEARCH: file name, folder or a date ("2024", "March
+     * 2023"). The phone source implements it over MediaStore (agent B).
+     */
+    suspend fun basicSearch(query: String): List<TimelineAsset> = emptyList()
     suspend fun placeSearch(city: String?, country: String?): List<TimelineAsset>
     suspend fun explore(): List<ExploreSection>
     suspend fun suggestions(type: String): List<String>
@@ -109,6 +130,9 @@ interface LibrarySource {
     /** Downloads asset [id]'s original into [dir]; returns the file (named like the original). */
     suspend fun download(id: String, dir: File, onProgress: (Long, Long) -> Unit): File
 }
+
+/** Thrown by a [LibrarySource] call its source can't serve (check [LibrarySource.capabilities] first). */
+class UnsupportedCapabilityException(what: String) : UnsupportedOperationException("$what isn't available here")
 
 /**
  * The album list, cached for the session and shared by the Albums tab, album pages and the

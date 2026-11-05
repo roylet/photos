@@ -43,8 +43,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.domain.timeline.TimelineAsset
-import com.roylet.photos.immich.AssetDto
-import com.roylet.photos.immich.TimeBucketAssetsDto
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.People
+import com.roylet.photos.domain.library.AssetDetails
 import com.roylet.photos.ui.components.BrutalSpinner
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.components.brutalDark
@@ -62,14 +63,16 @@ internal fun takenDate(asset: TimelineAsset, pattern: String): String =
     SimpleDateFormat(pattern, Locale.getDefault()).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(asset.localTakenAt))
 
 /**
- * The info sheet's content: when, what file, which camera and settings, where. [details] comes
- * from `GET /assets/{id}` and is null while loading; the timeline's own fields fill in until then.
+ * The info sheet's content: when, what file, which camera and settings, where, who. [details]
+ * comes from the asset's source (Immich or the phone) and is null while loading; the timeline's
+ * own fields fill in until then.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun AssetInfoPanel(asset: TimelineAsset, details: AssetDto?, loading: Boolean, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun AssetInfoPanel(asset: TimelineAsset, details: AssetDetails?, loading: Boolean, onClose: () -> Unit, modifier: Modifier = Modifier) {
     var drag by remember { mutableFloatStateOf(0f) }
-    val exif = details?.exifInfo
+    val camera = details?.camera
+    val location = details?.location
     Column(
         modifier
             .fillMaxWidth()
@@ -94,35 +97,36 @@ fun AssetInfoPanel(asset: TimelineAsset, details: AssetDto?, loading: Boolean, o
                     Text(takenDate(asset, "EEEE d MMMM yyyy").uppercase(), style = Type.Label, color = BrutalDark.Orange)
                     Spacer(Modifier.height(2.dp))
                     Text(takenDate(asset, "HH:mm"), style = Type.Huge, color = BrutalDark.Text)
-                    val tz = exif?.timeZone ?: offsetLabel(asset.localOffsetHours)
+                    val tz = details?.timeZone ?: offsetLabel(asset.localOffsetHours)
                     Text(tz, style = Type.Small, color = BrutalDark.MutedText)
                 }
                 DarkIconButton(Icons.Rounded.Close, "Close info", onClose)
             }
-            details?.exifInfo?.description?.takeIf { it.isNotBlank() }?.let {
+            details?.description?.takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(10.dp))
                 Text(it, style = Type.Body, color = BrutalDark.Text)
             }
             Spacer(Modifier.height(14.dp))
 
-            val name = details?.originalFileName?.takeIf { it.isNotBlank() }
-            val w = exif?.exifImageWidth ?: details?.width
-            val h = exif?.exifImageHeight ?: details?.height
-            val dims = if (w != null && h != null) "$w × $h · ${"%.1f".format(w * h / 1e6)} MP" else null
-            val size = exif?.fileSizeInByte?.let { Format.bytes(it) }
-            val duration = TimeBucketAssetsDto.parseDurationMs(details?.duration)?.let { Format.durationMillis(it) }
+            val name = details?.fileName?.takeIf { it.isNotBlank() }
+            val w = details?.width
+            val h = details?.height
+            val dims = details?.megapixels?.let { mp -> "$w × $h · ${"%.1f".format(mp)} MP" }
+            val size = details?.sizeBytes?.let { Format.bytes(it) }
+            val duration = (details?.durationMs ?: asset.durationMs)?.let { Format.durationMillis(it) }
             InfoRow(Icons.Rounded.Image, name ?: if (loading) "Loading…" else "Unknown file", listOfNotNull(dims, size, duration).joinToString(" · ").ifEmpty { null })
+            details?.folder?.takeIf { it.isNotBlank() }?.let { InfoRow(Icons.Rounded.Folder, it.trimEnd('/'), "On this device") }
 
-            val camera = listOfNotNull(exif?.make, exif?.model).joinToString(" ").trim().ifEmpty { null }
-            if (camera != null) {
-                InfoRow(Icons.Rounded.CameraAlt, cameraName(exif?.make, exif?.model) ?: camera, null)
+            val cameraLabel = listOfNotNull(camera?.make, camera?.model).joinToString(" ").trim().ifEmpty { null }
+            if (cameraLabel != null) {
+                InfoRow(Icons.Rounded.CameraAlt, cameraName(camera?.make, camera?.model) ?: cameraLabel, null)
             }
-            exif?.lensModel?.takeIf { it.isNotBlank() }?.let { InfoRow(Icons.Rounded.Camera, it, null) }
+            camera?.lens?.takeIf { it.isNotBlank() }?.let { InfoRow(Icons.Rounded.Camera, it, null) }
             val settings = listOfNotNull(
-                exif?.fNumber?.let { "ƒ/${trim(it)}" },
-                exif?.exposureTime?.let { "${it}s" },
-                exif?.iso?.let { "ISO $it" },
-                exif?.focalLength?.let { "${trim(it)} mm" },
+                camera?.fNumber?.let { "ƒ/${trim(it)}" },
+                camera?.exposureTime?.let { "${it}s" },
+                camera?.iso?.let { "ISO $it" },
+                camera?.focalLengthMm?.let { "${trim(it)} mm" },
             )
             if (settings.isNotEmpty()) {
                 FlowRow(Modifier.padding(start = 46.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -135,13 +139,14 @@ fun AssetInfoPanel(asset: TimelineAsset, details: AssetDto?, loading: Boolean, o
                 }
             }
 
-            val city = exif?.city ?: asset.city
-            val country = exif?.country ?: asset.country
-            val place = listOfNotNull(city, exif?.state, country).distinct().joinToString(", ").ifEmpty { null }
-            if (place != null) {
-                val coords = if (exif?.latitude != null && exif.longitude != null) "%.4f, %.4f".format(exif.latitude, exif.longitude) else null
-                InfoRow(Icons.Rounded.Place, place, coords)
-            }
+            val city = location?.city ?: asset.city
+            val country = location?.country ?: asset.country
+            val lat = location?.latitude
+            val lon = location?.longitude
+            val coords = if (lat != null && lon != null) "%.4f, %.4f".format(lat, lon) else null
+            val place = listOfNotNull(city, location?.state, country).distinct().joinToString(", ").ifEmpty { null }
+            if (place != null || coords != null) InfoRow(Icons.Rounded.Place, place ?: coords!!, if (place != null) coords else null)
+            details?.people?.takeIf { it.isNotEmpty() }?.let { InfoRow(Icons.Rounded.People, it.joinToString(", "), null) }
             if (loading && details == null) {
                 Spacer(Modifier.height(6.dp))
                 BrutalSpinner(Modifier.padding(start = 46.dp))

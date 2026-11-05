@@ -1,6 +1,8 @@
 package com.roylet.photos.immich
 
 import com.roylet.photos.domain.library.Album
+import com.roylet.photos.domain.library.AssetDetails
+import com.roylet.photos.domain.source.Capabilities
 import com.roylet.photos.domain.library.ExploreItem
 import com.roylet.photos.domain.library.ExploreSection
 import com.roylet.photos.domain.library.LibrarySource
@@ -30,6 +32,12 @@ class ImmichLibrary(
 
     private var config: ServerConfigDto? = null
     private suspend fun config(): ServerConfigDto = config ?: requireApi().serverConfig().also { config = it }
+
+    override val capabilities: Capabilities get() = Capabilities.Immich
+
+    override suspend fun setFavorite(ids: List<String>, favorite: Boolean) = requireApi().setFavorite(ids, favorite)
+
+    override suspend fun details(id: String): AssetDetails = requireApi().asset(id).toDetails()
 
     override suspend fun albums(): List<Album> = requireApi().albums().map { it.toAlbum() }
 
@@ -80,6 +88,10 @@ class ImmichLibrary(
     override suspend fun restoreAll(): Int = requireApi().restoreTrash().count
     override suspend fun emptyTrash(): Int = requireApi().emptyTrash().count
     override suspend fun trashDays(): Int = config().trashDays
+
+    /** Immich's metadata search by original file name. */
+    override suspend fun basicSearch(query: String): List<TimelineAsset> =
+        requireApi().metadataSearch(MetadataSearchBody(originalFileName = query)).assets.items.map { it.toTimelineAsset() }
 
     override suspend fun smartSearch(query: String): List<TimelineAsset> = requireApi().smartSearch(query).assets.items.map { it.toTimelineAsset() }
 

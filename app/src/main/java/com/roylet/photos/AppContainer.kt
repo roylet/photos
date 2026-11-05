@@ -28,8 +28,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.MainScope
 import com.roylet.photos.data.UiPrefs
-import com.roylet.photos.immich.ImmichException
-import com.roylet.photos.immich.setFavorite
 import com.roylet.photos.ui.actions.AndroidShareLauncher
 import com.roylet.photos.ui.actions.LibraryActions
 import com.roylet.photos.ui.components.SnackbarController
@@ -99,7 +97,6 @@ class AppContainer(context: Context) {
             albums = albums,
             snackbar = snackbar,
             scope = uiScope,
-            favoriteCall = { ids, fav -> (api() ?: throw ImmichException("Not signed in")).setFavorite(ids, fav) },
             launcher = AndroidShareLauncher(app),
             prefs = uiPrefs,
             shareDir = File(app.cacheDir, "share"),

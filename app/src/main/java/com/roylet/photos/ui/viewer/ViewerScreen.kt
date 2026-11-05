@@ -114,7 +114,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineRepository
-import com.roylet.photos.immich.AssetDto
+import com.roylet.photos.domain.library.AssetDetails
 import com.roylet.photos.ui.components.BrutalSpinner
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.components.brutalDark
@@ -144,7 +144,7 @@ import kotlin.math.abs
  *
  * @param startIndex global timeline index to open at; [startId] corrects it if the timeline shifted.
  * @param onIndexChange reports the current index (so the grid can scroll to it for the return transition).
- * @param loadDetails fetches `GET /assets/{id}` for the info sheet.
+ * @param loadDetails fetches the info sheet's [AssetDetails] (the active LibrarySource's `details`).
  */
 @Composable
 fun ViewerScreen(
@@ -157,7 +157,7 @@ fun ViewerScreen(
     onEditVideo: (assetId: String) -> Unit = onEdit,
     startId: String? = null,
     onIndexChange: (Int) -> Unit = {},
-    loadDetails: suspend (String) -> AssetDto? = { null },
+    loadDetails: suspend (String) -> AssetDetails? = { null },
     actions: AssetActions = LocalAssetActions.current,
     initialChrome: Boolean = true,
     initialInfo: Boolean = false,
@@ -350,7 +350,7 @@ fun ViewerScreen(
         ) {
             val a = current
             if (a != null) {
-                var details by remember(a.id) { mutableStateOf<AssetDto?>(null) }
+                var details by remember(a.id) { mutableStateOf<AssetDetails?>(null) }
                 var loading by remember(a.id) { mutableStateOf(true) }
                 LaunchedEffect(a.id) { details = runCatching { loadDetails(a.id) }.getOrNull(); loading = false }
                 AssetInfoPanel(a, details, loading, onClose = { info = false })

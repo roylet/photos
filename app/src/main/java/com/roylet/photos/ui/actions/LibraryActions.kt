@@ -65,7 +65,6 @@ class LibraryActions(
     val albums: AlbumStore,
     val snackbar: SnackbarController,
     private val scope: CoroutineScope,
-    private val favoriteCall: suspend (List<String>, Boolean) -> Unit,
     private val launcher: ShareLauncher,
     val prefs: UiPrefs,
     private val shareDir: File,
@@ -97,7 +96,7 @@ class LibraryActions(
 
     /* ---------------- Favourite ---------------- */
 
-    override suspend fun setFavorite(ids: List<String>, favorite: Boolean) = favoriteCall(ids, favorite)
+    override suspend fun setFavorite(ids: List<String>, favorite: Boolean) = library().setFavorite(ids, favorite)
 
     override fun favorite(ids: List<String>, favorite: Boolean, timeline: TimelineRepository?) {
         if (ids.isEmpty()) return
@@ -105,7 +104,7 @@ class LibraryActions(
         timeline?.setFavorite(ids, favorite)
         others(timeline) { r -> if (r.filter.isFavorite == true) r.markStale() else r.setFavorite(ids, favorite) }
         scope.launch {
-            runCatching { favoriteCall(ids, favorite) }.onFailure { e ->
+            runCatching { library().setFavorite(ids, favorite) }.onFailure { e ->
                 if (e is CancellationException) throw e
                 // Roll back each asset to what it was (a multi-select may have mixed states).
                 timeline?.updateAssets(ids) { a -> a.copy(isFavorite = before[a.id] ?: !favorite) }

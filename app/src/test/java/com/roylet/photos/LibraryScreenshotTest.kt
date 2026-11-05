@@ -99,7 +99,7 @@ class LibraryScreenshotTest(private val darkTheme: Boolean) {
     private val store = AlbumStore({ library }, unconfined).apply { refresh() }
     private val actions by lazy {
         LibraryActions(
-            { library }, store, snackbar, unconfined, favoriteCall = { _, _ -> },
+            { library }, store, snackbar, unconfined,
             launcher = object : ShareLauncher {
                 override fun sendFiles(files: List<File>) {}
                 override fun sendText(text: String) {}

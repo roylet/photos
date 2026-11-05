@@ -61,7 +61,6 @@ import com.roylet.photos.ui.components.BrutalTabBar
 import com.roylet.photos.ui.components.NavTab
 import com.roylet.photos.ui.connect.ConnectScreen
 import com.roylet.photos.domain.timeline.TimelineFilter
-import com.roylet.photos.immich.asset
 import com.roylet.photos.ui.components.BrutalButton
 import com.roylet.photos.ui.components.EmptyState
 import com.roylet.photos.ui.gallery.FakeMediaUrls
@@ -207,7 +206,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
                 timelineFor = { container.timelines.get(it) },
                 onEdit = { id -> nav.navigate(Routes.edit(id)) },
                 onEditVideo = { id -> nav.navigate(Routes.editVideo(id)) },
-                loadDetails = { id -> container.api()?.asset(id) },
+                loadDetails = { id -> container.library.details(id) },
             )
             ActionSheets(container.actions)
             BrutalSnackbarHost(
@@ -321,7 +320,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                         onEdit = { id -> nav.navigate(Routes.edit(id)) },
                         onEditVideo = { id -> nav.navigate(Routes.editVideo(id)) },
                         onIndexChange = { nav.previousBackStackEntry?.savedStateHandle?.set(Routes.REVEAL_INDEX, it) },
-                        loadDetails = { id -> container.api()?.asset(id) },
+                        loadDetails = { id -> container.library.details(id) },
                     )
                 }
             }

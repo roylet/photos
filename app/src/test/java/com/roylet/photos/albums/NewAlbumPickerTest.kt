@@ -66,7 +66,7 @@ class NewAlbumPickerTest {
         val scope = CoroutineScope(Dispatchers.Unconfined)
         val store = AlbumStore({ library }, scope)
         val actions = LibraryActions(
-            { library }, store, SnackbarController(), scope, favoriteCall = { _, _ -> },
+            { library }, store, SnackbarController(), scope,
             launcher = object : ShareLauncher {
                 override fun sendFiles(files: List<File>) {}
                 override fun sendText(text: String) {}

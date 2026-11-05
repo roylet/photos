@@ -122,6 +122,8 @@ data class AssetDto(
     val livePhotoVideoId: String? = null,
     val thumbhash: String? = null,
     val exifInfo: ExifDto? = null,
+    /** Recognised people (`PersonWithFacesResponseDto`; only the fields we show). */
+    val people: List<PersonDto> = emptyList(),
 )
 
 @Serializable private data class FavoriteBody(val ids: List<String>, val isFavorite: Boolean)

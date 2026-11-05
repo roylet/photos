@@ -22,7 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavBackStackEntry
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRepository
-import com.roylet.photos.immich.AssetDto
+import com.roylet.photos.domain.library.AssetDetails
 import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.theme.PhotosTheme
 
@@ -113,7 +113,7 @@ fun ViewerOverlay(
     timelineFor: (TimelineFilter) -> TimelineRepository,
     onEdit: (String) -> Unit,
     onEditVideo: (String) -> Unit = onEdit,
-    loadDetails: suspend (String) -> AssetDto?,
+    loadDetails: suspend (String) -> AssetDetails?,
     modifier: Modifier = Modifier,
 ) {
     val req = controller.request ?: return

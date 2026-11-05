@@ -2,6 +2,7 @@ package com.roylet.photos
 
 import com.roylet.photos.data.UiPrefs
 import com.roylet.photos.domain.library.AlbumStore
+import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRegistry
 import com.roylet.photos.immich.ImmichApi
@@ -41,11 +42,11 @@ class LibraryActionsTest {
         server = MockWebServer().apply { start() }
         api = ImmichApi(server.url("/").toString(), "k")
         actions = LibraryActions(
-            library = { library },
+            // Favourites go through LibrarySource; here they hit the mock server like ImmichLibrary does.
+            library = { object : LibrarySource by library { override suspend fun setFavorite(ids: List<String>, favorite: Boolean) = api.setFavorite(ids, favorite) } },
             albums = AlbumStore({ library }, CoroutineScope(Dispatchers.Unconfined)),
             snackbar = snackbar,
             scope = CoroutineScope(Dispatchers.Unconfined),
-            favoriteCall = { ids, fav -> api.setFavorite(ids, fav) },
             launcher = object : ShareLauncher {
                 override fun sendFiles(files: List<File>) { shared += files.map { it.name } }
                 override fun sendText(text: String) { shared += text }

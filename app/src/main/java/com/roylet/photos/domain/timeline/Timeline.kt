@@ -1,5 +1,9 @@
 package com.roylet.photos.domain.timeline
 
+import com.roylet.photos.domain.source.AssetRef
+import com.roylet.photos.domain.source.MediaSourceKind
+import com.roylet.photos.domain.source.SourceBadge
+
 /*
  * Pure-Kotlin timeline model (no Android imports, so it can move to a multiplatform module).
  */
@@ -97,7 +101,29 @@ data class TimelineAsset(
     /** Number of assets in this asset's stack, or 0 when it isn't stacked. */
     val stackCount: Int = 0,
     val visibility: Visibility = Visibility.TIMELINE,
+    /**
+     * The phone copy of a merged asset (MediaStore). Null for plain assets: their [id] says where
+     * they live (see [AssetRef]). A merged timeline sets both refs and picks one as [id].
+     */
+    val localRef: AssetRef? = null,
+    /** The Immich copy of a merged asset. */
+    val remoteRef: AssetRef? = null,
 ) {
+    /** Where [id] points: a tagged `local:` id, else an Immich UUID. */
+    val ref: AssetRef? get() = AssetRef.parse(id)
+
+    /** Which sources hold this asset: from [localRef]/[remoteRef] when merged, else from [id]. */
+    val sourceBadge: SourceBadge get() {
+        val kind = AssetRef.kindOf(id)
+        val local = localRef != null || kind == MediaSourceKind.Local
+        val remote = remoteRef != null || kind == MediaSourceKind.Immich
+        return when {
+            local && remote -> SourceBadge.Both
+            local -> SourceBadge.LocalOnly
+            else -> SourceBadge.RemoteOnly
+        }
+    }
+
     val isVideo: Boolean get() = !isImage
     val isLivePhoto: Boolean get() = livePhotoVideoId != null
     /** When the photo was taken, in the photographer's local wall-clock time (as epoch millis "in UTC"). */

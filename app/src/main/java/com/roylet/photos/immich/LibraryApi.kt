@@ -57,7 +57,7 @@ suspend fun ImmichApi.serverConfig(): ServerConfigDto = call(get("/server/config
 /* ---- Search ---- */
 
 @Serializable data class SmartSearchBody(val query: String, val size: Int = 200, val page: Int? = null, val withExif: Boolean = true)
-@Serializable data class MetadataSearchBody(val city: String? = null, val country: String? = null, val size: Int = 200, val withExif: Boolean = true)
+@Serializable data class MetadataSearchBody(val city: String? = null, val country: String? = null, val originalFileName: String? = null, val size: Int = 200, val withExif: Boolean = true)
 @Serializable data class SearchAssetsDto(val items: List<AssetDto> = emptyList(), val total: Int = 0, val nextPage: String? = null)
 @Serializable data class SearchResponseDto(val assets: SearchAssetsDto = SearchAssetsDto())
 @Serializable data class ExploreItemDto(val value: String, val data: AssetDto)
