@@ -253,6 +253,7 @@ class AppContainer(context: Context) {
             prefs = uiPrefs,
             shareDir = File(app.cacheDir, "share"),
             timelines = timelines,
+            session = ::sessionKey,
         )
     }
 

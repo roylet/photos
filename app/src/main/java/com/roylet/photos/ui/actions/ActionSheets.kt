@@ -81,6 +81,10 @@ import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
+import com.roylet.photos.domain.library.DeleteTarget
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.PhoneAndroid
 
 /** Draws whichever sheet [actions] has open. Place it above the app content. */
 @Composable
@@ -93,6 +97,7 @@ fun ActionSheets(actions: LibraryActions, modifier: Modifier = Modifier) {
         when (val s = last) {
             is ActionSheet.AddToAlbum -> AddToAlbumContent(actions, s)
             is ActionSheet.Share -> ShareContent(actions, s)
+            is ActionSheet.DeleteChoice -> DeleteChoiceContent(s, actions::chooseDelete)
             null -> Unit
         }
     }
@@ -230,6 +235,46 @@ fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
     AnimatedContent(mode, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) }, label = "shareMode") { m ->
         Column {
             if (m == "file") SendFilePane(actions, sheet.ids) else LinkPane(actions, sheet)
+        }
+    }
+}
+
+/**
+ * "Delete from:" for items that are both on this phone and in Immich. Each goes to that side's
+ * Trash (undo brings it back); the answer is used for the rest of the session.
+ */
+@Composable
+fun DeleteChoiceContent(sheet: ActionSheet.DeleteChoice, onChoose: (DeleteTarget) -> Unit) {
+    val n = sheet.ids.size
+    SheetTitle(
+        "Delete from",
+        if (sheet.paired == n) (if (n == 1) "It's on this device and in Immich" else "All ${Format.plural(n, "item")} are on this device and in Immich")
+        else "${sheet.paired} of ${Format.plural(n, "item")} are on this device and in Immich",
+    )
+    Spacer(Modifier.height(14.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        DeleteOption(Icons.Rounded.PhoneAndroid, "This device", "Frees space on the phone. Immich keeps its copy.") { onChoose(DeleteTarget.Device) }
+        DeleteOption(Icons.Rounded.Cloud, "Immich", "Removes it from the server. The phone keeps its copy.") { onChoose(DeleteTarget.Immich) }
+        DeleteOption(Icons.Rounded.DeleteOutline, "Both", "Gone from the phone and from Immich.", danger = true) { onChoose(DeleteTarget.Both) }
+    }
+    Spacer(Modifier.height(12.dp))
+    Text(
+        "Everything goes to Trash first, so you can undo. Your answer is used until you close the app.",
+        style = Type.Small, color = Palette.mutedInk,
+    )
+}
+
+@Composable
+private fun DeleteOption(icon: ImageVector, title: String, subtitle: String, danger: Boolean = false, onClick: () -> Unit) {
+    Pressable(onClick, Modifier.fillMaxWidth(), fill = if (danger) Palette.red else Palette.card, shadow = 3.dp) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val ink = if (danger) Palette.onStrong else Palette.ink
+            Icon(icon, null, tint = ink, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title.uppercase(), style = Type.Label, color = ink)
+                Text(subtitle, style = Type.Small, color = if (danger) Palette.onStrong else Palette.mutedInk, maxLines = 2)
+            }
         }
     }
 }

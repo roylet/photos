@@ -8,6 +8,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import com.roylet.photos.data.UiPrefs
 import com.roylet.photos.domain.library.Album
 import com.roylet.photos.domain.library.AlbumStore
+import com.roylet.photos.domain.library.DeleteTarget
+import com.roylet.photos.domain.library.TargetedTrash
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.ShareLinkOptions
 import com.roylet.photos.domain.library.SharedUri
@@ -32,6 +34,8 @@ sealed interface ActionSheet {
     data class AddToAlbum(val ids: List<String>, val timeline: TimelineRepository?) : ActionSheet
     /** [albumId] set: the sheet offers an album link (send-file is disabled). */
     data class Share(val ids: List<String>, val albumId: String? = null) : ActionSheet
+    /** "Delete from: this device / Immich / both", for a selection with [paired] items on both. */
+    data class DeleteChoice(val ids: List<String>, val timeline: TimelineRepository?, val paired: Int) : ActionSheet
 }
 
 /** Hands files or text to other apps; Android's share sheet and clipboard in the app. */
@@ -72,7 +76,17 @@ class LibraryActions(
     val prefs: UiPrefs,
     private val shareDir: File,
     private val timelines: TimelineRegistry? = null,
+    /** Who's signed in: the remembered delete choice lasts for one session. */
+    private val session: () -> Any? = { null },
 ) : AssetActions {
+
+    /** The answer to "Delete from:" for this session (asked once, then used for every delete). */
+    private var rememberedDelete: Pair<Any?, DeleteTarget>? = null
+
+    /** The delete choice remembered for this session, if any. */
+    val deleteTarget: DeleteTarget? get() = rememberedDelete?.takeIf { it.first == session() }?.second
+
+    fun forgetDeleteChoice() { rememberedDelete = null }
 
     var sheet by mutableStateOf<ActionSheet?>(null)
         private set
@@ -167,6 +181,18 @@ class LibraryActions(
 
     override fun delete(ids: List<String>, timeline: TimelineRepository?) {
         if (ids.isEmpty()) return
+        val lib = library()
+        if (lib is TargetedTrash) {
+            // Items on both the phone and Immich: ask where to delete them from (once a session).
+            val remembered = deleteTarget
+            if (remembered != null) return deleteFrom(lib, ids, remembered, timeline)
+            scope.launch {
+                val paired = runCatching { lib.pairedIds(ids) }.getOrDefault(emptySet())
+                if (paired.isEmpty()) deleteFrom(lib, ids, DeleteTarget.Both, timeline)
+                else sheet = ActionSheet.DeleteChoice(ids, timeline, paired.size)
+            }
+            return
+        }
         val removal = timeline?.remove(ids)
         val elsewhere = HashMap<TimelineRepository, TimelineRepository.Removal>()
         others(timeline) { r -> if (r.filter.isTrashed == true) r.markStale() else elsewhere[r] = r.remove(ids) }
@@ -190,6 +216,57 @@ class LibraryActions(
                     if (e is CancellationException) throw e
                     removal?.let { timeline?.reinsert(it) }
                     elsewhere.forEach { (r, rem) -> r.reinsert(rem) }
+                    snackbar.error("Couldn't delete: ${describe(e)}")
+                }
+        }
+    }
+
+    /** The answer from the delete-choice sheet: remembered for the session, then applied. */
+    fun chooseDelete(target: DeleteTarget) {
+        val choice = sheet as? ActionSheet.DeleteChoice ?: return
+        sheet = null
+        rememberedDelete = session() to target
+        val lib = library() as? TargetedTrash ?: return
+        deleteFrom(lib, choice.ids, target, choice.timeline)
+    }
+
+    /**
+     * Trashes [ids] where [target] says (one-sided items from their own side), with UNDO. When
+     * only one copy of a pair went, the timelines reload so the other copy shows again on its own.
+     */
+    private fun deleteFrom(lib: TargetedTrash, ids: List<String>, target: DeleteTarget, timeline: TimelineRepository?) {
+        val removal = timeline?.remove(ids)
+        val elsewhere = HashMap<TimelineRepository, TimelineRepository.Removal>()
+        others(timeline) { r -> if (r.filter.isTrashed == true) r.markStale() else elsewhere[r] = r.remove(ids) }
+        fun rollBack() {
+            removal?.let { timeline?.reinsert(it) }
+            elsewhere.forEach { (r, rem) -> r.reinsert(rem) }
+        }
+        scope.launch {
+            runCatching { lib.trash(ids, target) }
+                .onSuccess { receipt ->
+                    if (receipt.partial) timelines?.forEachRepo { r -> if (r.filter.isTrashed != true && r.filter.listId == null) r.refresh(keepLoaded = true) }
+                    val where = when {
+                        receipt.local.isNotEmpty() && receipt.remote.isEmpty() -> " on this device"
+                        receipt.remote.isNotEmpty() && receipt.local.isEmpty() -> " in Immich"
+                        else -> ""
+                    }
+                    snackbar.show("Moved ${items(ids.size)} to Trash$where", actionLabel = "Undo", onAction = {
+                        scope.launch {
+                            runCatching { lib.restore(receipt) }
+                                .onSuccess {
+                                    if (receipt.partial) timelines?.forEachRepo { r -> if (r.filter.listId == null) r.refresh(keepLoaded = true) }
+                                    else rollBack()
+                                    others(timeline) { r -> if (r.filter.isTrashed == true) r.markStale() }
+                                    snackbar.show("Restored ${items(ids.size)}", tone = SnackTone.Success)
+                                }
+                                .onFailure { e -> snackbar.error("Couldn't restore: ${describe(e)}") }
+                        }
+                    })
+                }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    rollBack()
                     snackbar.error("Couldn't delete: ${describe(e)}")
                 }
         }

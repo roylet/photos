@@ -124,6 +124,7 @@ import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.gallery.AssetActions
 import com.roylet.photos.ui.gallery.AssetImage
+import com.roylet.photos.domain.source.AssetRef
 import com.roylet.photos.ui.gallery.LocalAssetActions
 import com.roylet.photos.ui.gallery.LocalMediaUrls
 import com.roylet.photos.ui.gallery.MediaUrls
@@ -435,6 +436,11 @@ private fun PhotoPage(
         var attempt by remember(asset.id) { mutableIntStateOf(0) }
         var autoRetries by remember(asset.id) { mutableIntStateOf(0) }
         var failed by remember(asset.id) { mutableStateOf(false) }
+        // A merged item opens its phone file (instant, full resolution); if that's gone or
+        // unreadable, the Immich copy takes over.
+        var useRemote by remember(asset.id) { mutableStateOf(false) }
+        val remoteId = asset.remoteRef?.takeIf { AssetRef.isLocal(asset.id) }?.key
+        val shownId = if (useRemote && remoteId != null) remoteId else asset.id
         LaunchedEffect(failed, autoRetries) {
             if (!failed) return@LaunchedEffect
             val wait = retryDelayMs(autoRetries) ?: return@LaunchedEffect
@@ -486,14 +492,14 @@ private fun PhotoPage(
                     Box(Modifier.size(w, h).testTag("viewer-photo-${asset.id}").thumbHashBackground(hash, BrutalDark.Raised)) {
                         // The floor the page never drops below: the grid's thumbnail, straight from the
                         // memory cache when the grid showed it (same plain-URL key), else from disk/network.
-                        val thumb = remember(asset.id) {
-                            val url = urls.thumbnail(asset.id)
+                        val thumb = remember(shownId) {
+                            val url = urls.thumbnail(shownId)
                             ImageRequest.Builder(context).data(url).memoryCacheKey(url).placeholderMemoryCacheKey(url)
                                 .size(THUMB_PX, THUMB_PX).precision(Precision.INEXACT).build()
                         }
                         AsyncImage(thumb, contentDescription = null, modifier = Modifier.fillMaxSize())
-                        val preview = remember(asset.id, fitted, reduced) {
-                            previewRequest(context, urls, asset.id, fitted).crossfade(if (reduced) 0 else 200).build()
+                        val preview = remember(shownId, fitted, reduced) {
+                            previewRequest(context, urls, shownId, fitted).crossfade(if (reduced) 0 else 200).build()
                         }
                         // A new painter per attempt, so a retry really goes back to the network.
                         key(attempt) {
@@ -502,16 +508,17 @@ private fun PhotoPage(
                                 onState = { st ->
                                     when (st) {
                                         is AsyncImagePainter.State.Success -> { failed = false; loaded() }
-                                        is AsyncImagePainter.State.Error -> { failed = true; loaded() }
+                                        is AsyncImagePainter.State.Error ->
+                                            if (remoteId != null && !useRemote) useRemote = true else { failed = true; loaded() }
                                         else -> {}
                                     }
                                 },
                             )
                         }
                         if (deep) {
-                            val full = remember(asset.id) {
-                                ImageRequest.Builder(context).data(urls.fullsize(asset.id))
-                                    .placeholderMemoryCacheKey(urls.preview(asset.id))
+                            val full = remember(shownId) {
+                                ImageRequest.Builder(context).data(urls.fullsize(shownId))
+                                    .placeholderMemoryCacheKey(urls.preview(shownId))
                                     .size(4096, 4096)
                                     .crossfade(if (reduced) 0 else 200)
                                     .build()
