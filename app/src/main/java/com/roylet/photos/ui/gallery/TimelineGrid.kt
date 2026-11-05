@@ -36,6 +36,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudOff
+import com.roylet.photos.domain.source.SourceBadge
+import com.roylet.photos.ui.sources.LocalShowSourceBadges
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -392,6 +396,7 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
     val selected by remember(asset.id) { derivedStateOf { asset.id in selection.ids } }
     val selecting by remember { derivedStateOf { selection.selecting } }
     val reduced = reducedMotion()
+    val sourceBadges = LocalShowSourceBadges.current
     val cellScale by animateFloatAsState(
         if (selected) 0.86f else 1f,
         if (reduced) spring(stiffness = Spring.StiffnessHigh * 10) else spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium),
@@ -423,14 +428,18 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
             }
             // The phone's Trash: how long until it's gone for good (MediaStore's DATE_EXPIRES).
             val days = if (asset.isTrashed) asset.daysLeft(System.currentTimeMillis()) else null
-            if (days != null) {
-                Text(
-                    if (days <= 1) "1 day" else "$days days",
-                    style = Type.Tiny, color = Brutal.Ink, maxLines = 1, softWrap = false,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(5.dp)
-                        .background(if (days <= 3) Brutal.Yellow else Brutal.Paper, RoundedCornerShape(50))
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
-                )
+            val source = if (sourceBadges) asset.sourceBadge.takeIf { it != SourceBadge.Both } else null
+            if (days != null || source != null) {
+                Row(Modifier.align(Alignment.TopEnd).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (days != null) Text(
+                        if (days <= 1) "1 day" else "$days days",
+                        style = Type.Tiny, color = Brutal.Ink, maxLines = 1, softWrap = false,
+                        modifier = Modifier
+                            .background(if (days <= 3) Brutal.Yellow else Brutal.Paper, RoundedCornerShape(50))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                    if (source != null) SourceMark(source)
+                }
             }
             if (asset.isFavorite) {
                 Icon(
@@ -441,6 +450,26 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
             }
         }
         if (selecting) SelectCheck(selected, Modifier.align(Alignment.TopStart).padding(5.dp))
+    }
+}
+
+/**
+ * Where a cell's item lives, Google Photos style: a crossed-out cloud for "only on this phone"
+ * (not backed up), a cloud for "only in Immich"; nothing when it's in both. Small and quiet: an
+ * ink-ringed paper dot.
+ */
+@Composable
+fun SourceMark(badge: SourceBadge, modifier: Modifier = Modifier) {
+    val (icon, label) = when (badge) {
+        SourceBadge.LocalOnly -> Icons.Rounded.CloudOff to "Only on this device"
+        SourceBadge.RemoteOnly -> Icons.Rounded.Cloud to "Only in Immich"
+        SourceBadge.Both -> return
+    }
+    Box(
+        modifier.size(18.dp).background(Brutal.Paper.copy(alpha = 0.92f), CircleShape).border(1.5.dp, Brutal.Ink, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, label, tint = Brutal.Ink, modifier = Modifier.size(11.dp))
     }
 }
 

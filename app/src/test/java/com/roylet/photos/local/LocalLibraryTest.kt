@@ -263,7 +263,7 @@ class LocalLibraryTest {
 
     @Test fun `with a server, calls about phone assets go to the phone`() {
         val immich = FakeLibrary()
-        val routed = SourceRoutingLibrary(immich, library())
+        val routed = com.roylet.photos.merge.MergedLibrary(immich, library()) { com.roylet.photos.merge.NoPairs }
         runBlocking { routed.setFavorite(listOf("local:3", "abc"), true) }
         assertEquals(listOf("setFavorite abc true"), immich.calls)
         assertTrue(runBlocking { dao.byId(3) }!!.favorite)

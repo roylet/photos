@@ -41,5 +41,8 @@ object Format {
 
     fun dateTime(epochMillis: Long): String = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(epochMillis))
 
+    /** Thousands grouped: 1,234. */
+    fun count(n: Int): String = "%,d".format(Locale.US, n)
+
     fun plural(n: Int, one: String, many: String = one + "s") = "$n ${if (n == 1) one else many}"
 }

@@ -1,5 +1,8 @@
 package com.roylet.photos.ui.albums
 
+import com.roylet.photos.domain.timeline.TimelineFilter
+import com.roylet.photos.ui.components.SectionLabel
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -93,7 +96,7 @@ fun AlbumsScreen(
                 onBack = onBack,
                 subtitle = albums?.let { list ->
                     if (folders) "${Format.plural(list.size, "folder")} on this phone"
-                    else "${Format.plural(list.size, "album")} · ${"${list.count { it.shared }} shared"}"
+                    else list.count { !it.id.startsWith(TimelineFilter.FOLDER_PREFIX) }.let { n -> "${Format.plural(n, "album")} · ${list.count { it.shared }} shared" }
                 },
                 actions = { if (actions != null) BrutalButton("New album", { creating = true }, icon = Icons.Rounded.Add) },
                 below = {
@@ -124,7 +127,17 @@ fun AlbumsScreen(
                         if (loading) item(span = { GridItemSpan(maxLineSpan) }) {
                             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { BrutalSpinner(size = 20.dp) }
                         }
-                        items(sorted, key = { it.id }) { album -> AlbumCard(album, onClick = { onOpen(album) }) }
+                        // With a server the list is Immich's albums, then this phone's folders, each under its own heading.
+                        val (phoneFolders, serverAlbums) = sorted.partition { it.id.startsWith(TimelineFilter.FOLDER_PREFIX) }
+                        if (folders || phoneFolders.isEmpty() || serverAlbums.isEmpty()) {
+                            items(sorted, key = { it.id }) { album -> AlbumCard(album, onClick = { onOpen(album) }) }
+                        } else {
+                            items(serverAlbums, key = { it.id }) { album -> AlbumCard(album, onClick = { onOpen(album) }) }
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "folders-heading") {
+                                SectionLabel("On this device · ${Format.plural(phoneFolders.size, "folder")}", Modifier.padding(top = 10.dp))
+                            }
+                            items(phoneFolders, key = { it.id }) { album -> AlbumCard(album, onClick = { onOpen(album) }) }
+                        }
                     }
                 }
             }

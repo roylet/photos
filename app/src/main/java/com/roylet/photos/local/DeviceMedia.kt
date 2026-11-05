@@ -5,14 +5,6 @@ import android.os.Build
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import com.roylet.photos.domain.library.Album
-import com.roylet.photos.domain.library.AssetDetails
-import com.roylet.photos.domain.library.LibrarySource
-import com.roylet.photos.domain.library.LocalLibrary
-import com.roylet.photos.domain.library.SharedUri
-import com.roylet.photos.domain.source.AssetRef
-import com.roylet.photos.domain.timeline.TimelineAsset
-import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.ui.components.SnackbarController
 import com.roylet.photos.ui.permissions.ConsentLauncher
 import com.roylet.photos.ui.permissions.MediaAccess
@@ -23,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.File
 
 /**
  * The phone's photos, put together: the Room index, its sync (ContentObserver while the app is in
@@ -118,37 +109,5 @@ class DeviceMedia(
     fun onAccessChanged() {
         if (access() != MediaAccess.Denied) observer.register() else observer.unregister()
         scopeLaunch { indexer.sync(force = true) }
-    }
-}
-
-/**
- * The library while an Immich server is connected and the phone's photos are browsed alongside
- * (Library → On this device): calls about specific assets go to the source in their id
- * (`local:` → the phone), folders (`folder:`) to the phone, everything else to Immich. The
- * merged library (agent C) replaces this.
- */
-class SourceRoutingLibrary(private val immich: LibrarySource, private val local: LocalLibrary) : LibrarySource by immich {
-    private inline fun <T> split(ids: List<String>, block: (LibrarySource, List<String>) -> T): List<T> {
-        val (phone, server) = ids.partition(AssetRef::isLocal)
-        return buildList {
-            if (phone.isNotEmpty()) add(block(local, phone))
-            if (server.isNotEmpty()) add(block(immich, server))
-        }
-    }
-
-    private fun of(id: String): LibrarySource = if (AssetRef.isLocal(id)) local else immich
-
-    override suspend fun setFavorite(ids: List<String>, favorite: Boolean) { split(ids) { s, part -> s.setFavorite(part, favorite) } }
-    override suspend fun trash(ids: List<String>) { split(ids) { s, part -> s.trash(part) } }
-    override suspend fun restore(ids: List<String>) { split(ids) { s, part -> s.restore(part) } }
-    override suspend fun deleteForever(ids: List<String>) { split(ids) { s, part -> s.deleteForever(part) } }
-    override suspend fun details(id: String): AssetDetails? = of(id).details(id)
-    override suspend fun shareUri(id: String): SharedUri? = of(id).shareUri(id)
-    override suspend fun download(id: String, dir: File, onProgress: (Long, Long) -> Unit): File = of(id).download(id, dir, onProgress)
-    override suspend fun album(id: String): Album = if (id.startsWith(TimelineFilter.FOLDER_PREFIX)) local.album(id) else immich.album(id)
-
-    override suspend fun assets(ids: List<String>): List<TimelineAsset> {
-        val found = split(ids) { s, part -> s.assets(part) }.flatten().associateBy { it.id }
-        return ids.mapNotNull { found[it] }
     }
 }

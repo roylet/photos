@@ -21,6 +21,12 @@ val LocalActiveSources = staticCompositionLocalOf { ActiveSources.ImmichOnly }
  */
 val LocalCapabilities = staticCompositionLocalOf { Capabilities.Immich }
 
+/**
+ * Whether grid cells mark where each item lives (phone only / Immich only). True only while both
+ * sources show and Settings → "Show backup badges" is on; AppNav provides it.
+ */
+val LocalShowSourceBadges = staticCompositionLocalOf { false }
+
 /** Shorthand for `capability in LocalCapabilities.current`. */
 @Composable
 @ReadOnlyComposable

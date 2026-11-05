@@ -85,8 +85,9 @@ class AppContainerTest {
         val phone = container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline)
         container.settings.saveServer(ServerConfig(publicUrl = "https://photos.example.com", apiKey = "k", userId = "u-1"))
         // Immich, with calls about phone assets and folders routed to the phone (Library → On this device).
-        assertTrue(container.library is com.roylet.photos.local.SourceRoutingLibrary)
-        assertEquals(com.roylet.photos.domain.source.Capabilities.Immich, container.sources().capabilities)
+        assertTrue(container.library is com.roylet.photos.merge.MergedLibrary)
+        assertEquals(com.roylet.photos.domain.source.Capabilities.Immich union container.localLibrary.capabilities, container.sources().capabilities)
+        assertTrue(container.sources().hasLocal)
         assertTrue(container.sources().hasImmich)
         assertEquals("https://photos.example.com/api/assets/abc/thumbnail?size=thumbnail", container.mediaUrls().thumbnail("abc").substringBefore("&"))
         val immich = container.timelines.get(com.roylet.photos.domain.timeline.TimelineFilter.Timeline)

@@ -213,3 +213,27 @@ class MemoryStore(
 
     fun clear() { loadedFor = null; _memories.value = emptyList() }
 }
+
+/** Where "Delete" sends an item that's both on the phone and in Immich. */
+enum class DeleteTarget(val label: String) { Device("This device"), Immich("Immich"), Both("Both") }
+
+/** What a delete moved to which trash, for undo. */
+data class TrashReceipt(
+    val local: List<String>,
+    val remote: List<String>,
+    /** Only one side of some pair went: the other copy stays in the timeline. */
+    val partial: Boolean = false,
+) {
+    val isEmpty: Boolean get() = local.isEmpty() && remote.isEmpty()
+}
+
+/**
+ * A library holding items on two sources at once (the merged library): delete asks where to.
+ * One-sided items in a selection always go from the side they're on.
+ */
+interface TargetedTrash {
+    /** Which of [ids] are on both the phone and Immich. */
+    suspend fun pairedIds(ids: List<String>): Set<String>
+    suspend fun trash(ids: List<String>, target: DeleteTarget): TrashReceipt
+    suspend fun restore(receipt: TrashReceipt)
+}

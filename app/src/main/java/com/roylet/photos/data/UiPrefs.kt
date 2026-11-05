@@ -33,6 +33,15 @@ class UiPrefs(context: Context?) {
         prefs?.edit()?.putString("themeMode", mode.name)?.apply()
     }
 
+    private val _backupBadges = MutableStateFlow(prefs?.getBoolean("showBackupBadges", true) ?: true)
+    /** Settings → "Show backup badges": the grid's on-this-phone-only / in-Immich-only marks (with a server). */
+    val showBackupBadges: StateFlow<Boolean> = _backupBadges.asStateFlow()
+
+    fun setShowBackupBadges(show: Boolean) {
+        _backupBadges.value = show
+        prefs?.edit()?.putBoolean("showBackupBadges", show)?.apply()
+    }
+
     private val _recent = MutableStateFlow(prefs?.getString("recentSearches", null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList())
     val recentSearches: StateFlow<List<String>> = _recent.asStateFlow()
 

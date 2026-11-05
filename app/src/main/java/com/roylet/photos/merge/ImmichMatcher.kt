@@ -218,7 +218,7 @@ class ImmichMatcher(
     suspend fun localOf(remoteId: String): Long? = cache.byRemoteIds(listOf(remoteId)).firstOrNull()?.localId
 
     /** Immich assets that went away (trashed, deleted): their answers are dropped. */
-    suspend fun forgetRemote(remoteIds: Collection<String>) {
+    override suspend fun forgetRemote(remoteIds: Collection<String>) {
         if (remoteIds.isEmpty()) return
         remoteIds.chunked(SQL_VARS).forEach { cache.deleteRemote(it) }
         monthCache.clear()

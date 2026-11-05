@@ -34,6 +34,8 @@ import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import com.roylet.photos.util.Format
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +68,10 @@ import com.roylet.photos.ui.components.Notice
 import com.roylet.photos.ui.components.NoticeTone
 import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.SectionLabel
+import com.roylet.photos.ui.components.ToggleRow
+import com.roylet.photos.ui.components.BrutalProgress
+import com.roylet.photos.local.Sha1Progress
+import androidx.compose.material.icons.rounded.Sync
 import com.roylet.photos.ui.components.Tag
 import com.roylet.photos.data.ThemeMode
 import androidx.compose.foundation.layout.Box
@@ -91,6 +97,11 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
     val scan by container.connection.scan.collectAsState()
     val check by container.connection.check.collectAsState()
     val theme by container.uiPrefs.themeMode.collectAsState()
+    val badges by container.uiPrefs.showBackupBadges.collectAsState()
+    val matching by remember(server != null) {
+        if (server != null) container.device.matching else kotlinx.coroutines.flow.MutableStateFlow(null)
+    }.collectAsState()
+    LaunchedEffect(server != null) { if (server != null) container.device.refreshMatching() }
     SettingsContent(
         server = server,
         state = state,
@@ -106,6 +117,9 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
         theme = theme,
         onTheme = container.uiPrefs::setThemeMode,
         onConnect = onConnect,
+        matching = matching,
+        showBackupBadges = badges,
+        onShowBackupBadges = container.uiPrefs::setShowBackupBadges,
     )
 }
 
@@ -133,6 +147,10 @@ fun SettingsContent(
     onConnect: () -> Unit = {},
     /** The phone's media access, for Accounts → This device. */
     permissions: MediaPermissionsState = LocalMediaPermissions.current,
+    /** How far hashing has got (with a server): "Matching with Immich: 1,234 / 5,000". */
+    matching: Sha1Progress? = null,
+    showBackupBadges: Boolean = true,
+    onShowBackupBadges: (Boolean) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Settings", onBack = onBack, actions = { if (server != null) ConnectionChip(state) })
@@ -143,6 +161,8 @@ fun SettingsContent(
             SectionLabel("Accounts")
             ImmichAccountCard(server, onConnect = onConnect, onSignOut = onSignOut)
             DeviceCard(permissions)
+
+            if (server != null) PhoneAndImmichCard(matching, showBackupBadges, onShowBackupBadges)
 
             if (server != null) ServerSections(server, state, activeUrl, scan, check, onMode, onSavePublic, onSaveLocal, onScan)
 
@@ -208,6 +228,43 @@ private fun ImmichAccountCard(server: ServerConfig?, onConnect: () -> Unit, onSi
             Spacer(Modifier.height(6.dp))
             Text("Signs out and forgets the server. Photos on this phone stay.", style = Type.Small, color = Palette.mutedInk)
         }
+    }
+}
+
+/** With a server: how far matching phone photos with Immich has got, and the grid's backup badges. */
+@Composable
+private fun PhoneAndImmichCard(matching: Sha1Progress?, showBadges: Boolean, onShowBadges: (Boolean) -> Unit) {
+    BrutalCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.Sync, fill = Palette.peach, size = 40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Phone and Immich", style = Type.Title, color = Palette.ink)
+                Text("One timeline: copies on both show once", style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        val total = matching?.total ?: 0
+        val done = matching?.done ?: 0
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (matching == null) "Matching with Immich" else "Matching with Immich: ${Format.count(done)} / ${Format.count(total)}",
+                style = Type.Body, color = Palette.ink, modifier = Modifier.weight(1f),
+            )
+            if (matching != null && total > 0 && done >= total) Tag("Done", fill = Palette.mint)
+        }
+        Spacer(Modifier.height(8.dp))
+        BrutalProgress(if (total > 0) done.toFloat() / total else 0f, Modifier.fillMaxWidth(), height = 12.dp, moving = matching == null)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (matching != null && done >= total) "Every photo on this phone has been checked against Immich."
+            else "Checks each photo on this phone against Immich, a few at a time. Pauses when the battery is low.",
+            style = Type.Small, color = Palette.mutedInk,
+        )
+        Spacer(Modifier.height(14.dp))
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.sand))
+        Spacer(Modifier.height(4.dp))
+        ToggleRow("Show backup badges", "Mark photos that are only on this phone, or only in Immich", showBadges, onShowBadges)
     }
 }
 

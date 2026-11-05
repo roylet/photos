@@ -115,6 +115,7 @@ import com.roylet.photos.ui.permissions.MediaAccessExplainer
 import com.roylet.photos.ui.permissions.rememberMediaPermissions
 import com.roylet.photos.ui.sources.LocalActiveSources
 import com.roylet.photos.ui.sources.LocalCapabilities
+import com.roylet.photos.ui.sources.LocalShowSourceBadges
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -224,6 +225,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     ReplaceUndoSnackbar(container, container.edits.lastReplace, container.edits::consumeLastReplace) { container.edits.undoReplace(it) }
     // The same for videos saved with "Replace original" (the save may finish after the editor closed).
     ReplaceUndoSnackbar(container, container.videoEdits.lastReplace, container.videoEdits::consumeLastReplace) { container.videoEdits.undoReplace(it) }
+    val showBackupBadges by container.uiPrefs.showBackupBadges.collectAsState()
     CompositionLocalProvider(
         LocalMediaUrls provides urls,
         LocalMediaHttpClient provides container.http,
@@ -233,6 +235,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalViewer provides viewer,
         LocalActiveSources provides sources,
         LocalCapabilities provides sources.capabilities,
+        LocalShowSourceBadges provides (sources.hasLocal && sources.hasImmich && showBackupBadges),
         LocalMediaPermissions provides permissions,
         LocalConsentLauncher provides container.consent,
     ) {

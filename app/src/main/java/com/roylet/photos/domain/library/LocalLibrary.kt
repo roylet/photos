@@ -66,13 +66,13 @@ interface LocalLibrary : LibrarySource {
 
 /** A [LocalLibrary] with no photos and no folders: the placeholder until the MediaStore library lands. */
 open class EmptyLocalLibrary : LocalLibrary {
-    override suspend fun setFavorite(ids: List<String>, favorite: Boolean) = throw UnsupportedCapabilityException("Favourites on this device")
+    override suspend fun setFavorite(ids: List<String>, favorite: Boolean): Unit = throw UnsupportedCapabilityException("Favourites on this device")
     override suspend fun details(id: String): AssetDetails? = null
     override suspend fun albums(): List<Album> = emptyList()
     override suspend fun album(id: String): Album = throw NoSuchElementException("No folder $id")
-    override suspend fun trash(ids: List<String>) = throw UnsupportedCapabilityException("Trash on this device")
-    override suspend fun restore(ids: List<String>) = throw UnsupportedCapabilityException("Trash on this device")
-    override suspend fun deleteForever(ids: List<String>) = throw UnsupportedCapabilityException("Trash on this device")
+    override suspend fun trash(ids: List<String>): Unit = throw UnsupportedCapabilityException("Trash on this device")
+    override suspend fun restore(ids: List<String>): Unit = throw UnsupportedCapabilityException("Trash on this device")
+    override suspend fun deleteForever(ids: List<String>): Unit = throw UnsupportedCapabilityException("Trash on this device")
     override suspend fun restoreAll(): Int = 0
     override suspend fun emptyTrash(): Int = 0
     override suspend fun assets(ids: List<String>): List<TimelineAsset> = emptyList()

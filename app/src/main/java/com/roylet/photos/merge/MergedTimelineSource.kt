@@ -24,6 +24,8 @@ interface MonthMatcher {
     suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long>
     /** Known pairs per month (bucket key → count), for the bucket counts before a month is loaded. */
     suspend fun pairsPerMonth(): Map<String, Int>
+    /** Immich assets that went away (trashed, deleted): drop their answers. */
+    suspend fun forgetRemote(remoteIds: Collection<String>) {}
 }
 
 /**
@@ -179,4 +181,12 @@ class MergedTimelineSource(
             null
         }
     }
+}
+
+/** A matcher that knows no pairs (tests, screenshots, and before anything is matched). */
+object NoPairs : MonthMatcher {
+    override suspend fun matchMonth(bucketKey: String, localIds: List<Long>, remoteIds: Set<String>): Map<Long, Match> = emptyMap()
+    override suspend fun cachedRemote(localIds: List<Long>): Map<Long, Match> = emptyMap()
+    override suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long> = emptyMap()
+    override suspend fun pairsPerMonth(): Map<String, Int> = emptyMap()
 }

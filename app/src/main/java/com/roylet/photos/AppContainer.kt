@@ -14,7 +14,7 @@ import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.local.DeviceMedia
 import com.roylet.photos.local.LocalMediaUrls
 import com.roylet.photos.local.LocalThumbnailFetcher
-import com.roylet.photos.local.SourceRoutingLibrary
+import com.roylet.photos.merge.MergedLibrary
 import com.roylet.photos.domain.source.ActiveSources
 import com.roylet.photos.domain.source.MediaSourceKind
 import com.roylet.photos.domain.timeline.TimelineFilter
@@ -139,16 +139,15 @@ class AppContainer(context: Context) {
      */
     var localMediaUrls: MediaUrls = LocalMediaUrls
 
-    /** With a server: Immich, except calls about phone assets and folders (Library → On this device). */
-    private val serverLibrary: LibrarySource by lazy { SourceRoutingLibrary(immichLibrary, localLibrary) }
+    /** With a server: the phone and Immich together (favourite both copies, delete where asked, albums + folders). */
+    private val serverLibrary: LibrarySource by lazy { MergedLibrary(immichLibrary, localLibrary) { monthMatcher } }
 
     /** Screenshots and tests pin a fake library here; null follows the active configuration. */
     private var libraryOverride: LibrarySource? = null
 
     /**
      * Albums, search, people, map, memories, sharing, favourite and trash for what the app shows
-     * right now: Immich with a server, else the phone (the merged library replaces this choice
-     * in agent C). Setting it pins a library (screenshots use fake data).
+     * right now: the merged library (phone + Immich) with a server, else the phone. Setting it pins a library (screenshots use fake data).
      */
     var library: LibrarySource
         get() = libraryOverride ?: if (hasServer) serverLibrary else localLibrary
@@ -197,7 +196,7 @@ class AppContainer(context: Context) {
 
     /** Which sources are showing and what they can do together (drives every capability check in the UI). */
     fun sources(): ActiveSources = ActiveSources(
-        kinds = if (hasServer) setOf(MediaSourceKind.Immich) else setOf(MediaSourceKind.Local),
+        kinds = if (hasServer) setOf(MediaSourceKind.Local, MediaSourceKind.Immich) else setOf(MediaSourceKind.Local),
         capabilities = library.capabilities,
     )
 
