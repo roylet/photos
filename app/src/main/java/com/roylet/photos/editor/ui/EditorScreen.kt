@@ -1,5 +1,7 @@
 package com.roylet.photos.editor.ui
 
+import com.roylet.photos.editor.save.SaveDestination
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -138,10 +140,13 @@ fun EditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId: Str
     val app = LocalContext.current.applicationContext as PhotosApp
     val container = app.container
     val vm: EditorViewModel = viewModel(key = "editor-$assetId") {
-        EditorViewModel(assetId, container::api, app.cacheDir, container.edits)
+        EditorViewModel(assetId, { container.editSource }, app.cacheDir, container.edits, container::remoteCopyOf, container.saveStarter)
     }
     val phase by vm.phase.collectAsStateWithLifecycle()
     val save by vm.saveProgress.collectAsStateWithLifecycle()
+    val destination by vm.destination.collectAsStateWithLifecycle()
+    val notice by vm.notice.collectAsStateWithLifecycle()
+    LaunchedEffect(notice) { notice?.let { container.snackbar.show(it); vm.consumeNotice() } }
 
     LaunchedEffect(save) {
         (save as? SaveProgress.Done)?.let { onSaved(it.result.newAssetId) }
@@ -172,6 +177,9 @@ fun EditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId: Str
                 },
                 saveProgress = save,
                 onDismissSaveError = vm::clearSave,
+                destinations = p.destinations,
+                destination = destination,
+                onDestination = vm::setDestination,
             )
         }
     }
@@ -195,6 +203,10 @@ fun EditorWorkspace(
     onDismissSaveError: () -> Unit = {},
     initialTool: EditorTool = EditorTool.LIGHT,
     initialSheet: Boolean = false,
+    /** Where the edit can go (more than one: the sheet asks); see [SaveDestination.choicesFor]. */
+    destinations: List<SaveDestination> = listOf(SaveDestination.IMMICH),
+    destination: SaveDestination? = null,
+    onDestination: (SaveDestination) -> Unit = {},
 ) {
     var tool by rememberSaveable { mutableStateOf(initialTool) }
     var sheet by rememberSaveable { mutableStateOf(initialSheet) }
@@ -268,6 +280,9 @@ fun EditorWorkspace(
             visible = sheet && saveProgress == null,
             onDismiss = { sheet = false },
             onSave = { mode, group -> sheet = false; onSave(mode, group) },
+            destinations = destinations,
+            destination = destination ?: destinations.first(),
+            onDestination = onDestination,
         )
         SaveProgressPanel(saveProgress, onBackground = onClose, onDismissError = onDismissSaveError)
     }

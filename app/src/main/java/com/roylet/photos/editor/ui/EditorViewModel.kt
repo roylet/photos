@@ -11,9 +11,11 @@ import com.roylet.photos.editor.save.SaveProgress
 import com.roylet.photos.immich.EditAssetInfo
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
-import com.roylet.photos.immich.assetInfo
-import com.roylet.photos.immich.downloadOriginal
-import com.roylet.photos.immich.getMetadata
+import com.roylet.photos.domain.source.AssetRef
+import com.roylet.photos.editor.save.EditSource
+import com.roylet.photos.editor.save.SaveDestination
+import com.roylet.photos.editor.save.SaveRequest
+import com.roylet.photos.editor.save.SaveStarter
 import com.roylet.photos.util.Format
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,16 +36,32 @@ sealed interface EditorPhase {
     data class Loading(val title: String, val detail: String, val fraction: Float?) : EditorPhase
     /** The photo was made by this editor: continue from its source, or edit the pixels as they are. */
     data class Choose(val asset: EditAssetInfo, val sourceId: String, val recipe: Recipe) : EditorPhase
-    data class Ready(val session: EditorSession, val target: EditAssetInfo, val renderSourceId: String, val sourceFile: File) : EditorPhase
+    data class Ready(
+        val session: EditorSession,
+        val target: EditAssetInfo,
+        val renderSourceId: String,
+        val sourceFile: File,
+        /** Where the save sheet can save to; the first is the default (where the item lives). */
+        val destinations: List<SaveDestination> = listOf(SaveDestination.IMMICH),
+        /** The Immich copy of a phone item, for saves that include Immich. */
+        val remoteTargetId: String? = null,
+    ) : EditorPhase
     data class Failed(val message: String, val canEditThisVersion: Boolean = false) : EditorPhase
 }
 
-/** Opens [assetId] for editing: metadata check, original download, decode; then hands saves to [edits]. */
+/**
+ * Opens [assetId] for editing: details and the saved recipe from [source] (Immich or this phone),
+ * the original, decode; then hands saves to [edits]. A phone item with an Immich copy
+ * ([remoteCopy]) can be saved to this device, Immich or both; a Replace on the phone asks for
+ * consent first ([starter]).
+ */
 class EditorViewModel(
     private val assetId: String,
-    private val api: () -> ImmichApi?,
+    private val source: () -> EditSource,
     private val cacheDir: File,
     private val edits: EditSaveManager,
+    private val remoteCopy: suspend (String) -> String? = { null },
+    private val starter: SaveStarter = SaveStarter { true },
 ) : ViewModel() {
     private val _phase = MutableStateFlow<EditorPhase>(EditorPhase.Loading("Opening", "Fetching photo details", null))
     val phase: StateFlow<EditorPhase> = _phase.asStateFlow()
@@ -54,6 +72,14 @@ class EditorViewModel(
     val saveProgress: StateFlow<SaveProgress?> = _saveJob
         .flatMapLatest { id -> if (id == null) flowOf(null) else edits.progress(id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val _destination = MutableStateFlow<SaveDestination?>(null)
+    /** The save sheet's destination choice (null until the photo is open). */
+    val destination: StateFlow<SaveDestination?> = _destination.asStateFlow()
+
+    private val _notice = MutableStateFlow<String?>(null)
+    /** A one-off message for the editor (e.g. the user declined the consent dialog). */
+    val notice: StateFlow<String?> = _notice.asStateFlow()
 
     private var target: EditAssetInfo? = null
     private var loadJob: Job? = null
@@ -67,15 +93,15 @@ class EditorViewModel(
         loadJob = viewModelScope.launch {
             _phase.value = EditorPhase.Loading("Opening", "Fetching photo details", null)
             try {
-                val api = api() ?: throw ImmichException("Sign in to edit photos.")
-                val info = api.assetInfo(assetId)
-                if (info.type != "IMAGE") throw ImmichException("Only photos can be edited for now; video editing is coming.")
+                val src = source()
+                val info = src.info(assetId)
+                if (info.type != "IMAGE") throw ImmichException("Only photos can be edited here; videos open in the video editor.")
                 target = info
-                val meta = runCatching { api.getMetadata(assetId, RecipeMetadata.KEY) }.getOrNull()?.let(RecipeMetadata::decode)
+                val meta = src.metadata(assetId, RecipeMetadata.KEY)?.let(RecipeMetadata::decode)
                 if (meta != null && meta.first != assetId) {
                     _phase.value = EditorPhase.Choose(info, meta.first, meta.second)
                 } else {
-                    open(api, info, info, Recipe())
+                    open(info, info, Recipe())
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -90,10 +116,9 @@ class EditorViewModel(
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             try {
-                val api = api() ?: throw ImmichException("Sign in to edit photos.")
                 _phase.value = EditorPhase.Loading("Opening", "Finding the original", null)
-                val source = api.assetInfo(choose.sourceId)
-                open(api, source, choose.asset, choose.recipe)
+                val original = source().info(choose.sourceId)
+                open(original, choose.asset, choose.recipe)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _phase.value = EditorPhase.Failed("The original couldn't be opened (${ImmichApi.describe(e)}).", canEditThisVersion = true)
@@ -106,7 +131,7 @@ class EditorViewModel(
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             try {
-                open(api() ?: throw ImmichException("Sign in to edit photos."), info, info, Recipe())
+                open(info, info, Recipe())
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _phase.value = EditorPhase.Failed(ImmichApi.describe(e))
@@ -114,42 +139,63 @@ class EditorViewModel(
         }
     }
 
-    private suspend fun open(api: ImmichApi, source: EditAssetInfo, target: EditAssetInfo, recipe: Recipe) {
-        val dir = File(cacheDir, "editor/${source.id}-${Integer.toHexString(source.checksum.hashCode())}")
-        val file = File(dir, safeName(source.originalFileName))
+    private suspend fun open(original: EditAssetInfo, target: EditAssetInfo, recipe: Recipe) {
+        val dir = File(cacheDir, "editor/${original.id.replace(':', '_')}-${Integer.toHexString(original.checksum.hashCode())}")
+        val file = File(dir, safeName(original.originalFileName))
         if (!file.exists()) {
             withContext(Dispatchers.IO) { EditorCache.prune(dir.parentFile ?: cacheDir, keep = dir, protect = edits.pendingSourceFiles()) }
-            val name = source.originalFileName
-            _phase.value = EditorPhase.Loading("Downloading original", name, 0f)
-            api.downloadOriginal(source.id, file, edited = source.isEdited) { done, total ->
+            val name = original.originalFileName
+            val phone = AssetRef.isLocal(original.id)
+            val title = if (phone) "Opening original" else "Downloading original"
+            _phase.value = EditorPhase.Loading(title, name, 0f)
+            source().obtain(original, file) { done, total ->
                 val detail = if (total > 0) "$name · ${Format.bytes(done)} of ${Format.bytes(total)}" else "$name · ${Format.bytes(done)}"
-                _phase.value = EditorPhase.Loading("Downloading original", detail, if (total > 0) done.toFloat() / total else null)
+                _phase.value = EditorPhase.Loading(title, detail, if (total > 0) done.toFloat() / total else null)
             }
         }
-        _phase.value = EditorPhase.Loading("Preparing", "Decoding ${source.originalFileName}", null)
+        _phase.value = EditorPhase.Loading("Preparing", "Decoding ${original.originalFileName}", null)
         val loaded = withContext(Dispatchers.Default) {
             runCatching { SourceLoader.load(file) }.getOrElse {
                 throw ImmichException("This file can't be decoded on this phone (${it.message ?: it.javaClass.simpleName}).")
             }
         }
+        val onPhone = AssetRef.isLocal(target.id)
+        val remote = if (onPhone) runCatching { remoteCopy(target.id) }.getOrNull() else null
+        val destinations = SaveDestination.choicesFor(onPhone, inImmich = !onPhone || remote != null)
+        if (_destination.value !in destinations) _destination.value = destinations.first()
         val session = EditorSession(loaded.proxy, loaded.width, loaded.height, recipe)
-        _phase.value = EditorPhase.Ready(session, target, source.id, file)
+        _phase.value = EditorPhase.Ready(session, target, original.id, file, destinations, remote)
         viewModelScope.launch(Dispatchers.Default) { runCatching { session.renderFilterThumbs() } }
     }
+
+    fun setDestination(d: SaveDestination) { _destination.value = d }
+
+    fun consumeNotice() { _notice.value = null }
 
     fun save(mode: SaveMode, group: Boolean) {
         val ready = _phase.value as? EditorPhase.Ready ?: return
         if (_saveJob.value != null && saveProgress.value is SaveProgress.Running) return
         ready.session.history.endGesture()
-        _saveJob.value = edits.enqueue(
-            targetId = ready.target.id,
-            renderSourceId = ready.renderSourceId,
-            source = ready.sourceFile,
-            originalFilename = ready.target.originalFileName,
-            recipe = ready.session.history.recipe,
-            mode = mode,
-            group = group,
-        )
+        val destination = _destination.value ?: ready.destinations.first()
+        val request = SaveRequest(ready.target.id, mode, group, destination, ready.remoteTargetId)
+        val recipe = ready.session.history.recipe
+        viewModelScope.launch {
+            val job = starter.start(request) { r ->
+                edits.enqueue(
+                    targetId = r.targetId,
+                    renderSourceId = ready.renderSourceId,
+                    source = ready.sourceFile,
+                    originalFilename = ready.target.originalFileName,
+                    recipe = recipe,
+                    mode = r.mode,
+                    group = r.group,
+                    destination = r.destination,
+                    remoteTargetId = r.remoteTargetId,
+                )
+            }
+            if (job == null) _notice.value = "Not saved: Android didn't allow replacing the original. Save as a copy instead?"
+            else _saveJob.value = job
+        }
     }
 
     /** Dismisses a failed save so the user can try again. */

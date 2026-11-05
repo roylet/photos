@@ -15,6 +15,14 @@ import com.roylet.photos.local.DeviceMedia
 import com.roylet.photos.local.LocalMediaUrls
 import com.roylet.photos.local.LocalThumbnailFetcher
 import com.roylet.photos.merge.MergedLibrary
+import com.roylet.photos.domain.source.AssetRef
+import com.roylet.photos.editor.save.EditSource
+import com.roylet.photos.editor.save.ImmichEditSource
+import com.roylet.photos.editor.save.LocalEditSource
+import com.roylet.photos.editor.save.RoutingEditSource
+import com.roylet.photos.editor.save.SaveStarter
+import com.roylet.photos.local.AndroidLocalTrasher
+import com.roylet.photos.local.Sha1Worker
 import com.roylet.photos.domain.source.ActiveSources
 import com.roylet.photos.domain.source.MediaSourceKind
 import com.roylet.photos.domain.timeline.TimelineFilter
@@ -296,7 +304,28 @@ class AppContainer(context: Context) {
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }
 
     /** Photo-editor saves (WorkManager jobs) and the viewer's "Original moved to Trash · UNDO". */
-    val edits: EditSaveManager by lazy { EditSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }
+    val edits: EditSaveManager by lazy {
+        EditSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }, localSink = { cp, onCp -> device.saveSink(cp, onCp) })
+    }
+
+    /** Where the editors read originals: `local:` ids from the phone, the rest from Immich. */
+    val editSource: EditSource by lazy {
+        RoutingEditSource(ImmichEditSource { api() }, LocalEditSource(device.dao, device.appDao) { Sha1Worker.openOriginal(app, it) })
+    }
+
+    /** The Immich copy of a phone item (merged timeline), or null. */
+    suspend fun remoteCopyOf(id: String): String? {
+        if (!hasServer) return null
+        val key = AssetRef.parse(id)?.mediaStoreId ?: return null
+        return runCatching { monthMatcher.cachedRemote(listOf(key))[key]?.remoteId }.getOrNull()
+    }
+
+    /** Asks for consent before a phone Replace is queued (the worker can't show the dialog). */
+    val saveStarter = SaveStarter { id ->
+        val key = AssetRef.parse(id)?.mediaStoreId ?: return@SaveStarter false
+        val video = runCatching { device.dao.byId(key)?.isVideo }.getOrNull() ?: false
+        AndroidLocalTrasher.requestEditConsent(app, consent, key, video)
+    }
 
     /** Video-editor saves (download → export → upload WorkManager jobs), originals cache and REPLACE undo. */
     val videoEdits: VideoSaveManager by lazy { VideoSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }

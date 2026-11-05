@@ -7,6 +7,7 @@ import com.roylet.photos.domain.library.LocalLibrary
 import com.roylet.photos.domain.library.SharedUri
 import com.roylet.photos.domain.source.AssetRef
 import com.roylet.photos.domain.source.Capabilities
+import com.roylet.photos.domain.source.Capability
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineFilter
 import java.io.File
@@ -89,8 +90,8 @@ class MediaStoreLibrary(
     private val now: () -> Long = System::currentTimeMillis,
 ) : LocalLibrary {
 
-    /** FOLDERS, TRASH, FAVORITE. Agent C adds EDIT_SAVE when phone saves land. */
-    override val capabilities: Capabilities = Capabilities.Local
+    /** FOLDERS, TRASH, FAVORITE, and EDIT_SAVE: edits are saved next to the original (LocalSaveSink). */
+    override val capabilities: Capabilities = Capabilities.Local + Capability.EDIT_SAVE
 
     private fun keys(ids: List<String>): List<Long> = ids.mapNotNull { AssetRef.parse(it)?.takeIf { r -> r.isLocal }?.mediaStoreId }
 

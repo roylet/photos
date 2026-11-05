@@ -42,6 +42,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.editor.save.EditSaveManager
 import com.roylet.photos.editor.save.SaveMode
+import com.roylet.photos.editor.save.SaveDestination
+import com.roylet.photos.ui.components.DarkChip
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import com.roylet.photos.editor.save.SaveProgress
 import com.roylet.photos.editor.save.SaveStage
 import com.roylet.photos.ui.components.DarkButton
@@ -58,11 +63,17 @@ fun SaveSheet(
     visible: Boolean,
     onDismiss: () -> Unit,
     onSave: (SaveMode, Boolean) -> Unit,
-    subtitle: String = "Exports a full-resolution JPEG to Immich",
+    /** Null: describes [destination] for a photo. */
+    subtitle: String? = null,
     /** Extra content under the title (the video editor's export settings row). */
     extra: (@Composable () -> Unit)? = null,
     /** "Group with original" needs stacks (Immich); hidden otherwise and the copy saves ungrouped. */
     canGroup: Boolean = Capability.STACKS in LocalCapabilities.current,
+    /** Where it can go; with more than one the sheet asks "Save to". */
+    destinations: List<SaveDestination> = listOf(SaveDestination.IMMICH),
+    destination: SaveDestination = destinations.first(),
+    onDestination: (SaveDestination) -> Unit = {},
+    video: Boolean = false,
 ) {
     val reduced = rememberReducedMotion()
     var group by rememberSaveable { mutableStateOf(true) }
@@ -79,7 +90,13 @@ fun SaveSheet(
             enter = slideInVertically(motion(reduced, spring(dampingRatio = 0.72f, stiffness = 420f))) { it } + fadeIn(motion(reduced, tween(120))),
             exit = slideOutVertically(motion(reduced, tween(200))) { it } + fadeOut(motion(reduced, tween(200))),
         ) {
-            SaveSheetContent(group && canGroup, onGroupChange = { group = it }, onSave = onSave, onDismiss = onDismiss, subtitle = subtitle, extra = extra, canGroup = canGroup)
+            // Stacks are Immich's: a save to this phone alone has none.
+            val grouping = canGroup && destination.immich
+            SaveSheetContent(
+                group && grouping, onGroupChange = { group = it }, onSave = onSave, onDismiss = onDismiss,
+                subtitle = subtitle ?: saveSubtitle(destination, video), extra = extra, canGroup = grouping,
+                destinations = destinations, destination = destination, onDestination = onDestination, video = video,
+            )
         }
     }
 }
@@ -93,6 +110,10 @@ internal fun SaveSheetContent(
     subtitle: String = "Exports a full-resolution JPEG to Immich",
     extra: (@Composable () -> Unit)? = null,
     canGroup: Boolean = true,
+    destinations: List<SaveDestination> = listOf(SaveDestination.IMMICH),
+    destination: SaveDestination = destinations.first(),
+    onDestination: (SaveDestination) -> Unit = {},
+    video: Boolean = false,
 ) {
     Column(
         Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 10.dp)
@@ -110,10 +131,15 @@ internal fun SaveSheetContent(
                 Text(subtitle, style = Type.Small, color = BrutalDark.MutedText)
             }
         }
+        if (destinations.size > 1) DestinationRow(destinations, destination, onDestination)
         extra?.invoke()
         ChoiceCard(
             title = "Save as copy",
-            body = "Keeps the original untouched. The copy joins the same albums.",
+            body = when (destination) {
+                SaveDestination.DEVICE -> "Keeps the original untouched. The copy goes in the same folder."
+                SaveDestination.IMMICH -> "Keeps the original untouched. The copy joins the same albums."
+                SaveDestination.BOTH -> "Keeps the original untouched. The copy goes in the same folder and the same albums."
+            },
             primary = true,
             onClick = { onSave(SaveMode.COPY, group && canGroup) },
         ) {
@@ -138,11 +164,45 @@ internal fun SaveSheetContent(
         }
         ChoiceCard(
             title = "Replace original",
-            body = "The original goes to Trash and can be restored. Albums, favourite and sharing move to the edit.",
+            body = when (destination) {
+                SaveDestination.DEVICE -> "The original goes to this phone's Trash and can be restored. The edit keeps its date and favourite."
+                else -> "The original goes to Trash and can be restored. Albums, favourite and sharing move to the edit."
+            },
             primary = false,
             onClick = { onSave(SaveMode.REPLACE, false) },
         )
         DarkButton("Keep editing", onDismiss, primary = false, modifier = Modifier.align(Alignment.End))
+    }
+}
+
+/** The sheet's subtitle for [destination]. */
+fun saveSubtitle(destination: SaveDestination, video: Boolean): String {
+    val what = if (video) "an MP4" else "a full-resolution JPEG"
+    return when (destination) {
+        SaveDestination.DEVICE -> "Saves $what on this phone, next to the original"
+        SaveDestination.IMMICH -> if (video) "Exports an MP4 and uploads it to Immich" else "Exports a full-resolution JPEG to Immich"
+        SaveDestination.BOTH -> "Saves $what on this phone and uploads it to Immich"
+    }
+}
+
+/** "Save to: This device · Immich · Both", for an item that's in both places. */
+@Composable
+private fun DestinationRow(choices: List<SaveDestination>, selected: SaveDestination, onSelect: (SaveDestination) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("SAVE TO", style = Type.Label, color = BrutalDark.MutedText)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Fixed order on screen, whichever is the default.
+            listOf(SaveDestination.DEVICE, SaveDestination.IMMICH, SaveDestination.BOTH).filter { it in choices }.forEach { d ->
+                DarkChip(
+                    d.label, selected = d == selected, onClick = { onSelect(d) },
+                    icon = when (d) {
+                        SaveDestination.DEVICE -> Icons.Rounded.PhoneAndroid
+                        SaveDestination.IMMICH -> Icons.Rounded.Cloud
+                        SaveDestination.BOTH -> Icons.Rounded.CloudDone
+                    },
+                )
+            }
+        }
     }
 }
 

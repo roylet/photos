@@ -55,7 +55,17 @@ data class SaveResult(
     val preexisting: Boolean = false,
     /** A non-fatal problem worth telling the user about. */
     val warning: String? = null,
-)
+    /** Saved on this phone (MediaStore): the ids are `local:` ids and undo goes through the phone. */
+    val local: Boolean = false,
+    /** A "Both" save: the other side's result (the Immich half of a phone save). */
+    val companion: SaveResult? = null,
+) {
+    /** Some original went to Trash: the viewer offers "Original moved to Trash · UNDO". */
+    val anyOriginalTrashed: Boolean get() = originalTrashed || companion?.originalTrashed == true
+
+    /** This result and its companion. */
+    val parts: List<SaveResult> get() = listOfNotNull(copy(companion = null), companion)
+}
 
 /** The `photos.recipe` asset-metadata value: which asset the pixels came from, and the recipe. */
 object RecipeMetadata {

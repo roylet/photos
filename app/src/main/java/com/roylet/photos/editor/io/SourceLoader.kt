@@ -20,7 +20,7 @@ import kotlin.math.roundToInt
  * A photo opened for editing: a preview [proxy] (EXIF orientation applied, software
  * ARGB_8888, sRGB) plus everything needed to re-read the full resolution for export.
  */
-class EditSource internal constructor(
+class LoadedEdit internal constructor(
     val file: File,
     /** e.g. `image/jpeg`, `image/heic`; null if the decoder could not tell. */
     val mimeType: String?,
@@ -42,7 +42,7 @@ class EditSource internal constructor(
             .getOrNull()
             ?: BitmapExportSource(SourceLoader.decodeFull(file))
 
-    private companion object { const val TAG = "EditSource" }
+    private companion object { const val TAG = "LoadedEdit" }
 }
 
 /** Decodes photos for the editor. All methods block; call them off the main thread. */
@@ -50,7 +50,7 @@ object SourceLoader {
     const val DEFAULT_PROXY_EDGE = 2048
 
     /** Opens [file] (JPEG, HEIC/HEIF, PNG, WebP, AVIF where supported, DNG previews…). */
-    fun load(file: File, proxyLongEdge: Int = DEFAULT_PROXY_EDGE): EditSource {
+    fun load(file: File, proxyLongEdge: Int = DEFAULT_PROXY_EDGE): LoadedEdit {
         val orientation = readOrientation(file)
         var mime: String? = null
         var headerW = 0
@@ -78,7 +78,7 @@ object SourceLoader {
             val landscape = proxy.width >= proxy.height
             if ((headerW >= headerH) == landscape) headerW to headerH else headerH to headerW
         }
-        return EditSource(file, mime, fullW, fullH, orientation, proxy)
+        return LoadedEdit(file, mime, fullW, fullH, orientation, proxy)
     }
 
     fun readOrientation(file: File): Int = runCatching {

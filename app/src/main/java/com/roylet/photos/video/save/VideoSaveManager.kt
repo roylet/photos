@@ -149,7 +149,7 @@ class VideoSaveManager(
         _jobs.update { it + (jobId to progress) }
         if (progress is VideoSaveProgress.Done) {
             runCatching { onSaved(progress.result) }
-            if (progress.result.originalTrashed) _lastReplace.value = progress.result
+            if (progress.result.anyOriginalTrashed) _lastReplace.value = progress.result
         }
     }
 
@@ -289,7 +289,7 @@ object VideoSaveNotifications {
         nm.cancel(id(jobId))
         val title = when {
             error != null -> "Couldn't save video"
-            result?.originalTrashed == true -> "Video saved · original in Trash"
+            result?.anyOriginalTrashed == true -> "Video saved · original in Trash"
             else -> "Video saved as a copy"
         }
         val text = error ?: result?.warning ?: "Your edited video is in Immich"

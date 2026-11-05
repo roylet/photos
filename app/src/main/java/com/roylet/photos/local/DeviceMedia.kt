@@ -88,6 +88,13 @@ class DeviceMedia(
             .onFailure { Log.w("DeviceMedia", "Couldn't schedule hashing", it) }
     }
 
+    /** Moves phone items to Trash and back for editor saves (Replace) and their undo. */
+    val trasher: LocalTrasher by lazy { AndroidLocalTrasher(app, dao) { library } }
+
+    /** The phone's save sink for one editor save job, resuming from [checkpoint]. */
+    fun saveSink(checkpoint: LocalSaveCheckpoint, onCheckpoint: (LocalSaveCheckpoint) -> Unit): LocalSaveSink =
+        LocalSaveSink(dao, appDao, AndroidMediaWriter(app), trasher, checkpoint, onCheckpoint, onWritten = { indexer.requestSync(0) })
+
     private val observer = MediaObserver(app) { indexer.requestSync() }
 
     /** Starts watching: a sync whenever the app comes to the foreground, the observer while it's there. */

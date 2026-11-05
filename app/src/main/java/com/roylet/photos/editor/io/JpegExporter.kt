@@ -46,7 +46,7 @@ object EditExporter {
      * original's EXIF. Call from a background thread (e.g. a WorkManager worker).
      */
     fun export(
-        source: EditSource,
+        source: LoadedEdit,
         recipe: Recipe,
         outFile: File,
         quality: Int = JpegExporter.DEFAULT_QUALITY,

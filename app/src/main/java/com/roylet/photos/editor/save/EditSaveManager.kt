@@ -25,6 +25,8 @@ import com.roylet.photos.PhotosApp
 import com.roylet.photos.R
 import com.roylet.photos.editor.io.EditExporter
 import com.roylet.photos.editor.io.SourceLoader
+import com.roylet.photos.domain.source.AssetRef
+import com.roylet.photos.local.LocalSaveCheckpoint
 import com.roylet.photos.editor.recipe.Recipe
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
@@ -53,6 +55,12 @@ data class SaveJobSpec(
     val group: Boolean,
     /** Progress so far, rewritten after every step so a retry resumes (see [SaveCheckpoint]). */
     val checkpoint: SaveCheckpoint = SaveCheckpoint(),
+    /** This phone, Immich or both (docs/SOURCES.md §9). */
+    val destination: SaveDestination = SaveDestination.IMMICH,
+    /** The Immich copy of a phone [targetId], for a save to Immich. */
+    val remoteTargetId: String? = null,
+    /** The phone half's progress. */
+    val localCheckpoint: LocalSaveCheckpoint = LocalSaveCheckpoint(),
 )
 
 /** What one run of a save job ended with; [EditSaveWorker] maps it to a WorkManager result. */
@@ -86,6 +94,8 @@ class EditSaveManager(
     private val onSaved: (SaveResult) -> Unit = {},
     /** Renders [Recipe] over the original at full resolution into a JPEG (GPU); swappable for tests. */
     private val render: (source: File, recipe: Recipe, out: File) -> Unit = ::renderJpeg,
+    /** The phone's [SaveSink] for one job, resuming from its checkpoint; null without phone saves. */
+    private val localSink: ((LocalSaveCheckpoint, (LocalSaveCheckpoint) -> Unit) -> SaveSink)? = null,
 ) {
     private val app = context.applicationContext
     private val _jobs = MutableStateFlow<Map<String, SaveProgress>>(emptyMap())
@@ -104,8 +114,10 @@ class EditSaveManager(
         recipe: Recipe,
         mode: SaveMode,
         group: Boolean,
+        destination: SaveDestination = SaveDestination.IMMICH,
+        remoteTargetId: String? = null,
     ): String {
-        val jobId = createJob(targetId, renderSourceId, source, originalFilename, recipe, mode, group)
+        val jobId = createJob(targetId, renderSourceId, source, originalFilename, recipe, mode, group, destination, remoteTargetId)
         WorkManager.getInstance(app).enqueueUniqueWork("edit-save-$jobId", ExistingWorkPolicy.KEEP, request(jobId))
         return jobId
     }
@@ -119,10 +131,12 @@ class EditSaveManager(
         recipe: Recipe,
         mode: SaveMode,
         group: Boolean,
+        destination: SaveDestination = SaveDestination.IMMICH,
+        remoteTargetId: String? = null,
     ): String {
         val jobId = UUID.randomUUID().toString()
         writeSpec(SaveJobSpec(jobId, targetId, renderSourceId, source.path, SaveFlow.editedFilename(originalFilename),
-            recipe.toJson(), mode, group))
+            recipe.toJson(), mode, group, destination = destination, remoteTargetId = remoteTargetId))
         report(jobId, SaveProgress.Running(SaveStage.QUEUED, 0f))
         return jobId
     }
@@ -140,8 +154,14 @@ class EditSaveManager(
 
     /** Undo a REPLACE: restores the original from Trash and sends the edit to Trash. */
     suspend fun undoReplace(result: SaveResult) {
-        val api = api() ?: throw ImmichException("Not signed in")
-        SaveFlow(api).undoReplace(result)
+        for (part in result.parts) {
+            if (!part.originalTrashed) continue
+            if (part.local) {
+                (localSink ?: throw LocalSaveException("Saving on this phone isn't available."))(LocalSaveCheckpoint()) {}.undoReplace(part)
+            } else {
+                SaveFlow(api() ?: throw ImmichException("Not signed in")).undoReplace(part)
+            }
+        }
         _lastReplace.compareAndSet(result, null)
     }
 
@@ -167,7 +187,7 @@ class EditSaveManager(
         if (progress is SaveProgress.Done) {
             // Also when the editor was left ("keep working in the background"): it can't refresh then.
             runCatching { onSaved(progress.result) }
-            if (progress.result.originalTrashed) _lastReplace.value = progress.result
+            if (progress.result.anyOriginalTrashed) _lastReplace.value = progress.result
         }
     }
 
@@ -198,7 +218,7 @@ class EditSaveManager(
     /** Runs one attempt: render (unless a checkpoint says it's done), then [SaveFlow]. */
     internal suspend fun run(jobId: String, finalAttempt: Boolean = true, onProgress: (SaveStage, Float) -> Unit): SaveResult {
         var spec = readSpec(jobId) ?: throw ImmichException("This save was lost; please save again.")
-        val api = api() ?: throw ImmichException("Not signed in")
+        val api = if (spec.destination.immich) api() ?: throw ImmichException("Not signed in") else null
         val out = File(app.cacheDir, "edit-save/$jobId/${spec.filename}")
         val recipe = Recipe.fromJson(spec.recipeJson)
         var keep = false
@@ -219,12 +239,28 @@ class EditSaveManager(
                 writeSpec(spec)
             }
             onProgress(SaveStage.RENDERING, 1f)
-            return SaveFlow(api).run(
-                spec.targetId, spec.renderSourceId, out, spec.filename, recipe, spec.mode, spec.group, onProgress,
-                checkpoint = spec.checkpoint,
-                onCheckpoint = { cp -> spec = spec.copy(checkpoint = cp); writeSpec(spec) },
-                finalAttempt = finalAttempt,
-            )
+            // The phone first (instant, no network), then Immich.
+            val local = if (spec.destination.local) {
+                val sink = (localSink ?: throw LocalSaveException("Saving on this phone isn't available."))(spec.localCheckpoint) { cp ->
+                    spec = spec.copy(localCheckpoint = cp); writeSpec(spec)
+                }
+                sink.save(
+                    SinkInput(spec.targetId, spec.renderSourceId, out, spec.filename, "image/jpeg", isVideo = false,
+                        RecipeMetadata.KEY, RecipeMetadata.encode(spec.renderSourceId, recipe), spec.mode, spec.group),
+                ) { stage, f -> onProgress(stage.toSaveStage(), f) }
+            } else null
+            val remote = if (spec.destination.immich) {
+                val target = spec.remoteTargetId ?: spec.targetId
+                // A phone item's recipe points at its Immich copy there (Immich can't open `local:` ids).
+                val renderSource = if (AssetRef.isLocal(spec.renderSourceId)) target else spec.renderSourceId
+                SaveFlow(api!!).run(
+                    target, renderSource, out, spec.filename, recipe, spec.mode, spec.group, onProgress,
+                    checkpoint = spec.checkpoint,
+                    onCheckpoint = { cp -> spec = spec.copy(checkpoint = cp); writeSpec(spec) },
+                    finalAttempt = finalAttempt,
+                )
+            } else null
+            return combineResults(local, remote)
         } catch (e: Exception) {
             // WorkManager stopped the job (constraints, quota, system pressure) or it will be retried:
             // keep the spec and the rendered file so the next run resumes.
@@ -242,7 +278,10 @@ class EditSaveManager(
     internal fun request(jobId: String) = OneTimeWorkRequestBuilder<EditSaveWorker>()
         .setInputData(workDataOf(EditSaveWorker.KEY_JOB_ID to jobId))
         .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        // A save to this phone alone needs no network.
+        .setConstraints(Constraints.Builder().setRequiredNetworkType(
+            if (readSpec(jobId)?.destination == SaveDestination.DEVICE) NetworkType.NOT_REQUIRED else NetworkType.CONNECTED,
+        ).build())
         .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, RETRY_BACKOFF_SECONDS, TimeUnit.SECONDS)
         .addTag("edit-save")
         .build()
@@ -350,7 +389,7 @@ object SaveNotifications {
         nm.cancel(id(jobId))
         val title = when {
             error != null -> "Couldn't save edit"
-            result?.originalTrashed == true -> "Edit saved · original in Trash"
+            result?.anyOriginalTrashed == true -> "Edit saved · original in Trash"
             else -> "Edit saved as a copy"
         }
         val text = error ?: result?.warning ?: "Your edited photo is in Immich"
@@ -375,6 +414,17 @@ object SaveNotifications {
 }
 
 /** The production render: decode the original, GPU-render the recipe at full resolution, write the JPEG. */
+/** A sink's stage as the photo editor shows it. */
+internal fun SinkStage.toSaveStage(): SaveStage = when (this) {
+    SinkStage.WRITING -> SaveStage.UPLOADING
+    SinkStage.UPLOADING -> SaveStage.UPLOADING
+    SinkStage.LINKING -> SaveStage.LINKING
+    SinkStage.GROUPING -> SaveStage.GROUPING
+    SinkStage.TRASHING -> SaveStage.TRASHING
+    SinkStage.RECIPE -> SaveStage.RECIPE
+    SinkStage.DONE -> SaveStage.DONE
+}
+
 private fun renderJpeg(sourceFile: File, recipe: Recipe, out: File) {
     val source = SourceLoader.load(sourceFile, proxyLongEdge = 1024)
     try {
