@@ -301,7 +301,7 @@ phone save sink), `editor/save/` (the editor seams).
 | File | What | Rule |
 |---|---|---|
 | `media-index.db` (`MediaDatabase`, v2) | `media`, `index_meta`, `immich_match` | A cache. Every version has a migration (`Migration1To2`); only a downgrade rebuilds it. |
-| `photos-app.db` (`PhotosDatabase`, v1) | `legacy_trash`, `legacy_favorite`, `local_edit` | Can't be recomputed. No destructive fallback, ever: each bump adds a `Migration` to `PhotosDatabase.MIGRATIONS` and a test in `DatabaseMigrationTest`. |
+| `photos-app.db` (`PhotosDatabase`, v2) | `legacy_trash`, `legacy_favorite`, `local_edit`; v2 adds backup's `backup_folder`, `backup_failure`, `backup_exclusion` (§10) | Can't be recomputed. No destructive fallback, ever: each bump adds a `Migration` to `PhotosDatabase.MIGRATIONS` and a test in `DatabaseMigrationTest`. |
 
 - The 1 → 2 migration reads v1's Android 10 rows and hands them to `PhotosDatabase.importLegacy`
   (keeping `rowId`, so `local:-<rowId>` still points at the same private copy) before dropping
@@ -430,3 +430,84 @@ phone save sink), `editor/save/` (the editor seams).
 - The viewer's fallback when a phone file is deleted elsewhere.
 - Migrating a real v1 index that has Android 10 trash rows.
 - Inserting into unusual RELATIVE_PATHs (SD cards, Download/).
+
+## 10. Backup (`backup/`, `ui/settings/BackupScreen.kt`)
+
+Phone folders → Immich, in the background, Google Photos style. Backup only adds to Immich:
+nothing is ever deleted on either side.
+
+### API (`container.backup: BackupManager`)
+
+| Call | What |
+|---|---|
+| `state: StateFlow<BackupState>` | `Off`, `NoServer`, `Idle(pending)`, `Scanning`, `Uploading(current, total, name, fraction)`, `WaitingForWifi(n)`, `WaitingForCharging(n)`, `Paused`, `Error(message, signIn)` |
+| `options: StateFlow<BackupOptions>` | `enabled` (off), `wifiOnly` (on), `whileChargingOnly` (off), `includeVideos` (on), `newerThan` (null = everything) |
+| `setFolderEnabled(bucketId, on)` | Per-folder toggle (turning one on starts a run). |
+| `isFolderEnabled(bucketId): Flow<Boolean>` | A stored choice, else the default: Camera (`FolderKind.Camera`) on, the rest off. |
+| `folderStatus(bucketId): Flow<FolderBackupStatus>` | `enabled`, `eligible`, `backedUp`, `pending`, `failed`, `excluded`. |
+| `folders: StateFlow<List<BackupFolder>?>` | Every folder with cover and status, in Library's order. |
+| `backUpNow()`, `pause()`, `resume()`, `cancelRun()` | Runs; pause persists until resume. |
+| `setEnabled/setWifiOnly/setWhileChargingOnly/setIncludeVideos/setFromNowOn` | Options. |
+| `failures`, `exclusions`, `retryFailed()`, `allowBackupAgain(localId)` | The two lists on the Backup screen. |
+| `uploadingId: StateFlow<Long?>` | The item uploading now (the grid's up-arrow cloud via `LocalBackupUploading`). |
+
+- **UI wiring.** `ProvideFolderBackup(container, onOpenBackup)` provides `LocalFolderBackup`
+  (`FolderBackupUi`: statuses, `active`, `onToggle`, `onOpenBackup`) on the Library, VIEW ALL and
+  folder routes. `ui/library/DeviceFolders.kt` reads it: BACKUP in the ON THIS DEVICE header, a
+  cloud mark on enabled folder cards (check = done, up arrow = pending, crossed = backup off),
+  "Back up" in the ⋯ menu and on the folder page header. Null hides all of it.
+- **Routes.** `backup` (Settings → Backup card, and Library's BACKUP).
+
+### Storage
+
+- `photos-app.db` v2 (`AppMigration1To2`): `backup_folder` (choices), `backup_failure`
+  (permanent per-item failures, at a generation), `backup_exclusion` (never re-upload: id + SHA-1).
+- Options in the `backup` prefs (plus the auth pause and "asked for notifications").
+- What's backed up = a confirmed (`tentative = 0`) `immich_match` row at the item's current
+  generation. Uploads write that row, so the merged timeline shows "Both" at once
+  (`ImmichMatcher.noteUploaded()` drops the month cache, then `onDeviceChanged` refreshes).
+
+### Engine (`BackupEngine`, `BackupWorker`)
+
+- Jobs: `backup-periodic` (hourly, UPDATE), `backup-run` (one-off, KEEP: Back up now, index
+  changes, a folder switched on), `backup-trigger` (content-URI trigger on MediaStore images and
+  video, re-armed each time, so new photos start a run with the app closed). Constraints:
+  UNMETERED for Wi-Fi only, `setRequiresCharging`, battery not low. One run at a time
+  (`BackupManager.runLock`).
+- A run syncs the index, then per batch of 50 (newest first, `BackupMediaDao.pending`: never
+  trashed items, only selected folders, videos and `newerThan` applied): hash missing SHA-1s
+  (stored like the hasher's) → `bulk-upload-check` → stream-upload the rest one at a time with
+  `ImmichApi.upload` on the shared client (LAN when home; the connection manager's one-shot
+  fallback applies) with `x-immich-checksum`, `fileCreatedAt` = taken, `fileModifiedAt` =
+  DATE_MODIFIED, the original file name and `isFavorite`. "created" and "duplicate" both count.
+- **Device ids.** Immich's current `AssetMediaCreateDto` has no `deviceAssetId`/`deviceId`;
+  backup leaves them out (`UploadSpec.deviceAssetId = null`) and keeps MediaStore id → asset id
+  in the match cache. `BackupPrefs.installId` exists for diagnostics only.
+- **Errors.** IO, 408/429/5xx → retry with backoff (30 s exponential, 8 attempts, then the hourly
+  job). 401/403 → paused with a "Sign in to keep backing up" notification until the next sign-in.
+  Other 4xx (415, 400, 413) and unreadable files → `backup_failure`, skipped until the item changes.
+  A file that changes size mid-upload is skipped for the run.
+- Resumable: each result is stored as it happens; a stopped run returns `retry` and the next
+  starts at the next item.
+- Foreground with "Backing up 3 of 120" and Pause / Cancel (`BackupActionReceiver`) while
+  uploading. A refused foreground start (Android 12+ background) runs as normal work.
+- Live/motion photos go up as the still image only.
+
+### Deletions
+
+- The merged library tells `RemoteDeletionListener` (the manager) when a confirmed pair loses
+  only its Immich copy ("Immich" in the delete sheet): the phone item becomes an exclusion
+  (`Deleted from Immich`), so it isn't re-uploaded even after Immich empties its Trash. Undo or a
+  restore from Immich's Trash removes it. "Allow" on the Backup screen does too.
+- `bulk-upload-check` finding the file in Immich's Trash (deleted on the web) also excludes it
+  (`In Immich's Trash`). Restore All on Immich's Trash doesn't clear exclusions (no ids).
+- The delete sheet: for items in a backed-up folder, "Immich" asks once more ("It won't be backed
+  up again. Delete from phone too?", Both highlighted); a remembered "Immich" asks again there.
+
+### Needs a device
+
+- Foreground start limits (Android 12+, 14's dataSync quota), the content-URI trigger with the
+  app closed, Doze, and the notification's Pause / Cancel.
+- Real uploads over LAN and public, the LAN→public switch mid-upload, multi-GB videos.
+- `bulk-upload-check` on a trashed asset, and 401 after the key is revoked.
+- Notification permission on first enable (Android 13+).
