@@ -91,7 +91,8 @@ import kotlinx.coroutines.launch
 import com.roylet.photos.domain.library.PhotosFolderMode
 
 @Composable
-fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () -> Unit = {}) {
+fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () -> Unit = {}, onBackup: () -> Unit = {}) {
+    val backupState by container.backup.state.collectAsState()
     val server by container.settings.server.collectAsState()
     val state by container.connection.state.collectAsState()
     val activeUrl by container.connection.activeUrl.collectAsState()
@@ -119,6 +120,8 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
         theme = theme,
         onTheme = container.uiPrefs::setThemeMode,
         onConnect = onConnect,
+        backupState = backupState,
+        onBackup = onBackup,
         matching = matching,
         showBackupBadges = badges,
         onShowBackupBadges = container.uiPrefs::setShowBackupBadges,
@@ -155,6 +158,9 @@ fun SettingsContent(
     matching: Sha1Progress? = null,
     showBackupBadges: Boolean = true,
     onShowBackupBadges: (Boolean) -> Unit = {},
+    /** Backup's state for its card (opens the Backup screen); null hides the card. */
+    backupState: com.roylet.photos.backup.BackupState? = null,
+    onBackup: () -> Unit = {},
     /** "Show device folders in Photos timeline": every folder, or Camera plus the ones turned on. */
     photosFolderMode: PhotosFolderMode = PhotosFolderMode.All,
     onPhotosFolderMode: (PhotosFolderMode) -> Unit = {},
@@ -170,6 +176,7 @@ fun SettingsContent(
             DeviceCard(permissions, photosFolderMode, onPhotosFolderMode)
 
             if (server != null) PhoneAndImmichCard(matching, showBackupBadges, onShowBackupBadges)
+            if (backupState != null) BackupSettingsCard(backupState, onBackup)
 
             if (server != null) ServerSections(server, state, activeUrl, scan, check, onMode, onSavePublic, onSaveLocal, onScan)
 

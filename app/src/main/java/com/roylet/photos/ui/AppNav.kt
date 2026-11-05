@@ -92,6 +92,8 @@ import com.roylet.photos.ui.library.LibraryEntry
 import com.roylet.photos.ui.library.MapScreen
 import com.roylet.photos.ui.library.DeviceScreen
 import com.roylet.photos.ui.library.DeviceFolderScreen
+import com.roylet.photos.ui.settings.BackupScreen
+import com.roylet.photos.ui.settings.ProvideFolderBackup
 import com.roylet.photos.ui.library.DeviceFoldersScreen
 import com.roylet.photos.ui.library.PeopleScreen
 import com.roylet.photos.ui.library.TrashScreen
@@ -118,6 +120,7 @@ import com.roylet.photos.ui.permissions.rememberMediaPermissions
 import com.roylet.photos.ui.sources.LocalActiveSources
 import com.roylet.photos.ui.sources.LocalCapabilities
 import com.roylet.photos.ui.sources.LocalShowSourceBadges
+import com.roylet.photos.ui.sources.LocalBackupUploading
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -129,6 +132,8 @@ object Routes {
     const val SEARCH = "search"
     const val LIBRARY = "library"
     const val SETTINGS = "settings"
+    /** Settings → Backup, also from Library → On this device's BACKUP. */
+    const val BACKUP = "backup"
     const val VIEWER = "viewer?filter={filter}&index={index}&id={id}"
     const val EDIT = "edit/{assetId}"
     const val EDIT_VIDEO = "editVideo/{assetId}"
@@ -229,6 +234,8 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     // The same for videos saved with "Replace original" (the save may finish after the editor closed).
     ReplaceUndoSnackbar(container, container.videoEdits.lastReplace, container.videoEdits::consumeLastReplace) { container.videoEdits.undoReplace(it) }
     val showBackupBadges by container.uiPrefs.showBackupBadges.collectAsState()
+    // The item backup is uploading: its cell shows an up-arrow cloud (read only by the cells).
+    val uploading = remember { container.backup.uploadingId }.collectAsState()
     CompositionLocalProvider(
         LocalMediaUrls provides urls,
         LocalMediaHttpClient provides container.http,
@@ -239,6 +246,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalActiveSources provides sources,
         LocalCapabilities provides sources.capabilities,
         LocalShowSourceBadges provides (sources.hasLocal && sources.hasImmich && showBackupBadges),
+        LocalBackupUploading provides uploading,
         LocalMediaPermissions provides permissions,
         LocalConsentLauncher provides container.consent,
     ) {
@@ -481,7 +489,9 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             TimelineDestination(container, viewer, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
                 val bucket = id.removePrefix(TimelineFilter.FOLDER_PREFIX).toLongOrNull()
                 if (folder && bucket != null) {
-                    DeviceFolderScreen(bucket, container.phoneFolders, timeline, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+                    ProvideFolderBackup(container, onOpenBackup = { nav.navigate(Routes.BACKUP) }) {
+                        DeviceFolderScreen(bucket, container.phoneFolders, timeline, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+                    }
                 } else {
                     AlbumDetailScreen(
                         id, container.albums, timeline, if (Capability.SERVER_ALBUMS in caps) container.actions else null, open,
@@ -512,6 +522,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.LIBRARY) {
+            ProvideFolderBackup(container, onOpenBackup = { nav.navigate(Routes.BACKUP) }) {
             LibraryScreen(
                 folders = container.phoneFolders,
                 onFolder = { nav.navigate(Routes.album(it.id)) },
@@ -530,6 +541,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                 }
             },
             )
+            }
         }
         composable(Routes.DEVICE) { entry ->
             TimelineDestination(container, viewer, entry, TimelineFilter.Device) { timeline, open, reveal, revealed ->
@@ -544,6 +556,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.DEVICE_FOLDERS) {
+            ProvideFolderBackup(container, onOpenBackup = { nav.navigate(Routes.BACKUP) }) {
             DeviceFoldersScreen(
                 container.phoneFolders,
                 onFolder = { nav.navigate(Routes.album(it.id)) },
@@ -553,6 +566,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                 onPhoneTimeline = if (sources.hasImmich) { { nav.navigate(Routes.DEVICE) } } else null,
                 onPhoneTrash = if (sources.hasImmich) { { nav.navigate(Routes.DEVICE_TRASH) } } else null,
             )
+            }
         }
         composable(Routes.DEVICE_TRASH) { entry ->
             TimelineDestination(container, viewer, entry, TimelineFilter.DeviceTrash) { timeline, open, reveal, revealed ->
@@ -609,7 +623,10 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(container, onBack = { nav.popBackStack() }, onConnect = { nav.navigate(Routes.CONNECT) })
+            SettingsScreen(container, onBack = { nav.popBackStack() }, onConnect = { nav.navigate(Routes.CONNECT) }, onBackup = { nav.navigate(Routes.BACKUP) })
+        }
+        composable(Routes.BACKUP) {
+            BackupScreen(container, onBack = { nav.popBackStack() }, onConnect = { nav.navigate(Routes.CONNECT) })
         }
     }
 }

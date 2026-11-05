@@ -41,6 +41,9 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
 import com.roylet.photos.domain.source.SourceBadge
 import com.roylet.photos.ui.sources.LocalShowSourceBadges
+import com.roylet.photos.ui.sources.LocalBackupUploading
+import com.roylet.photos.domain.source.AssetRef
+import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -439,7 +442,12 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
             }
             // The phone's Trash: how long until it's gone for good (MediaStore's DATE_EXPIRES).
             val days = if (asset.isTrashed) asset.daysLeft(System.currentTimeMillis()) else null
-            val source = if (sourceBadges) asset.sourceBadge.takeIf { it != SourceBadge.Both } else null
+            val uploadingState = LocalBackupUploading.current
+            val uploading by remember(asset.id, uploadingState) {
+                val key = asset.localRef?.mediaStoreId ?: AssetRef.parse(asset.id)?.mediaStoreId
+                derivedStateOf { key != null && uploadingState?.value == key }
+            }
+            val source = if (sourceBadges) (if (uploading) SourceBadge.LocalOnly else asset.sourceBadge.takeIf { it != SourceBadge.Both }) else null
             if (days != null || source != null) {
                 Row(Modifier.align(Alignment.TopEnd).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (days != null) Text(
@@ -449,7 +457,7 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
                             .background(if (days <= 3) Brutal.Yellow else Brutal.Paper, RoundedCornerShape(50))
                             .padding(horizontal = 6.dp, vertical = 1.dp),
                     )
-                    if (source != null) SourceMark(source)
+                    if (source != null) SourceMark(source, uploading = uploading)
                 }
             }
             if (asset.isFavorite) {
@@ -470,11 +478,14 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
  * ink-ringed paper dot.
  */
 @Composable
-fun SourceMark(badge: SourceBadge, modifier: Modifier = Modifier) {
-    val (icon, label) = when (badge) {
+fun SourceMark(badge: SourceBadge, modifier: Modifier = Modifier, uploading: Boolean = false) {
+    val (icon, label) = when {
+        uploading -> Icons.Rounded.CloudUpload to "Backing up"
+        else -> when (badge) {
         SourceBadge.LocalOnly -> Icons.Rounded.CloudOff to "Only on this device"
         SourceBadge.RemoteOnly -> Icons.Rounded.Cloud to "Only in Immich"
         SourceBadge.Both -> return
+        }
     }
     Box(
         modifier.size(18.dp).background(Brutal.Paper.copy(alpha = 0.92f), CircleShape).border(1.5.dp, Brutal.Ink, CircleShape),

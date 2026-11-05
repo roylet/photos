@@ -199,6 +199,23 @@ class DeviceFoldersScreenshotTest(private val darkTheme: Boolean) {
         shoot("folders-02-library-immich", sources = Merged) { WithTabs(Merged.capabilities) { LibraryScreen(onOpen = {}, folders = s) } }
     }
 
+    /** With backup: BACKUP in the section header, cloud marks on backed-up folders. */
+    @Test fun libraryWithBackup() {
+        val s = store()
+        val ui = com.roylet.photos.ui.settings.FolderBackupUi(
+            mapOf(
+                10L to com.roylet.photos.backup.FolderBackupStatus(enabled = true, eligible = 64, backedUp = 64),
+                30L to com.roylet.photos.backup.FolderBackupStatus(enabled = true, eligible = 41, backedUp = 30, pending = 11),
+            ),
+            active = true, onToggle = { _, _ -> }, onOpenBackup = {},
+        )
+        shoot("folders-10-library-backup", sources = Merged) {
+            androidx.compose.runtime.CompositionLocalProvider(com.roylet.photos.ui.settings.LocalFolderBackup provides ui) {
+                WithTabs(Merged.capabilities) { LibraryScreen(onOpen = {}, folders = s) }
+            }
+        }
+    }
+
     @Test fun allFolders() {
         val s = store(FolderPrefs(hidden = setOf(100L, 90L)))
         shoot("folders-03-all") { DeviceFoldersScreen(s, onFolder = {}, onBack = {}, onAccessChanged = {}) }

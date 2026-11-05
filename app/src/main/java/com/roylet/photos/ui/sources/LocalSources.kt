@@ -27,6 +27,12 @@ val LocalCapabilities = staticCompositionLocalOf { Capabilities.Immich }
  */
 val LocalShowSourceBadges = staticCompositionLocalOf { false }
 
+/**
+ * MediaStore id of the item backup is uploading right now (docs/SOURCES.md §10). Provided as a
+ * State so only the cell whose answer changes recomposes.
+ */
+val LocalBackupUploading = staticCompositionLocalOf<androidx.compose.runtime.State<Long?>?> { null }
+
 /** Shorthand for `capability in LocalCapabilities.current`. */
 @Composable
 @ReadOnlyComposable

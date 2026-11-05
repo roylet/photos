@@ -1,5 +1,11 @@
 package com.roylet.photos.ui.library
 
+import com.roylet.photos.ui.settings.FolderBackupUi
+import com.roylet.photos.ui.settings.LocalFolderBackup
+import com.roylet.photos.ui.components.BrutalSwitch
+import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -161,7 +167,18 @@ fun DeviceFoldersSection(
     val shown = remember(all, prefs) { all?.filterNot(prefs::isHidden) }
     val hints = remember(all) { all?.let(DeviceFolders::pathHints).orEmpty() }
     Column(modifier.fillMaxWidth()) {
-        SectionLabel("On this device", trailing = if (permissions.access != MediaAccess.Denied) { { ViewAll(onViewAll) } } else null)
+        val backup = LocalFolderBackup.current
+        SectionLabel(
+            "On this device",
+            trailing = if (permissions.access != MediaAccess.Denied || backup != null) {
+                {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (backup != null) HeaderLink("Backup", Icons.Rounded.CloudUpload, backup.onOpenBackup)
+                        if (permissions.access != MediaAccess.Denied) ViewAll(onViewAll)
+                    }
+                }
+            } else null,
+        )
         when {
             permissions.access == MediaAccess.Denied -> FolderAccessCard(
                 partial = false,
@@ -203,6 +220,20 @@ private fun Modifier.bleed(start: Dp, end: Dp) = layout { measurable, constraint
     val extra = (start + end).roundToPx()
     val p = measurable.measure(constraints.copy(minWidth = constraints.minWidth + extra, maxWidth = constraints.maxWidth + extra))
     layout(constraints.maxWidth, p.height) { p.place(-start.roundToPx(), 0) }
+}
+
+/** BACKUP in the section header: opens Settings → Backup. */
+@Composable
+private fun HeaderLink(text: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(BrutalShape).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = Palette.ink, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text.uppercase(), style = Type.Label, color = Palette.ink)
+    }
+    Spacer(Modifier.width(6.dp))
 }
 
 @Composable
@@ -292,6 +323,19 @@ fun FolderCard(
                         if (folder.removable) KindBadge(Icons.Rounded.SdCard, Palette.card)
                     }
                 }
+                // Backed up: a cloud with a check (or an up arrow while items are waiting); cloud-off while backup is off.
+                val backup = LocalFolderBackup.current
+                val status = backup?.status(folder.bucketId)
+                if (backup != null && status?.enabled == true) {
+                    val icon = when {
+                        !backup.active -> Icons.Rounded.CloudOff
+                        status.pending > 0 -> Icons.Rounded.CloudUpload
+                        else -> Icons.Rounded.CloudDone
+                    }
+                    Box(Modifier.align(Alignment.TopStart).padding(6.dp)) {
+                        KindBadge(icon, if (backup.active) Palette.mint else Palette.card, if (backup.active) "Backed up" else "Backup is off")
+                    }
+                }
                 if (onMore != null) {
                     // ⋯ on the cover, so the name below keeps the card's whole width.
                     Box(
@@ -342,6 +386,7 @@ fun FolderMenuSheet(
             }
             Spacer(Modifier.height(10.dp))
             ToggleRow("Show in Photos", "Its photos and videos appear in the Photos timeline", prefs.showsInPhotos(f), { onShowInPhotos(f, it) })
+            LocalFolderBackup.current?.let { backup -> BackupToggle(f, backup) }
             val hidden = prefs.isHidden(f)
             MenuRow(
                 if (hidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
@@ -350,6 +395,21 @@ fun FolderMenuSheet(
             ) { onHidden(f, !hidden); onDismiss() }
         }
     }
+}
+
+/** "Back up" for one folder, with its counts; when backup itself is off, a link to turn it on. */
+@Composable
+private fun BackupToggle(f: DeviceFolder, backup: FolderBackupUi) {
+    val status = backup.status(f.bucketId)
+    val enabled = status?.enabled == true
+    val subtitle = when {
+        !backup.active && enabled -> "Backup is off. Open Backup to turn it on"
+        !enabled -> "Copy new photos and videos to Immich"
+        status!!.pending > 0 -> "${Format.count(status.backedUp)} backed up · ${Format.count(status.pending)} to go"
+        else -> "All ${Format.count(status.backedUp)} backed up"
+    }
+    ToggleRow("Back up", subtitle, enabled, { backup.onToggle(f.bucketId, it) })
+    if (!backup.active) MenuRow(Icons.Rounded.CloudUpload, "Backup settings", "Turn on backup, Wi-Fi and charging options", backup.onOpenBackup)
 }
 
 @Composable
@@ -529,5 +589,18 @@ private fun FolderHeader(folder: DeviceFolder, prefs: FolderPrefs) {
         if (inPhotos) Tag("In Photos", fill = Palette.yellow) else Tag("Not in Photos", fill = Palette.card)
         if (prefs.isHidden(folder)) Tag("Hidden", fill = Palette.sand)
         if (folder.removable) Tag("SD card", fill = Palette.lilac)
+        val backup = LocalFolderBackup.current
+        if (backup != null) {
+            val on = backup.status(folder.bucketId)?.enabled == true
+            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier.clip(BrutalShape).clickable(onClickLabel = "Back up this folder") { backup.onToggle(folder.bucketId, !on) }.padding(start = 6.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("BACK UP", style = Type.Label, color = Palette.ink)
+                Spacer(Modifier.width(6.dp))
+                BrutalSwitch(on)
+            }
+        }
     }
 }
