@@ -46,6 +46,15 @@ import com.roylet.photos.net.ApiKeyInterceptor
 import com.roylet.photos.net.ConnectionManager
 import com.roylet.photos.net.LanScanner
 import com.roylet.photos.upload.NetworkMonitor
+import com.roylet.photos.backup.AndroidBackupConditions
+import com.roylet.photos.backup.AndroidBackupFiles
+import com.roylet.photos.backup.BackupEngine
+import com.roylet.photos.backup.BackupManager
+import com.roylet.photos.backup.BackupPrefs
+import com.roylet.photos.backup.ImmichBackupRemote
+import com.roylet.photos.backup.WorkBackupScheduler
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -191,6 +200,7 @@ class AppContainer(context: Context) {
                 runCatching { matcher.clear() }
                 mergedTimeline.reset()
                 runCatching { device.scheduleHashing() }
+                runCatching { backup.onServerChanged(it != null) }
                 // Signed out: the account's thumbnails and previews don't stay on the phone.
                 if (it == null) runCatching { imageLoader.memoryCache?.clear(); imageLoader.diskCache?.clear() }
             }
@@ -241,6 +251,46 @@ class AppContainer(context: Context) {
         }
         if (deviceFolders.albums.value != null) deviceFolders.refresh()
         if (!hasServer && albums.albums.value != null) albums.refresh()
+        runCatching { backup.onIndexChanged() }
+    }
+
+    /* ---------------- Backup (docs/SOURCES.md §10) ---------------- */
+
+    val backupPrefs = BackupPrefs(app)
+
+    /**
+     * Phone → Immich backup: per-folder choices, options, state and runs. Folder cards use
+     * `setFolderEnabled` / `isFolderEnabled` / `folderStatus`.
+     */
+    val backup: BackupManager by lazy {
+        BackupManager(
+            store = device.appDb.backup(),
+            queue = device.db.backup(),
+            media = device.dao,
+            prefs = backupPrefs,
+            scheduler = WorkBackupScheduler(app),
+            conditions = AndroidBackupConditions(app, network),
+            server = settings.server.map { it != null }.stateIn(appScope, SharingStarted.Eagerly, hasServer),
+            scope = appScope,
+        )
+    }
+
+    /** One backup run's loop: hashes, bulk-upload-check, streaming uploads on the shared client, results into the match cache. */
+    val backupEngine: BackupEngine by lazy {
+        BackupEngine(
+            media = device.dao,
+            queue = device.db.backup(),
+            matches = device.db.matches(),
+            store = device.appDb.backup(),
+            remote = { api()?.let(::ImmichBackupRemote) },
+            open = { Sha1Worker.openOriginal(app, it) },
+            fileInfo = { AndroidBackupFiles.info(app, it) },
+            onRecorded = {
+                runCatching { matcher.noteUploaded() }
+                // The merged timeline shows the new copies as on both sides.
+                uiScope.launch { onDeviceChanged() }
+            },
+        )
     }
 
     /** Today's memories for the carousel above the timeline. */

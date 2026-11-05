@@ -19,6 +19,8 @@ class PhotosApp : Application(), SingletonImageLoader.Factory {
             container.connection.start()
             // Index the phone's photos on every return to the foreground, and watch MediaStore while there.
             container.device.start()
+            // Keeps backup's hourly job and new-media trigger in step with its switches.
+            runCatching { container.backup.start() }
         }
     }
 

@@ -242,6 +242,12 @@ class ImmichMatcher(
         version++
     }
 
+    /**
+     * Backup wrote confirmed answers straight into the cache (its uploads): the month details are
+     * stale (they lack the new assets) and the merged timeline should re-merge.
+     */
+    fun noteUploaded() { monthCache.clear(); version++ }
+
     /** Drops the per-session month details (pull to refresh, Immich changed). */
     fun refresh() { monthCache.clear() }
 

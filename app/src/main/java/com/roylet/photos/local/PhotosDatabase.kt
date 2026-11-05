@@ -12,6 +12,11 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
 import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.roylet.photos.backup.BackupDao
+import com.roylet.photos.backup.BackupExclusionEntity
+import com.roylet.photos.backup.BackupFailureEntity
+import com.roylet.photos.backup.BackupFolderEntity
 
 /*
  * The app's own data about phone photos that can't be recomputed from MediaStore or Immich:
@@ -131,12 +136,17 @@ interface AppDao {
 }
 
 @Database(
-    entities = [LegacyTrashEntity::class, LegacyFavoriteEntity::class, LocalEditEntity::class],
-    version = 1,
+    entities = [
+        LegacyTrashEntity::class, LegacyFavoriteEntity::class, LocalEditEntity::class,
+        BackupFolderEntity::class, BackupFailureEntity::class, BackupExclusionEntity::class,
+    ],
+    version = 2,
     exportSchema = true,
 )
 abstract class PhotosDatabase : RoomDatabase() {
     abstract fun app(): AppDao
+    /** Backup's folder choices, failures and exclusions (v2, docs/SOURCES.md §10). */
+    abstract fun backup(): BackupDao
 
     /** Stores a v1 index's Android 10 rows, keeping their row ids (so `local:-<rowId>` stays the same). */
     fun importLegacy(rows: LegacyRows) = runInTransaction {
@@ -148,7 +158,7 @@ abstract class PhotosDatabase : RoomDatabase() {
         const val NAME = "photos-app.db"
 
         /** Every schema change adds one here (and a test in PhotosDatabaseTest). No destructive fallback. */
-        val MIGRATIONS: Array<Migration> = emptyArray()
+        val MIGRATIONS: Array<Migration> = arrayOf(AppMigration1To2)
 
         fun open(context: Context): PhotosDatabase =
             Room.databaseBuilder(context.applicationContext, PhotosDatabase::class.java, NAME)
@@ -157,5 +167,22 @@ abstract class PhotosDatabase : RoomDatabase() {
 
         fun inMemory(context: Context): PhotosDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, PhotosDatabase::class.java).allowMainThreadQueries().build()
+    }
+}
+
+/** v1 → v2: backup's tables (selected folders, failures, exclusions). Nothing existing changes. */
+object AppMigration1To2 : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `backup_folder` (`bucketId` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, `changedAt` INTEGER NOT NULL, PRIMARY KEY(`bucketId`))")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `backup_failure` (`localId` INTEGER NOT NULL, `generation` INTEGER NOT NULL, `displayName` TEXT, " +
+                "`bucketId` INTEGER, `reason` TEXT NOT NULL, `status` INTEGER, `failedAt` INTEGER NOT NULL, PRIMARY KEY(`localId`))",
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `backup_exclusion` (`localId` INTEGER NOT NULL, `sha1` TEXT, `remoteId` TEXT, `displayName` TEXT, " +
+                "`bucketId` INTEGER, `reason` TEXT NOT NULL, `excludedAt` INTEGER NOT NULL, PRIMARY KEY(`localId`))",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_backup_exclusion_remoteId` ON `backup_exclusion` (`remoteId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_backup_exclusion_sha1` ON `backup_exclusion` (`sha1`)")
     }
 }

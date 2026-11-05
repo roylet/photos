@@ -67,6 +67,11 @@
             android:name=".video.save.VideoSaveCancelReceiver"
             android:exported="false" />
 
+        <!-- The backup notification's Pause and Cancel actions. -->
+        <receiver
+            android:name=".backup.BackupActionReceiver"
+            android:exported="false" />
+
         <!-- WorkManager's foreground service must declare the type we promote save/upload work to. -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

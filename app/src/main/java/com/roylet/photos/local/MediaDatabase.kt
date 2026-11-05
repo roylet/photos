@@ -221,6 +221,8 @@ internal const val SQL_VARS = 500
 abstract class MediaDatabase : RoomDatabase() {
     abstract fun media(): MediaDao
     abstract fun matches(): MatchDao
+    /** Backup's queue and counts (docs/SOURCES.md §10). */
+    abstract fun backup(): com.roylet.photos.backup.BackupMediaDao
 
     companion object {
         const val NAME = "media-index.db"

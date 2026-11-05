@@ -37,15 +37,25 @@ import kotlin.coroutines.resumeWithException
  */
 class ImmichException(message: String, val status: Int? = null, val retryable: Boolean = false) : IOException(message)
 
-/** Everything Immich needs to create one asset. [open] must yield exactly [size] bytes. */
+/** The file changed size while it was being streamed (the caller may try again later). */
+class SourceChangedException(message: String) : IOException(message)
+
+/**
+ * Everything Immich needs to create one asset. [open] must yield exactly [size] bytes.
+ *
+ * [deviceAssetId] (with `deviceId`) is only sent when set: Immich's current `POST /assets` schema
+ * (AssetMediaCreateDto) no longer lists them, and backup leaves them out. Edit saves still send
+ * one, since older servers echo it back to tell their own retried upload from a real duplicate.
+ */
 class UploadSpec(
     val filename: String,
     val mime: String,
     val size: Long,
     val checksum: String,
-    val deviceAssetId: String,
+    val deviceAssetId: String?,
     val createdAt: String,
     val modifiedAt: String,
+    val isFavorite: Boolean = false,
     val open: () -> InputStream,
 )
 
@@ -101,14 +111,13 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
      * chunked uploads.
      */
     suspend fun upload(spec: UploadSpec, onProgress: (Long) -> Unit = {}): UploadResult {
-        val body = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("deviceAssetId", spec.deviceAssetId)
-            .addFormDataPart("deviceId", DEVICE_ID)
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+        if (spec.deviceAssetId != null) form.addFormDataPart("deviceAssetId", spec.deviceAssetId).addFormDataPart("deviceId", DEVICE_ID)
+        val body = form
             .addFormDataPart("fileCreatedAt", spec.createdAt)
             .addFormDataPart("fileModifiedAt", spec.modifiedAt)
             .addFormDataPart("filename", spec.filename)
-            .addFormDataPart("isFavorite", "false")
+            .addFormDataPart("isFavorite", spec.isFavorite.toString())
             .addFormDataPart("assetData", spec.filename, StreamBody(spec, onProgress))
             .build()
         val req = authed(
@@ -136,12 +145,12 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
                 while (true) {
                     val n = input.read(buffer)
                     if (n < 0) break
-                    if (total + n > spec.size) throw IOException("${spec.filename} grew while it was being uploaded")
+                    if (total + n > spec.size) throw SourceChangedException("${spec.filename} grew while it was being uploaded")
                     sink.write(buffer, 0, n)
                     total += n
                     onProgress(total)
                 }
-                if (total != spec.size) throw IOException("${spec.filename} ended early (read $total of ${spec.size} bytes)")
+                if (total != spec.size) throw SourceChangedException("${spec.filename} ended early (read $total of ${spec.size} bytes)")
             }
         }
     }

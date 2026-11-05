@@ -136,4 +136,20 @@ class DatabaseMigrationTest {
         val db = PhotosDatabase.open(context).also(opened::add)
         assertEquals(0, runBlocking { db.app().legacyTrash() }.size)
     }
+
+    @Test fun `app database v1 to v2 adds backup's tables and keeps everything else`() {
+        val v1 = createFromSchema("com.roylet.photos.local.PhotosDatabase", 1, PhotosDatabase.NAME)
+        v1.execSQL("INSERT INTO local_edit (mediaStoreId, sourceId, kind, json, savedAt) VALUES (42, 'local:7', 'photo', '{}', 1)")
+        v1.execSQL("INSERT INTO legacy_favorite (id) VALUES (9)")
+        v1.close()
+        val db = PhotosDatabase.open(context).also(opened::add)
+        assertEquals("local:7", runBlocking { db.app().edit(42) }?.sourceId)
+        assertEquals(listOf(9L), runBlocking { db.app().legacyFavorites() }.toList())
+        runBlocking {
+            db.backup().putFolder(com.roylet.photos.backup.BackupFolderEntity(5, true, 1))
+            db.backup().putExclusions(listOf(com.roylet.photos.backup.BackupExclusionEntity(1, "abc", "r1", "IMG_1.jpg", 5, "Deleted from Immich", 1)))
+        }
+        assertEquals(1, runBlocking { db.backup().folders() }.size)
+        assertEquals(1, runBlocking { db.backup().removeExclusionsByRemote(listOf("r1")) })
+    }
 }
