@@ -43,6 +43,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- The video save notification's Cancel action. -->
+        <receiver
+            android:name=".video.save.VideoSaveCancelReceiver"
+            android:exported="false" />
+
         <!-- WorkManager's foreground service must declare the type we promote save/upload work to. -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

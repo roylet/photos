@@ -7,6 +7,7 @@ import com.roylet.photos.immich.AssetCopyRequest
 import com.roylet.photos.immich.EditAssetInfo
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
+import com.roylet.photos.immich.UploadResult
 import com.roylet.photos.immich.UploadSpec
 import com.roylet.photos.immich.assetInfo
 import com.roylet.photos.immich.copyAsset
@@ -15,6 +16,8 @@ import com.roylet.photos.immich.deleteAssets
 import com.roylet.photos.immich.putMetadata
 import com.roylet.photos.immich.restoreAssets
 import com.roylet.photos.video.model.VideoEdit
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -85,6 +88,7 @@ object VideoEditMetadata {
  *
  * The original is never trashed unless the upload and the copy both succeeded. Upload failures
  * propagate (the worker retries network ones); later failures become [SaveResult.warning].
+ * Cancelling during the upload stops it; after the upload the remaining steps always finish.
  */
 class VideoSaveFlow(private val api: ImmichApi) {
 
@@ -116,6 +120,23 @@ class VideoSaveFlow(private val api: ImmichApi) {
             open = { file.inputStream() },
         )
         val uploaded = api.upload(spec) { sent -> onProgress(VideoSaveStage.UPLOADING, if (size > 0) sent.toFloat() / size else 1f) }
+        // Once Immich has the file the save runs to the end, even if it is cancelled now: stopping
+        // here would leave an orphan upload, or (between the copy and the trash) a half-done replace.
+        // (Also keeps `runCatching` below from swallowing a cancellation as a step failure.)
+        return withContext(NonCancellable) { linkUploaded(uploaded, target, renderSourceId, edit, mode, group, uploadAttemptedBefore, onProgress) }
+    }
+
+    private suspend fun linkUploaded(
+        uploaded: UploadResult,
+        target: EditAssetInfo,
+        renderSourceId: String,
+        edit: VideoEdit,
+        mode: SaveMode,
+        group: Boolean,
+        uploadAttemptedBefore: Boolean,
+        onProgress: (VideoSaveStage, Float) -> Unit,
+    ): SaveResult {
+        val targetId = target.id
         val newId = uploaded.id
         val duplicate = uploaded.status == "duplicate"
         if (newId == targetId) throw ImmichException("This edit is identical to the video you opened, so there's nothing new to save.")

@@ -8,6 +8,7 @@ import com.roylet.photos.video.io.FrameSource
 import com.roylet.photos.video.io.FrameStripProvider
 import com.roylet.photos.video.io.VideoOriginals
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -94,6 +95,46 @@ class VideoIoTest {
         assertEquals(2, dir.listFiles()!!.size)
         assertNull(originals.cached(info("a")))
         assertNotNull(originals.cached(info("c")))
+    }
+
+    @Test fun pruningSparesHeldOriginalsAndOnesQueuedSavesNeed() = runBlocking {
+        val dir = tmp.newFolder("cache")
+        var pending = setOf<String>()
+        val originals = VideoOriginals(dir, keep = 1, freeBytes = { Long.MAX_VALUE }, pendingSourceIds = { pending })
+        val api = ImmichApi(server.url("/").toString(), "k")
+        suspend fun open(id: String, at: Long): java.io.File {
+            server.enqueue(MockResponse().setBody("x$id"))
+            return originals.obtain(api, info(id)).also { it.parentFile!!.setLastModified(at) }
+        }
+        val a = open("a", 1_000_000L)
+        val held = originals.hold(a) // the editor has "a" open
+        pending = setOf("b")
+        open("b", 2_000_000L) // a queued save will export "b"
+        open("c", 3_000_000L) // keep = 1, yet neither "a" nor "b" may go
+        assertNotNull(originals.cached(info("a")))
+        assertNotNull(originals.cached(info("b")))
+        assertNotNull(originals.cached(info("c")))
+        held.close()
+        held.close() // idempotent
+        pending = emptySet()
+        open("d", 4_000_000L)
+        assertNull(originals.cached(info("a")))
+        assertNull(originals.cached(info("b")))
+        assertNull(originals.cached(info("c")))
+        assertNotNull(originals.cached(info("d")))
+    }
+
+    @Test fun concurrentRequestsForOneOriginalShareTheDownload() = runBlocking {
+        val body = ByteArray(200_000) { (it % 7).toByte() }
+        server.enqueue(MockResponse().setBody(Buffer().write(body)).throttleBody(50_000, 20, java.util.concurrent.TimeUnit.MILLISECONDS))
+        val originals = VideoOriginals(tmp.newFolder("cache"), freeBytes = { Long.MAX_VALUE })
+        val api = ImmichApi(server.url("/").toString(), "k")
+        val files = kotlinx.coroutines.coroutineScope {
+            List(2) { async(Dispatchers.IO) { originals.obtain(api, info()) } }.map { it.await() }
+        }
+        assertEquals(files[0], files[1])
+        assertArrayEquals(body, files[0].readBytes())
+        assertEquals(1, server.requestCount)
     }
 
     private class FakeSource(val log: MutableList<Long>, val failAt: Long? = null) : FrameSource {

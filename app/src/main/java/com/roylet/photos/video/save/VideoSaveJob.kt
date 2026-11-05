@@ -2,12 +2,14 @@ package com.roylet.photos.video.save
 
 import com.roylet.photos.editor.save.SaveMode
 import com.roylet.photos.editor.save.SaveResult
+import com.roylet.photos.immich.EditAssetInfo
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
 import com.roylet.photos.immich.assetInfo
 import com.roylet.photos.util.Format
 import com.roylet.photos.video.export.CompositionPlanner
 import com.roylet.photos.video.export.EncoderCaps
+import com.roylet.photos.video.export.ExportPlan
 import com.roylet.photos.video.export.SourceInfo
 import com.roylet.photos.video.export.VideoExportEngine
 import com.roylet.photos.video.export.VideoExportException
@@ -64,17 +66,8 @@ class VideoSaveJob(
             val original = originals.obtain(api, source) { done, total ->
                 onProgress(VideoSaveStage.DOWNLOADING, if (total > 0) done.toFloat() / total else 0f)
             }
-            onProgress(VideoSaveStage.EXPORTING, 0f)
-            val info = probe(original)
-            val plan = CompositionPlanner.plan(edit, info, caps(info), parseInstantMs(target.fileCreatedAt))
-            val estimate = plan.bitrate.toLong() * plan.outputDurationMs / 8_000 * 11 / 10 + SPACE_MARGIN
-            val free = originals.freeSpace()
-            if (free < estimate) {
-                throw VideoExportException("Not enough free space to export: about ${Format.bytes(estimate)} is needed and ${Format.bytes(free)} is free.")
-            }
-            val summary = engine.export(original, plan, out) { onProgress(VideoSaveStage.EXPORTING, it) }
-            if (!out.isFile || out.length() == 0L) throw VideoExportException("The export produced no file.")
-            exported.writeText(summary.warning.orEmpty())
+            // The editor opening another video mustn't prune this original mid-export.
+            originals.hold(original).use { export(edit, target, original, out, exported, onProgress) }
         }
         val exportWarning = exported.readText().ifBlank { null }
 
@@ -85,10 +78,40 @@ class VideoSaveJob(
         return if (result.warning == null && exportWarning != null) result.copy(warning = exportWarning) else result
     }
 
+    private suspend fun export(
+        edit: VideoEdit,
+        target: EditAssetInfo,
+        original: File,
+        out: File,
+        exported: File,
+        onProgress: (VideoSaveStage, Float) -> Unit,
+    ) {
+        onProgress(VideoSaveStage.EXPORTING, 0f)
+        val info = probe(original)
+        val plan = CompositionPlanner.plan(edit, info, caps(info), parseInstantMs(target.fileCreatedAt))
+        val estimate = exportSpaceEstimate(plan, info)
+        val free = originals.freeSpace()
+        if (free < estimate) {
+            throw VideoExportException("Not enough free space to export: about ${Format.bytes(estimate)} is needed and ${Format.bytes(free)} is free.")
+        }
+        val summary = engine.export(original, plan, out) { onProgress(VideoSaveStage.EXPORTING, it) }
+        if (!out.isFile || out.length() == 0L) throw VideoExportException("The export produced no file.")
+        exported.writeText(summary.warning.orEmpty())
+    }
+
     companion object {
         const val EXPORT_DONE = "export.done"
         const val UPLOAD_STARTED = "upload.started"
         const val SPACE_MARGIN = 64L * 1024 * 1024
+
+        /**
+         * Bytes the exported MP4 may take, plus a margin. A trim-only plan copies most of the
+         * stream as it is, so it is as large as the source's bitrate says, not the plan's.
+         */
+        fun exportSpaceEstimate(plan: ExportPlan, source: SourceInfo): Long {
+            val bps = if (plan.trimOptimization) maxOf(plan.bitrate, source.bitrate ?: 0) else plan.bitrate
+            return bps.toLong() * plan.outputDurationMs / 8_000 * 11 / 10 + SPACE_MARGIN
+        }
 
         fun parseInstantMs(s: String?): Long? = s?.let { runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() }
 

@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -85,8 +86,8 @@ class VideoSaveManager(
     val jobs: StateFlow<Map<String, VideoSaveProgress>> = _jobs.asStateFlow()
     val lastReplace: StateFlow<SaveResult?> = _lastReplace.asStateFlow()
 
-    /** Downloaded originals, shared by the editor screen and the save worker. */
-    val originals = VideoOriginals(File(app.cacheDir, "video-edit"))
+    /** Downloaded originals, shared by the editor screen and the save worker. Pruning spares those queued saves still need. */
+    val originals = VideoOriginals(File(app.cacheDir, "video-edit"), pendingSourceIds = ::pendingSourceIds)
 
     fun progress(jobId: String): Flow<VideoSaveProgress?> = jobs.map { it[jobId] }
 
@@ -133,6 +134,13 @@ class VideoSaveManager(
     /** Forget a finished job's state (after the UI has shown it). */
     fun clear(jobId: String) = _jobs.update { it - jobId }
 
+    /** Source asset ids of saved-but-unfinished jobs that haven't exported yet (they still read the original). */
+    internal fun pendingSourceIds(): Set<String> =
+        File(app.filesDir, "video-save").listFiles { f -> f.name.endsWith(".json") }.orEmpty().mapNotNullTo(HashSet()) { f ->
+            val jobId = f.name.removeSuffix(".json")
+            if (File(workDir(jobId), VideoSaveJob.EXPORT_DONE).isFile) null else readSpec(jobId)?.sourceId
+        }
+
     internal fun readSpec(jobId: String): VideoSaveJobSpec? = runCatching {
         ImmichApi.json.decodeFromString(VideoSaveJobSpec.serializer(), specFile(jobId).readText())
     }.getOrNull()
@@ -177,7 +185,7 @@ class VideoSaveWorker(context: Context, params: WorkerParameters) : CoroutineWor
     private val manager get() = (applicationContext as PhotosApp).container.videoEdits
 
     override suspend fun getForegroundInfo(): ForegroundInfo =
-        VideoSaveNotifications.foregroundInfo(jobId, VideoSaveNotifications.progress(applicationContext, id, VideoSaveStage.QUEUED, 0f))
+        VideoSaveNotifications.foregroundInfo(jobId, VideoSaveNotifications.progress(applicationContext, jobId, VideoSaveStage.QUEUED, 0f))
 
     override suspend fun doWork(): Result {
         if (jobId.isEmpty()) return Result.failure()
@@ -186,11 +194,12 @@ class VideoSaveWorker(context: Context, params: WorkerParameters) : CoroutineWor
         var lastPost = 0L
         return try {
             val result = manager.run(jobId) { stage, f ->
-                manager.report(jobId, VideoSaveProgress.Running(stage, f))
+                // After a cancel the panel keeps saying so (unless the save completes anyway, see VideoSaveFlow).
+                if (!manager.isCancelled(jobId)) manager.report(jobId, VideoSaveProgress.Running(stage, f))
                 val now = System.currentTimeMillis()
                 if (now - lastPost > 700) {
                     lastPost = now
-                    VideoSaveNotifications.update(applicationContext, id, jobId, stage, f)
+                    VideoSaveNotifications.update(applicationContext, jobId, stage, f)
                 }
             }
             manager.finish(jobId)
@@ -204,10 +213,16 @@ class VideoSaveWorker(context: Context, params: WorkerParameters) : CoroutineWor
             }
             throw e
         } catch (e: Exception) {
+            if (manager.isCancelled(jobId)) {
+                // A cancelled download/upload can surface as an I/O error rather than a CancellationException.
+                manager.finish(jobId)
+                VideoSaveNotifications.cancel(applicationContext, jobId)
+                return Result.failure()
+            }
             val message = ImmichApi.describe(e)
             if (VideoSaveJob.isTransient(e) && runAttemptCount + 1 < MAX_ATTEMPTS && !manager.isCancelled(jobId)) {
                 manager.report(jobId, VideoSaveProgress.Running(VideoSaveStage.WAITING_FOR_NETWORK, 0f, message))
-                VideoSaveNotifications.update(applicationContext, id, jobId, VideoSaveStage.WAITING_FOR_NETWORK, 0f)
+                VideoSaveNotifications.update(applicationContext, jobId, VideoSaveStage.WAITING_FOR_NETWORK, 0f)
                 return Result.retry()
             }
             manager.finish(jobId)
@@ -239,7 +254,7 @@ object VideoSaveNotifications {
     fun foregroundInfo(jobId: String, n: Notification): ForegroundInfo =
         ForegroundInfo(id(jobId), n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
 
-    fun progress(context: Context, workId: UUID, stage: VideoSaveStage, fraction: Float): Notification {
+    fun progress(context: Context, jobId: String, stage: VideoSaveStage, fraction: Float): Notification {
         channel(context)
         val pct = (VideoSaveStage.overall(stage, fraction) * 100).toInt()
         val waiting = stage == VideoSaveStage.QUEUED || stage == VideoSaveStage.WAITING_FOR_NETWORK
@@ -254,12 +269,14 @@ object VideoSaveNotifications {
             .setProgress(100, pct, waiting)
             .setSubText("$pct%")
             .setContentIntent(open(context))
-            .addAction(0, "Cancel", WorkManager.getInstance(context).createCancelPendingIntent(workId))
+            // Through the manager (not WorkManager's own cancel intent), so the job's files are
+            // deleted and the editor's progress panel learns it was cancelled.
+            .addAction(0, "Cancel", VideoSaveCancelReceiver.intent(context, jobId))
             .build()
     }
 
-    fun update(context: Context, workId: UUID, jobId: String, stage: VideoSaveStage, fraction: Float) {
-        runCatching { context.getSystemService(NotificationManager::class.java).notify(id(jobId), progress(context, workId, stage, fraction)) }
+    fun update(context: Context, jobId: String, stage: VideoSaveStage, fraction: Float) {
+        runCatching { context.getSystemService(NotificationManager::class.java).notify(id(jobId), progress(context, jobId, stage, fraction)) }
     }
 
     fun cancel(context: Context, jobId: String) {
@@ -294,4 +311,22 @@ object VideoSaveNotifications {
     )
 
     private fun id(jobId: String) = 40_000 + (jobId.hashCode() and 0x7FFF) * 2
+}
+
+/** The progress notification's Cancel action: cancels the save through [VideoSaveManager.cancel]. */
+class VideoSaveCancelReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val jobId = intent.getStringExtra(VideoSaveWorker.KEY_JOB_ID) ?: return
+        (context.applicationContext as PhotosApp).container.videoEdits.cancel(jobId)
+        VideoSaveNotifications.cancel(context, jobId)
+    }
+
+    companion object {
+        fun intent(context: Context, jobId: String): PendingIntent = PendingIntent.getBroadcast(
+            context,
+            jobId.hashCode(),
+            Intent(context, VideoSaveCancelReceiver::class.java).putExtra(VideoSaveWorker.KEY_JOB_ID, jobId),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
 }

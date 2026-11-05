@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import java.io.Closeable
 import kotlin.math.abs
 
 /** What the video editor screen is showing. */
@@ -50,6 +51,7 @@ sealed interface VideoEditorPhase {
  * Opens [assetId] for video editing: details and `photos.videoEdit` metadata, then the original
  * (shared with the save worker through [manager]'s originals cache); the trim strip starts
  * filling over HTTP while that downloads. Saves go to [manager] and survive leaving the screen.
+ * Leaving the screen clears the view model, which cancels a download in progress.
  */
 class VideoEditorViewModel(
     private val assetId: String,
@@ -71,6 +73,8 @@ class VideoEditorViewModel(
 
     private var target: EditAssetInfo? = null
     private var loadJob: Job? = null
+    /** Keeps the open original in the cache while this editor uses it (see [com.roylet.photos.video.io.VideoOriginals.hold]). */
+    private var held: Closeable? = null
 
     init { start() }
 
@@ -134,6 +138,8 @@ class VideoEditorViewModel(
         } finally {
             remoteJob?.cancel()
         }
+        held?.close()
+        held = manager.originals.hold(file)
 
         _phase.value = VideoEditorPhase.Loading("Preparing", "Reading $name", null, remoteStrip)
         val info = withContext(Dispatchers.IO) {
@@ -175,6 +181,12 @@ class VideoEditorViewModel(
     fun cancelSave() {
         val id = _saveJob.value ?: return
         manager.cancel(id)
+    }
+
+    override fun onCleared() {
+        held?.close()
+        held = null
+        frames.clear()
     }
 
     /** Dismisses a failed or cancelled save so the user can try again. */
