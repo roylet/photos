@@ -93,8 +93,11 @@ class AndroidLegacyFiles(private val context: Context, private val consent: Cons
     override suspend fun copyToTrash(item: MediaEntity): String = withContext(Dispatchers.IO) {
         val ext = item.displayName?.substringAfterLast('.', "")?.takeIf { it.isNotEmpty() && it.length <= 5 } ?: if (item.isVideo) "mp4" else "jpg"
         val file = File(dir, "${System.currentTimeMillis()}-${item.id}.$ext")
-        val input = resolver.openInputStream(mediaUri(item.id, item.isVideo)) ?: throw IOException("Couldn't read ${item.displayName}")
-        input.use { i -> file.outputStream().use { o -> i.copyTo(o) } }
+        val uri = mediaUri(item.id, item.isVideo)
+        // The original is deleted right after this: the copy must be whole first.
+        val expected = runCatching { resolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull()?.takeIf { it > 0 } ?: item.sizeBytes
+        val input = resolver.openInputStream(uri) ?: throw IOException("Couldn't read ${item.displayName}")
+        input.use { i -> copyVerified(i, file, expected) }
         file.absolutePath
     }
 

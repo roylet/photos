@@ -94,6 +94,10 @@ interface AppDao {
     @Query("SELECT * FROM legacy_trash WHERE rowId IN (:rowIds)")
     suspend fun legacyTrashByIds(rowIds: List<Long>): List<LegacyTrashEntity>
 
+    /** Trashed copies of these (former) MediaStore ids: an undo names the original, not `local:-<rowId>`. */
+    @Query("SELECT * FROM legacy_trash WHERE originalId IN (:originalIds)")
+    suspend fun legacyTrashByOriginalIds(originalIds: List<Long>): List<LegacyTrashEntity>
+
     @Query("SELECT month, COUNT(*) AS count FROM legacy_trash GROUP BY month ORDER BY month DESC")
     suspend fun legacyTrashMonths(): List<MonthCount>
 

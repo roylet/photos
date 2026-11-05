@@ -213,6 +213,31 @@ class LocalLibraryTest {
         assertEquals(emptyList<Any>(), runBlocking { src.buckets(TimelineFilter.Trash) })
     }
 
+    @Test fun `Android 10 undo restores by the original's id`() {
+        // "Moved to Trash · Undo" and an edit's Replace undo both name local:<original>, not local:-<rowId>.
+        val legacy = FakeLegacy()
+        val lib = library(mediaStoreWrites = false, legacy = legacy)
+        runBlocking { lib.trash(listOf("local:3")) }
+        runBlocking { lib.restore(listOf("local:3")) }
+        assertEquals(listOf(3L), legacy.restored)
+        assertTrue(runBlocking { appDao.legacyTrash() }.isEmpty())
+    }
+
+    @Test fun `Android 10 trash copies are checked before the original goes`() {
+        val dir = java.nio.file.Files.createTempDirectory("trash").toFile()
+        val ok = java.io.File(dir, "a.jpg")
+        assertEquals(4L, copyVerified("abcd".byteInputStream(), ok, 4))
+        assertEquals("abcd", ok.readText())
+        // Short (the read stopped early) or empty: the copy is removed and the caller must not delete the original.
+        val short = java.io.File(dir, "b.jpg")
+        assertTrue(runCatching { copyVerified("ab".byteInputStream(), short, 4) }.isFailure)
+        assertFalse(short.exists())
+        val empty = java.io.File(dir, "c.jpg")
+        assertTrue(runCatching { copyVerified(ByteArray(0).inputStream(), empty, null) }.isFailure)
+        assertFalse(empty.exists())
+        dir.deleteRecursively()
+    }
+
     @Test fun `Android 10 trash declined keeps the original and drops the copy`() {
         val legacy = FakeLegacy(allowDelete = false)
         try {

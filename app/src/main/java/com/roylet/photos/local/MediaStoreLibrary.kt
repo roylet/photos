@@ -154,7 +154,9 @@ class MediaStoreLibrary(
             list.map { it.id }.chunked(SQL_VARS).forEach { dao.setTrashed(it, false, null) }
             return
         }
-        restoreLegacy(legacyRows(ids))
+        // Undo (of a delete or an edit's Replace) names the original `local:<id>`; the Trash page names `local:-<rowId>`.
+        val originals = keys(ids).filter { it > 0 }.chunked(SQL_VARS).flatMap { appDao.legacyTrashByOriginalIds(it) }
+        restoreLegacy((legacyRows(ids) + originals).distinctBy { it.rowId })
     }
 
     private suspend fun restoreLegacy(rows: List<LegacyTrashEntity>): Int {
@@ -279,6 +281,28 @@ class MediaStoreLibrary(
 
         /** Escapes LIKE's wildcards (the DAO uses `ESCAPE '\'`). */
         fun likeEscape(s: String): String = s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    }
+}
+
+/**
+ * Copies [input] to [dest] and makes sure it all arrived before anyone deletes the source: synced
+ * to disk, non-empty and, when known, exactly [expectedBytes] long. Otherwise [dest] is removed
+ * and this throws. Returns the size.
+ */
+fun copyVerified(input: java.io.InputStream, dest: File, expectedBytes: Long?): Long {
+    try {
+        java.io.FileOutputStream(dest).use { o ->
+            input.copyTo(o, 64 * 1024)
+            o.flush()
+            o.fd.sync()
+        }
+        val size = dest.length()
+        if (size <= 0L) throw java.io.IOException("The copy of ${dest.name} is empty")
+        if (expectedBytes != null && expectedBytes > 0 && size != expectedBytes) throw java.io.IOException("The copy of ${dest.name} is incomplete ($size of $expectedBytes bytes)")
+        return size
+    } catch (e: Exception) {
+        dest.delete()
+        throw e
     }
 }
 
