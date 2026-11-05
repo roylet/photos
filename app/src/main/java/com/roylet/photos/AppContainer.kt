@@ -8,16 +8,18 @@ import okio.Path.Companion.toOkioPath
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
-import com.roylet.photos.domain.library.EmptyLocalLibrary
 import com.roylet.photos.domain.library.LocalLibrary
-import com.roylet.photos.domain.library.EmptyLocalTimelineSource
 import com.roylet.photos.domain.library.LocalTimelineSource
+import com.roylet.photos.domain.timeline.TimelineRepository
+import com.roylet.photos.local.DeviceMedia
+import com.roylet.photos.local.LocalMediaUrls
+import com.roylet.photos.local.LocalThumbnailFetcher
+import com.roylet.photos.local.SourceRoutingLibrary
 import com.roylet.photos.domain.source.ActiveSources
 import com.roylet.photos.domain.source.MediaSourceKind
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRegistry
 import com.roylet.photos.domain.timeline.TimelineSource
-import com.roylet.photos.ui.gallery.FakeMediaUrls
 import com.roylet.photos.ui.gallery.ImmichMediaUrls
 import com.roylet.photos.ui.gallery.MediaUrls
 import com.roylet.photos.ui.gallery.SourceMediaUrls
@@ -79,6 +81,8 @@ class AppContainer(context: Context) {
         .components {
             add(OkHttpNetworkFetcherFactory(callFactory = { http }))
             add(VideoFrameDecoder.Factory())
+            // Phone thumbnails (localmedia://): ContentResolver.loadThumbnail, cancelled when the cell leaves.
+            add(LocalThumbnailFetcher.Factory(app.contentResolver))
         }
         .build()
 
@@ -90,20 +94,44 @@ class AppContainer(context: Context) {
     /** The Immich timeline (bucket API). */
     val immichTimeline: TimelineSource = ImmichTimelineSource { api() }
 
-    /** The phone's timeline. Agent B replaces the placeholder with the MediaStore source. */
-    var localTimeline: LocalTimelineSource = EmptyLocalTimelineSource
+    /**
+     * The phone's photos: the MediaStore index (Room), its sync, the timeline source and the
+     * library. Lazy, so nothing touches the database until something asks.
+     */
+    val device: DeviceMedia by lazy {
+        DeviceMedia(
+            app, appScope, consent, snackbar,
+            offeredManageMedia = { settings.offeredManageMedia },
+            markOfferedManageMedia = { settings.offeredManageMedia = true },
+            onChanged = ::onDeviceChanged,
+        )
+    }
+
+    private var localTimelineOverride: LocalTimelineSource? = null
+
+    /** The phone's timeline (MediaStore index); tests can pin another. */
+    var localTimeline: LocalTimelineSource
+        get() = localTimelineOverride ?: device.timeline
+        set(value) { localTimelineOverride = value }
 
     /** The Immich library (albums, search, people, sharing, trash). */
     val immichLibrary: LibrarySource = ImmichLibrary({ api() }, userId = { settings.server.value?.userId })
 
-    /** The phone's library (folders, favourite, trash). Agent B replaces the placeholder. */
-    var localLibrary: LocalLibrary = EmptyLocalLibrary()
+    private var localLibraryOverride: LocalLibrary? = null
+
+    /** The phone's library (folders, favourite, trash, search, details); tests can pin another. */
+    var localLibrary: LocalLibrary
+        get() = localLibraryOverride ?: device.library
+        set(value) { localLibraryOverride = value }
 
     /**
-     * URLs for phone assets (the bare MediaStore id in, a content:// URI out). Agent B replaces
-     * the placeholder; [mediaUrls] routes `local:` ids here.
+     * URLs for phone assets (the bare MediaStore id in, `localmedia://` thumbnails and
+     * `content://` originals out); [mediaUrls] routes `local:` ids here.
      */
-    var localMediaUrls: MediaUrls = FakeMediaUrls
+    var localMediaUrls: MediaUrls = LocalMediaUrls
+
+    /** With a server: Immich, except calls about phone assets and folders (Library → On this device). */
+    private val serverLibrary: LibrarySource by lazy { SourceRoutingLibrary(immichLibrary, localLibrary) }
 
     /** Screenshots and tests pin a fake library here; null follows the active configuration. */
     private var libraryOverride: LibrarySource? = null
@@ -114,14 +142,15 @@ class AppContainer(context: Context) {
      * in agent C). Setting it pins a library (screenshots use fake data).
      */
     var library: LibrarySource
-        get() = libraryOverride ?: if (hasServer) immichLibrary else localLibrary
+        get() = libraryOverride ?: if (hasServer) serverLibrary else localLibrary
         set(value) { libraryOverride = value }
 
     /** The timeline source for the active configuration; [TimelineRegistry.source] can still pin one in tests. */
     private val activeTimeline = object : TimelineSource {
-        private fun current() = if (hasServer) immichTimeline else localTimeline
-        override suspend fun buckets(filter: TimelineFilter) = current().buckets(filter)
-        override suspend fun bucket(filter: TimelineFilter, key: String) = current().bucket(filter, key)
+        // Phone folders and timelines pinned to the phone (Library → On this device) read the index even with a server.
+        private fun current(filter: TimelineFilter) = if (hasServer && !filter.isLocal) immichTimeline else localTimeline
+        override suspend fun buckets(filter: TimelineFilter) = current(filter).buckets(filter)
+        override suspend fun bucket(filter: TimelineFilter, key: String) = current(filter).bucket(filter, key)
     }
 
     /** Which sources are showing and what they can do together (drives every capability check in the UI). */
@@ -145,6 +174,21 @@ class AppContainer(context: Context) {
     /** The album list shared by the Albums tab, album pages and the add-to-album sheet. */
     val albums = AlbumStore({ library })
 
+    /** The phone's folders, for Library → On this device while a server is connected (the Albums tab has server albums then). */
+    val deviceFolders = AlbumStore({ localLibrary })
+
+    /**
+     * The index changed (new photos, edits, deletions, access changed): refresh the phone
+     * timelines that have been shown, keeping what's on screen while they reload.
+     */
+    private fun onDeviceChanged() {
+        timelines.forEachRepo { r ->
+            if ((r.filter.isLocal || !hasServer) && r.filter.listId == null && r.status.value != TimelineRepository.Status.Idle) r.refresh(keepLoaded = true)
+        }
+        if (deviceFolders.albums.value != null) deviceFolders.refresh()
+        if (!hasServer && albums.albums.value != null) albums.refresh()
+    }
+
     /** Today's memories for the carousel above the timeline. */
     val memories = MemoryStore({ library })
 
@@ -162,6 +206,20 @@ class AppContainer(context: Context) {
         LibraryActions(
             library = { library },
             albums = albums,
+            snackbar = snackbar,
+            scope = uiScope,
+            launcher = AndroidShareLauncher(app),
+            prefs = uiPrefs,
+            shareDir = File(app.cacheDir, "share"),
+            timelines = timelines,
+        )
+    }
+
+    /** Actions for pages that only show the phone (its Trash under On this device): restore all / empty go to the phone. */
+    val deviceActions: LibraryActions by lazy {
+        LibraryActions(
+            library = { localLibrary },
+            albums = deviceFolders,
             snackbar = snackbar,
             scope = uiScope,
             launcher = AndroidShareLauncher(app),

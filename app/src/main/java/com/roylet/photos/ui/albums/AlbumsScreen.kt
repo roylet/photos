@@ -76,6 +76,8 @@ fun AlbumsScreen(
     onNewAlbum: ((name: String) -> Unit)? = null,
     /** The phone's folders (read-only) rather than server albums. */
     folders: Boolean = false,
+    /** Shown as a pushed page (Library → On this device → Folders) rather than a tab. */
+    onBack: (() -> Unit)? = null,
 ) {
     val albums by store.albums.collectAsState()
     val error by store.error.collectAsState()
@@ -88,6 +90,7 @@ fun AlbumsScreen(
         Column(Modifier.fillMaxSize()) {
             ScreenHeader(
                 if (folders) "Folders" else "Albums",
+                onBack = onBack,
                 subtitle = albums?.let { list ->
                     if (folders) "${Format.plural(list.size, "folder")} on this phone"
                     else "${Format.plural(list.size, "album")} · ${"${list.count { it.shared }} shared"}"

@@ -15,7 +15,11 @@ class PhotosApp : Application(), SingletonImageLoader.Factory {
         container = AppContainer(this)
         // Robolectric tests drive the connection manager themselves; background probes there
         // would race tests for MockWebServer responses and make screenshots nondeterministic.
-        if (Build.FINGERPRINT != "robolectric") container.connection.start()
+        if (Build.FINGERPRINT != "robolectric") {
+            container.connection.start()
+            // Index the phone's photos on every return to the foreground, and watch MediaStore while there.
+            container.device.start()
+        }
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader = container.imageLoader

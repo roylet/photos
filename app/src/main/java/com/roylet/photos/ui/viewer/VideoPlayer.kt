@@ -54,6 +54,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -80,7 +81,8 @@ fun rememberPlayer(url: String?, autoPlay: Boolean = true, loop: Boolean = false
     val client = LocalMediaHttpClient.current ?: remember { OkHttpClient() }
     val player = remember(url) {
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(client)))
+            // DefaultDataSource reads content:// (phone videos) itself and hands http(s) to OkHttp.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, OkHttpDataSource.Factory(client))))
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(url))

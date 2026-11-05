@@ -1,7 +1,10 @@
 package com.roylet.photos.ui.viewer
 
 import android.graphics.Bitmap
+import android.content.Context
 import android.media.MediaDataSource
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
 import android.media.MediaMetadataRetriever
 import android.util.LruCache
 import androidx.compose.runtime.Composable
@@ -175,15 +178,25 @@ object VideoFrameCache {
  * calling coroutine closes the data source, which unblocks the retriever; the retriever is always
  * released. Failures just leave frames empty: the live video frame is the real preview anyway.
  */
-suspend fun extractFrames(client: OkHttpClient, url: String, strip: VideoFrameStrip, maxPx: Int = VideoFrameCache.FRAME_MAX_PX) {
+suspend fun extractFrames(client: OkHttpClient, url: String, strip: VideoFrameStrip, maxPx: Int = VideoFrameCache.FRAME_MAX_PX) =
+    extractFrames(null, client, url, strip, maxPx)
+
+/**
+ * [extractFrames] for any URL: `content://` (a phone video) is read by the retriever straight from
+ * the ContentResolver with [context]; http(s) goes through [client] with Range requests.
+ */
+suspend fun extractFrames(context: Context?, client: OkHttpClient?, url: String, strip: VideoFrameStrip, maxPx: Int = VideoFrameCache.FRAME_MAX_PX) {
     if (strip.complete) return
+    val local = url.startsWith("content://") || url.startsWith("file://")
+    if (local && context == null) return
+    if (!local && client == null) return
     val missing = withContext(Dispatchers.Main) { extractionOrder(strip.count).filter { strip.frames[it] == null } }
     withContext(Dispatchers.IO) {
-        val source = RangeMediaDataSource(client, url)
-        val unhook = coroutineContext.job.invokeOnCompletion { source.close() }
+        val source = if (local) null else RangeMediaDataSource(client!!, url)
+        val unhook = coroutineContext.job.invokeOnCompletion { source?.close() }
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(source)
+            if (source != null) retriever.setDataSource(source) else retriever.setDataSource(context, Uri.parse(url))
             for (i in missing) {
                 ensureActive()
                 val bmp: Bitmap = retriever.getScaledFrameAtTime(
@@ -200,7 +213,7 @@ suspend fun extractFrames(client: OkHttpClient, url: String, strip: VideoFrameSt
         } finally {
             unhook.dispose()
             runCatching { retriever.release() }
-            source.close()
+            source?.close()
         }
     }
 }
@@ -214,9 +227,10 @@ suspend fun extractFrames(client: OkHttpClient, url: String, strip: VideoFrameSt
 fun rememberVideoFrames(key: String, url: String?, durationMs: Long, active: Boolean): VideoFrameStrip? {
     val strip = remember(key, durationMs > 0) { VideoFrameCache.obtain(key, durationMs) }
     val client = LocalMediaHttpClient.current
+    val context = LocalContext.current.applicationContext
     val inspection = LocalInspectionMode.current
-    if (strip != null && url != null && client != null && !inspection) {
-        LaunchedEffect(strip, url, active) { if (active) extractFrames(client, url, strip) }
+    if (strip != null && url != null && !inspection) {
+        LaunchedEffect(strip, url, active) { if (active) extractFrames(context, client, url, strip) }
     }
     return strip
 }

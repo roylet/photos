@@ -421,6 +421,17 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
                     if (w > 72.dp) Text(asset.durationMs?.let(::clock) ?: "", style = Type.Tiny, color = Brutal.Paper, maxLines = 1, softWrap = false)
                 }
             }
+            // The phone's Trash: how long until it's gone for good (MediaStore's DATE_EXPIRES).
+            val days = if (asset.isTrashed) asset.daysLeft(System.currentTimeMillis()) else null
+            if (days != null) {
+                Text(
+                    if (days <= 1) "1 day" else "$days days",
+                    style = Type.Tiny, color = Brutal.Ink, maxLines = 1, softWrap = false,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(5.dp)
+                        .background(if (days <= 3) Brutal.Yellow else Brutal.Paper, RoundedCornerShape(50))
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+            }
             if (asset.isFavorite) {
                 Icon(
                     Icons.Rounded.Favorite, "Favourite", tint = Color.White,

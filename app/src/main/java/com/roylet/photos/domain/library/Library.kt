@@ -127,9 +127,21 @@ interface LibrarySource {
     suspend fun assets(ids: List<String>): List<TimelineAsset>
     suspend fun memories(day: LocalDate): List<Memory>
 
+    /**
+     * A `content://` URI other apps can read directly (phone assets): sharing sends it as is, with
+     * no download. Null means download the original with [download] instead.
+     */
+    suspend fun shareUri(id: String): SharedUri? = null
+
     /** Downloads asset [id]'s original into [dir]; returns the file (named like the original). */
     suspend fun download(id: String, dir: File, onProgress: (Long, Long) -> Unit): File
 }
+
+/** A file another app can read straight from its URI (see [LibrarySource.shareUri]). */
+data class SharedUri(val uri: String, val mimeType: String?)
+
+/** The user said no to a system consent dialog (MediaStore trash, favourite, delete): nothing changed. */
+class ConsentDeniedException : Exception("You didn't allow it")
 
 /** Thrown by a [LibrarySource] call its source can't serve (check [LibrarySource.capabilities] first). */
 class UnsupportedCapabilityException(what: String) : UnsupportedOperationException("$what isn't available here")

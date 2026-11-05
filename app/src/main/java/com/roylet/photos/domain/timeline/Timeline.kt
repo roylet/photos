@@ -29,6 +29,12 @@ data class TimelineFilter(
     val newestFirst: Boolean = true,
     /** A fixed, app-side list (search results, a map cluster) registered with the timeline registry; never sent to the server. */
     val listId: String? = null,
+    /**
+     * Pins the timeline to one source whatever the configuration, e.g. [MediaSourceKind.Local] for
+     * Library → On this device while a server is connected. Null follows the active sources.
+     * Never sent to the server.
+     */
+    val source: MediaSourceKind? = null,
 ) {
     fun toQuery(): List<Pair<String, String>> = buildList {
         visibility?.let { add("visibility" to it.wire) }
@@ -43,7 +49,11 @@ data class TimelineFilter(
     }
 
     /** A compact, URL-safe form for navigation arguments; [decode] reverses it. */
-    fun encode(): String = (toQuery() + listOfNotNull(listId?.let { "listId" to it })).joinToString("~") { (k, v) -> "$k.$v" }
+    fun encode(): String = (toQuery() + listOfNotNull(listId?.let { "listId" to it }, source?.let { "source" to it.prefix }))
+        .joinToString("~") { (k, v) -> "$k.$v" }
+
+    /** Whether this timeline reads the phone's MediaStore index: pinned to it, or a phone folder. */
+    val isLocal: Boolean get() = source == MediaSourceKind.Local || albumId?.startsWith(FOLDER_PREFIX) == true
 
     companion object {
         val Timeline = TimelineFilter()
@@ -54,6 +64,14 @@ data class TimelineFilter(
         fun person(id: String) = TimelineFilter(personId = id)
         fun tag(id: String) = TimelineFilter(tagId = id)
         fun list(id: String) = TimelineFilter(visibility = null, withStacked = false, listId = id)
+
+        /** Album ids of phone folders: `folder:<BUCKET_ID>` (see docs/SOURCES.md). */
+        const val FOLDER_PREFIX = "folder:"
+
+        /** The phone's own timeline, whatever else is connected (Library → On this device). */
+        val Device = TimelineFilter(source = MediaSourceKind.Local)
+        /** The phone's own trash. */
+        val DeviceTrash = TimelineFilter(visibility = null, isTrashed = true, source = MediaSourceKind.Local)
 
         fun decode(s: String): TimelineFilter {
             if (s.isBlank()) return Timeline
@@ -69,6 +87,7 @@ data class TimelineFilter(
                 withPartners = m["withPartners"]?.toBooleanStrictOrNull(),
                 newestFirst = m["order"] != "asc",
                 listId = m["listId"],
+                source = m["source"]?.let { p -> MediaSourceKind.entries.firstOrNull { it.prefix == p } },
             )
         }
     }
@@ -108,6 +127,8 @@ data class TimelineAsset(
     val localRef: AssetRef? = null,
     /** The Immich copy of a merged asset. */
     val remoteRef: AssetRef? = null,
+    /** Trashed items only: when the source deletes it for good (UTC millis), if it says. */
+    val expiresAt: Long? = null,
 ) {
     /** Where [id] points: a tagged `local:` id, else an Immich UUID. */
     val ref: AssetRef? get() = AssetRef.parse(id)
@@ -125,10 +146,15 @@ data class TimelineAsset(
     }
 
     val isVideo: Boolean get() = !isImage
+
+    /** Whole days until a trashed item is deleted for good (rounded up, never negative), or null when unknown. */
+    fun daysLeft(now: Long): Int? = expiresAt?.let { e -> ((e - now + DAY_MS - 1) / DAY_MS).coerceAtLeast(0).toInt() }
     val isLivePhoto: Boolean get() = livePhotoVideoId != null
     /** When the photo was taken, in the photographer's local wall-clock time (as epoch millis "in UTC"). */
     val localTakenAt: Long get() = fileCreatedAt + (localOffsetHours * 3_600_000).toLong()
 }
+
+private const val DAY_MS = 86_400_000L
 
 /**
  * An immutable view of a timeline: every bucket (with its count) and the assets of those buckets

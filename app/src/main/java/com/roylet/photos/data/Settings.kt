@@ -75,6 +75,11 @@ class Settings(context: Context, private val cipher: TokenCipher = KeystoreToken
         get() = prefs.getBoolean(KEY_ASKED_MEDIA, false)
         set(v) { prefs.edit().putBoolean(KEY_ASKED_MEDIA, v).apply() }
 
+    /** The one-time "Skip confirmation dialogs" snackbar was shown (after the first MediaStore consent dialog). */
+    var offeredManageMedia: Boolean
+        get() = prefs.getBoolean(KEY_OFFERED_MANAGE_MEDIA, false)
+        set(v) { prefs.edit().putBoolean(KEY_OFFERED_MANAGE_MEDIA, v).apply() }
+
     fun saveServer(config: ServerConfig) {
         prefs.edit()
             .putString(KEY_PUBLIC, config.publicUrl)
@@ -148,6 +153,7 @@ class Settings(context: Context, private val cipher: TokenCipher = KeystoreToken
         const val KEY_ONBOARDED = "onboarded"
         const val KEY_CAST_TOKEN = "castSessionToken"
         const val KEY_ASKED_MEDIA = "askedMediaPermission"
+        const val KEY_OFFERED_MANAGE_MEDIA = "offeredManageMedia"
         val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED, KEY_LOCAL_FINGERPRINT)
     }
 }

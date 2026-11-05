@@ -90,6 +90,7 @@ import com.roylet.photos.ui.memories.MemoriesCarousel
 import com.roylet.photos.ui.memories.MemoryStoryScreen
 import com.roylet.photos.ui.library.LibraryEntry
 import com.roylet.photos.ui.library.MapScreen
+import com.roylet.photos.ui.library.DeviceScreen
 import com.roylet.photos.ui.library.PeopleScreen
 import com.roylet.photos.ui.library.TrashScreen
 import com.roylet.photos.immich.ImmichApi
@@ -138,6 +139,10 @@ object Routes {
     const val MAP = "map"
     const val LIST = "list/{filter}?title={title}"
     const val MEMORIES = "memories?index={index}"
+    /** Library → On this device (with a server): the phone's timeline, folders and trash. */
+    const val DEVICE = "device"
+    const val DEVICE_FOLDERS = "device/folders"
+    const val DEVICE_TRASH = "device/trash"
 
     /** Opens the viewer on [index] of the timeline described by [filter]. */
     fun viewer(filter: TimelineFilter, index: Int, id: String) = "viewer?filter=${filter.encode()}&index=$index&id=$id"
@@ -182,6 +187,12 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     val tabs = remember(sources.capabilities) { tabsFor(sources.capabilities) }
     val permissions = rememberMediaPermissions(container.settings)
     ConsentHost(container.consent)
+    // Access granted, narrowed or revoked (in the prompt or in system settings): re-read the phone.
+    val access = permissions.access
+    var seenAccess by remember { mutableStateOf(access) }
+    LaunchedEffect(access) {
+        if (access != seenAccess) { seenAccess = access; container.device.onAccessChanged() }
+    }
 
     val selectTab: (NavTab) -> Unit = { tab ->
         nav.navigate(tab.route) {
@@ -371,25 +382,19 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                         {
                             MediaAccessDenied(
                                 permanentlyDenied = permissions.permanentlyDenied,
-                                onGrant = { permissions.request { if (it != MediaAccess.Denied) timeline.refresh() } },
+                                onGrant = { permissions.request { if (it != MediaAccess.Denied) container.device.onAccessChanged() } },
                                 onOpenSettings = permissions::openSettings,
                                 onConnectImmich = if (sources.hasImmich) null else { { nav.navigate(Routes.CONNECT) } },
                             )
                         }
                     } else null,
                     banner = if (sources.hasLocal && permissions.access == MediaAccess.Partial) {
-                        { LimitedAccessBanner(onManage = { permissions.request { timeline.refresh() } }) }
+                        { LimitedAccessBanner(onManage = { permissions.request { container.device.onAccessChanged() } }) }
                     } else null,
                     emptyContent = if (sources.hasLocal && !sources.hasImmich) {
-                        { DeviceLibraryEmpty(partial = permissions.access == MediaAccess.Partial, onManage = { permissions.request { timeline.refresh() } }) }
+                        { DeviceLibraryEmpty(partial = permissions.access == MediaAccess.Partial, onManage = { permissions.request { container.device.onAccessChanged() } }) }
                     } else null,
                 )
-                // Access changed (granted in the prompt or in system settings): load what's now visible.
-                val access = permissions.access
-                var seenAccess by remember { mutableStateOf(access) }
-                LaunchedEffect(access) {
-                    if (access != seenAccess) { seenAccess = access; if (sources.hasLocal) timeline.refresh(keepLoaded = true) }
-                }
             }
         }
         composable(
@@ -465,9 +470,12 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
         }
         composable(Routes.ALBUM, arguments = listOf(navArgument("albumId") { type = NavType.StringType })) { entry ->
             val id = entry.arguments?.getString("albumId").orEmpty()
+            // Phone folders are read-only; with a server they come from the device folder list.
+            val folder = id.startsWith(TimelineFilter.FOLDER_PREFIX)
+            val store = if (folder && sources.hasImmich) container.deviceFolders else container.albums
             TimelineDestination(container, viewer, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
                 AlbumDetailScreen(
-                    id, container.albums, timeline, if (Capability.SERVER_ALBUMS in caps) container.actions else null, open,
+                    id, store, timeline, if (Capability.SERVER_ALBUMS in caps && !folder) container.actions else null, open,
                     onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
                 )
             }
@@ -504,8 +512,34 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                     LibraryEntry.Trash -> nav.navigate(Routes.TRASH)
                     LibraryEntry.Settings -> nav.navigate(Routes.SETTINGS)
                     LibraryEntry.ConnectImmich -> nav.navigate(Routes.CONNECT)
+                    LibraryEntry.OnThisDevice -> nav.navigate(Routes.DEVICE)
                 }
             })
+        }
+        composable(Routes.DEVICE) { entry ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.Device) { timeline, open, reveal, revealed ->
+                DeviceScreen(
+                    timeline, open,
+                    onFolders = { nav.navigate(Routes.DEVICE_FOLDERS) },
+                    onTrash = { nav.navigate(Routes.DEVICE_TRASH) },
+                    onBack = { nav.popBackStack() },
+                    onAccessChanged = { container.device.onAccessChanged() },
+                    revealIndex = reveal, onRevealed = revealed,
+                )
+            }
+        }
+        composable(Routes.DEVICE_FOLDERS) {
+            AlbumsScreen(
+                container.deviceFolders, null, container.uiPrefs,
+                onOpen = { nav.navigate(Routes.album(it.id)) },
+                folders = true,
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(Routes.DEVICE_TRASH) { entry ->
+            TimelineDestination(container, viewer, entry, TimelineFilter.DeviceTrash) { timeline, open, reveal, revealed ->
+                TrashScreen(timeline, { container.localLibrary }, container.deviceActions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+            }
         }
         composable(Routes.MEMORIES, arguments = listOf(navArgument("index") { type = NavType.IntType; defaultValue = 0 })) { entry ->
             val memories by container.memories.memories.collectAsState()

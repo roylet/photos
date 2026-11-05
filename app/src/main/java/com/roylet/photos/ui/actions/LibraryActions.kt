@@ -10,6 +10,7 @@ import com.roylet.photos.domain.library.Album
 import com.roylet.photos.domain.library.AlbumStore
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.ShareLinkOptions
+import com.roylet.photos.domain.library.SharedUri
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRegistry
@@ -36,6 +37,8 @@ sealed interface ActionSheet {
 /** Hands files or text to other apps; Android's share sheet and clipboard in the app. */
 interface ShareLauncher {
     fun sendFiles(files: List<File>)
+    /** Sends downloaded [files] and phone items by their own [uris] in one share. */
+    fun send(files: List<File>, uris: List<SharedUri>) = sendFiles(files)
     fun sendText(text: String)
     fun copy(text: String)
 }
@@ -356,20 +359,28 @@ class LibraryActions(
         sheet = ActionSheet.Share(emptyList(), albumId)
     }
 
-    /** Downloads the originals with progress, then opens Android's share sheet. */
+    /**
+     * Opens Android's share sheet with the originals. Phone items go by their own content URI (no
+     * copy); the rest are downloaded first, with progress.
+     */
     fun sendFiles(ids: List<String>) {
         if (ids.isEmpty() || transferJob?.isActive == true) return
         prefs.shareMode = "file"
         transfer = Transfer(0, ids.size)
         transferJob = scope.launch {
             try {
+                val uris = ArrayList<SharedUri>()
+                val download = ArrayList<String>()
+                ids.forEach { id -> library().shareUri(id)?.let(uris::add) ?: download.add(id) }
                 // Old shares are no longer needed once the user starts a new one.
-                shareDir.listFiles()?.forEach { it.deleteRecursively() }
-                val files = ids.mapIndexed { i, id ->
-                    library().download(id, shareDir) { bytes, total -> transfer = Transfer(i, ids.size, bytes, total) }
-                        .also { transfer = Transfer(i + 1, ids.size) }
+                if (download.isNotEmpty()) shareDir.listFiles()?.forEach { it.deleteRecursively() }
+                val base = uris.size
+                transfer = Transfer(base, ids.size)
+                val files = download.mapIndexed { i, id ->
+                    library().download(id, shareDir) { bytes, total -> transfer = Transfer(base + i, ids.size, bytes, total) }
+                        .also { transfer = Transfer(base + i + 1, ids.size) }
                 }
-                launcher.sendFiles(files)
+                if (uris.isEmpty()) launcher.sendFiles(files) else launcher.send(files, uris)
                 sheet = null
             } catch (e: CancellationException) {
                 throw e

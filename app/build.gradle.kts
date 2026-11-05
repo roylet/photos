@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.baselineprofile)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.room)
 }
 
 // Release signing: environment variables (CI) win, then a gitignored keystore.properties at the
@@ -112,6 +114,11 @@ composeCompiler {
     }
 }
 
+// The MediaStore index (local/MediaDatabase.kt): exported schemas let migrations be checked in review.
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
 baselineProfile {
     // Generation needs a device: never as part of an ordinary build (CI, assembleRelease).
     automaticGenerationDuringBuild = false
@@ -142,6 +149,9 @@ dependencies {
     implementation(libs.coil.video)
     implementation(libs.androidx.exifinterface)
     implementation(libs.telephoto.zoomable.image.coil3)
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)

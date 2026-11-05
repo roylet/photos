@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -48,7 +49,7 @@ import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 /** Where a Library tile leads. */
-enum class LibraryEntry { Favorites, People, Places, Memories, Archive, Trash, Settings, ConnectImmich }
+enum class LibraryEntry { Favorites, People, Places, Memories, Archive, Trash, Settings, ConnectImmich, OnThisDevice }
 
 /**
  * The "Library" tab: big brutal tiles for the collections that don't get a tab of their own.
@@ -61,6 +62,8 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     capabilities: Capabilities = LocalCapabilities.current,
     hasImmich: Boolean = LocalActiveSources.current.hasImmich,
+    /** Library → On this device: the phone's own photos and folders while the Photos tab shows Immich. */
+    showDevice: Boolean = hasImmich && !LocalActiveSources.current.hasLocal,
 ) {
     val collections = buildList {
         if (Capability.FAVORITE in capabilities) add(LibraryEntry.Favorites)
@@ -85,6 +88,10 @@ fun LibraryScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
+            if (showDevice) {
+                item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("On this phone") }
+                item(span = { GridItemSpan(maxLineSpan) }) { DeviceCard(Modifier.padding(bottom = 12.dp)) { onOpen(LibraryEntry.OnThisDevice) } }
+            }
             if (tiles.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Collections") }
             tiles.forEach { e ->
                 item {
@@ -121,6 +128,23 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Library → On this device: the phone's photos, folders and trash next to the server's. */
+@Composable
+private fun DeviceCard(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Pressable(onClick, modifier.fillMaxWidth(), fill = Palette.mint) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.PhoneAndroid, fill = Palette.card, size = 44.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("On this device", style = Type.Title, color = Palette.ink)
+                Text("Photos, videos and folders on this phone", style = Type.Small, color = Palette.ink.copy(alpha = 0.7f))
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Palette.ink, modifier = Modifier.size(20.dp))
         }
     }
 }
