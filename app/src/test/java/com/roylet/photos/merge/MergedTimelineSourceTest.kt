@@ -115,6 +115,24 @@ class MergedTimelineSourceTest {
         assertEquals(setOf(SourceBadge.LocalOnly, SourceBadge.RemoteOnly), trash.map { it.sourceBadge }.toSet())
     }
 
+    @Test fun `Immich's short month keys merge with the phone's months`() {
+        // Newer Immich servers spell buckets `2026-10-01`; the phone index uses `2026-10-01T00:00:00.000Z`.
+        val shortKeys = object : TimelineSource {
+            fun short(k: String) = k.take(10)
+            override suspend fun buckets(filter: TimelineFilter) = remote.buckets(filter).map { TimeBucket(short(it.key), it.count) }
+            override suspend fun bucket(filter: TimelineFilter, key: String): List<TimelineAsset> {
+                assertEquals(10, key.length) // Immich is asked with its own spelling
+                return remote.bucket(filter, key + "T00:00:00.000Z")
+            }
+        }
+        val m = MergedTimelineSource(local, shortKeys) { matcher }
+        val buckets = runBlocking { m.buckets(TimelineFilter.Timeline) }
+        assertEquals(listOf("2026-10-01", "2026-09-01T00:00:00.000Z", "2026-08-01"), buckets.map { it.key })
+        assertEquals(3 + 3 - 2, buckets[0].count)
+        val oct = runBlocking { m.bucket(TimelineFilter.Timeline, buckets[0].key) }
+        assertEquals(listOf("local:1", "local:2", "local:3", "c"), oct.map { it.id })
+    }
+
     @Test fun `a phone change refreshes the merged timelines that show phone items`() {
         assertTrue(merged.includesPhone(TimelineFilter.Timeline))
         assertTrue(merged.includesPhone(TimelineFilter.Favorites))

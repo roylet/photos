@@ -7,6 +7,7 @@ import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineSource
 import com.roylet.photos.domain.timeline.Visibility
+import com.roylet.photos.local.MonthKeys
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -86,15 +87,19 @@ class MergedTimelineSource(
             l.await() to r.await()
         }
         if (r == null) return l ?: throw IllegalStateException("Neither the phone nor Immich could be read")
-        val lm = l.orEmpty().associate { it.key to it.count }
-        val rm = r.associate { it.key to it.count }
-        val pairs = if (mode == Mode.Merge) runCatching { matcher()?.pairsPerMonth() }.getOrNull().orEmpty() else emptyMap()
-        val keys = (lm.keys + rm.keys).let { if (filter.newestFirst) it.sortedDescending() else it.sorted() }
-        return keys.map { k ->
-            val a = lm[k] ?: 0
-            val b = rm[k] ?: 0
-            TimeBucket(k, mergedCounts[filter to k] ?: (a + b - (pairs[k] ?: 0).coerceIn(0, minOf(a, b))))
+        // The same month can be spelt differently on each side (the phone's `2026-10-01T00:00:00.000Z`,
+        // newer Immich servers' `2026-10-01`), so the two lists are joined by month, not by key.
+        val lm = l.orEmpty().associateBy { monthId(it.key) }
+        val rm = r.associateBy { monthId(it.key) }
+        val pairs = if (mode == Mode.Merge) runCatching { matcher()?.pairsPerMonth() }.getOrNull().orEmpty().mapKeys { monthId(it.key) } else emptyMap()
+        val merged = (lm.keys + rm.keys).map { m ->
+            val a = lm[m]?.count ?: 0
+            val b = rm[m]?.count ?: 0
+            // Immich's spelling when it has the month, so its bucket call gets the key it gave.
+            val k = rm[m]?.key ?: lm.getValue(m).key
+            TimeBucket(k, mergedCounts[filter to k] ?: (a + b - (pairs[m] ?: 0).coerceIn(0, minOf(a, b))))
         }
+        return if (filter.newestFirst) merged.sortedByDescending { it.key } else merged.sortedBy { it.key }
     }
 
     override suspend fun bucket(filter: TimelineFilter, key: String): List<TimelineAsset> {
@@ -102,7 +107,8 @@ class MergedTimelineSource(
         if (mode == Mode.LocalOnly) return local.bucket(filter, key)
         if (mode == Mode.RemoteOnly) return remote.bucket(filter, key)
         val (l, r) = coroutineScope {
-            val l = async { safely("phone month") { local.bucket(filter, key) } }
+            // The phone's spelling of the month (the key may be Immich's).
+            val l = async { safely("phone month") { local.bucket(filter, MonthKeys.parse(key)?.let(MonthKeys::key) ?: key) } }
             val r = async { safely("Immich month") { remote.bucket(filter, key) } }
             l.await() to r.await()
         }
@@ -150,6 +156,9 @@ class MergedTimelineSource(
 
     companion object {
         private const val TAG = "MergedTimeline"
+
+        /** A bucket key's month (`yyyy * 100 + MM`) whatever its spelling; the key itself if it isn't one. */
+        private fun monthId(key: String): Any = MonthKeys.parse(key) ?: key
 
         /**
          * Collapses each matched phone item and Immich asset into one cell: the phone's id (the
