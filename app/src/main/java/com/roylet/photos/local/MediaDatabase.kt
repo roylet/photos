@@ -13,6 +13,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /*
  * The app's mirror of MediaStore's images and videos (see docs/SOURCES.md, "Phone index").
@@ -72,38 +74,6 @@ data class MediaEntity(
 /** Small key/value state for the indexer: MediaStore version, generations, zone, access level. */
 @Entity(tableName = "index_meta")
 data class MetaEntity(@PrimaryKey val key: String, val value: String)
-
-/**
- * Android 10's own trash: MediaStore has no trash there, so the original is copied into the app's
- * private `files/trash` folder and deleted from MediaStore. Restore puts it back where it was.
- */
-@Entity(tableName = "legacy_trash")
-data class LegacyTrashEntity(
-    @PrimaryKey(autoGenerate = true) val rowId: Long = 0,
-    /** The private copy. */
-    val path: String,
-    val originalId: Long,
-    val isVideo: Boolean,
-    val takenAt: Long,
-    val month: Int,
-    val offsetMinutes: Int,
-    val width: Int,
-    val height: Int,
-    val orientation: Int,
-    val durationMs: Long?,
-    val mimeType: String?,
-    val displayName: String?,
-    val sizeBytes: Long?,
-    val bucketName: String?,
-    val relativePath: String?,
-    val favorite: Boolean,
-    val trashedAt: Long,
-    val expiresAt: Long,
-)
-
-/** Android 10's favourites (no IS_FAVORITE column there). */
-@Entity(tableName = "legacy_favorite")
-data class LegacyFavoriteEntity(@PrimaryKey val id: Long)
 
 /** A month and how many items it holds. */
 data class MonthCount(val month: Int, val count: Int)
@@ -215,38 +185,6 @@ interface MediaDao {
     @Query("DELETE FROM index_meta")
     suspend fun clearMeta()
 
-    /* ---- Android 10 ---- */
-
-    @Query("SELECT id FROM legacy_favorite")
-    suspend fun legacyFavorites(): LongArray
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun addLegacyFavorites(rows: List<LegacyFavoriteEntity>)
-
-    @Query("DELETE FROM legacy_favorite WHERE id IN (:ids)")
-    suspend fun removeLegacyFavorites(ids: List<Long>)
-
-    @Insert
-    suspend fun addLegacyTrash(row: LegacyTrashEntity): Long
-
-    @Query("SELECT * FROM legacy_trash ORDER BY takenAt DESC")
-    suspend fun legacyTrash(): List<LegacyTrashEntity>
-
-    @Query("SELECT * FROM legacy_trash WHERE rowId IN (:rowIds)")
-    suspend fun legacyTrashByIds(rowIds: List<Long>): List<LegacyTrashEntity>
-
-    @Query("SELECT month, COUNT(*) AS count FROM legacy_trash GROUP BY month ORDER BY month DESC")
-    suspend fun legacyTrashMonths(): List<MonthCount>
-
-    @Query("SELECT * FROM legacy_trash WHERE month = :month ORDER BY takenAt DESC, rowId DESC")
-    suspend fun legacyTrashInMonth(month: Int): List<LegacyTrashEntity>
-
-    @Query("SELECT * FROM legacy_trash WHERE expiresAt < :now")
-    suspend fun expiredLegacyTrash(now: Long): List<LegacyTrashEntity>
-
-    @Query("DELETE FROM legacy_trash WHERE rowId IN (:rowIds)")
-    suspend fun removeLegacyTrash(rowIds: List<Long>)
-
     /** Re-buckets [rows] (a time-zone change) in one transaction. */
     @Transaction
     suspend fun setMonths(rows: List<IdMonth>) { rows.forEach { setMonth(it.id, it.month, it.offsetMinutes) } }
@@ -266,23 +204,116 @@ data class IdMonth(val id: Long, val month: Int, val offsetMinutes: Int)
 internal const val SQL_VARS = 500
 
 @Database(
-    entities = [MediaEntity::class, MetaEntity::class, LegacyTrashEntity::class, LegacyFavoriteEntity::class],
-    version = 1,
+    entities = [MediaEntity::class, MetaEntity::class, MatchEntity::class],
+    version = 2,
     exportSchema = true,
 )
 abstract class MediaDatabase : RoomDatabase() {
     abstract fun media(): MediaDao
+    abstract fun matches(): MatchDao
 
     companion object {
-        fun open(context: Context): MediaDatabase =
-            Room.databaseBuilder(context.applicationContext, MediaDatabase::class.java, "media-index.db")
-                // It's a cache of MediaStore (plus Android 10's trash list): rebuilding beats a failed migration.
-                .fallbackToDestructiveMigration(dropAllTables = true)
+        const val NAME = "media-index.db"
+
+        /**
+         * Opens the index. Every known version has a real migration ([migrations]); only an
+         * unknown one (a downgrade, a dev build) falls back to a rebuild, which is safe since v2:
+         * the index holds nothing that can't be recomputed from MediaStore and Immich. What can't
+         * be (Android 10's trash list, local edit recipes) lives in [PhotosDatabase].
+         *
+         * [onLegacyRows] receives v1's Android 10 trash and favourites during the 1 → 2 migration,
+         * before their tables are dropped; it must store them (in [PhotosDatabase]) or throw.
+         */
+        fun open(context: Context, onLegacyRows: (LegacyRows) -> Unit): MediaDatabase =
+            Room.databaseBuilder(context.applicationContext, MediaDatabase::class.java, NAME)
+                .addMigrations(*migrations(onLegacyRows))
+                .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                 .build()
+
+        fun migrations(onLegacyRows: (LegacyRows) -> Unit): Array<Migration> = arrayOf(Migration1To2(onLegacyRows))
 
         fun inMemory(context: Context): MediaDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, MediaDatabase::class.java).allowMainThreadQueries().build()
     }
+}
+
+/**
+ * v1 → v2: Android 10's trash and favourites move to [PhotosDatabase] (handed to [onLegacyRows]
+ * first, so a failure keeps them here), then the `immich_match` cache is added.
+ */
+class Migration1To2(private val onLegacyRows: (LegacyRows) -> Unit) : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        val trash = ArrayList<LegacyTrashEntity>()
+        db.query("SELECT * FROM legacy_trash").use { c ->
+            fun col(n: String) = c.getColumnIndexOrThrow(n)
+            fun long(n: String) = c.getLong(col(n))
+            fun longOrNull(n: String) = col(n).let { if (c.isNull(it)) null else c.getLong(it) }
+            fun str(n: String) = col(n).let { if (c.isNull(it)) null else c.getString(it) }
+            while (c.moveToNext()) trash += LegacyTrashEntity(
+                rowId = long("rowId"), path = str("path")!!, originalId = long("originalId"), isVideo = long("isVideo") != 0L,
+                takenAt = long("takenAt"), month = long("month").toInt(), offsetMinutes = long("offsetMinutes").toInt(),
+                width = long("width").toInt(), height = long("height").toInt(), orientation = long("orientation").toInt(),
+                durationMs = longOrNull("durationMs"), mimeType = str("mimeType"), displayName = str("displayName"),
+                sizeBytes = longOrNull("sizeBytes"), bucketName = str("bucketName"), relativePath = str("relativePath"),
+                favorite = long("favorite") != 0L, trashedAt = long("trashedAt"), expiresAt = long("expiresAt"),
+            )
+        }
+        val favorites = ArrayList<Long>()
+        db.query("SELECT id FROM legacy_favorite").use { c -> while (c.moveToNext()) favorites += c.getLong(0) }
+        if (trash.isNotEmpty() || favorites.isNotEmpty()) onLegacyRows(LegacyRows(trash, favorites))
+        db.execSQL("DROP TABLE IF EXISTS `legacy_trash`")
+        db.execSQL("DROP TABLE IF EXISTS `legacy_favorite`")
+        db.execSQL(MatchEntity.CREATE_SQL)
+        db.execSQL(MatchEntity.INDEX_SQL)
+    }
+}
+
+/** Android 10's rows carried out of a v1 index. */
+data class LegacyRows(val trash: List<LegacyTrashEntity>, val favorites: List<Long>)
+
+/**
+ * The Immich copy of a phone item, cached (see docs/SOURCES.md §9). Valid while [generation] is
+ * the item's current generation. [remoteId] null means "checked, Immich doesn't have it".
+ * [tentative] marks a filename + date + size guess, made before the SHA-1 was known.
+ */
+@Entity(tableName = "immich_match", indices = [Index(value = ["remoteId"])])
+data class MatchEntity(
+    @PrimaryKey val localId: Long,
+    val generation: Long,
+    val remoteId: String?,
+    val tentative: Boolean,
+    val checkedAt: Long,
+) {
+    companion object {
+        internal const val CREATE_SQL =
+            "CREATE TABLE IF NOT EXISTS `immich_match` (`localId` INTEGER NOT NULL, `generation` INTEGER NOT NULL, `remoteId` TEXT, " +
+                "`tentative` INTEGER NOT NULL, `checkedAt` INTEGER NOT NULL, PRIMARY KEY(`localId`))"
+        internal const val INDEX_SQL = "CREATE INDEX IF NOT EXISTS `index_immich_match_remoteId` ON `immich_match` (`remoteId`)"
+    }
+}
+
+@Dao
+interface MatchDao {
+    @Query("SELECT * FROM immich_match WHERE localId IN (:ids)")
+    suspend fun byLocalIds(ids: List<Long>): List<MatchEntity>
+
+    @Query("SELECT * FROM immich_match WHERE remoteId IN (:remoteIds)")
+    suspend fun byRemoteIds(remoteIds: List<String>): List<MatchEntity>
+
+    @Upsert
+    suspend fun upsert(rows: List<MatchEntity>)
+
+    @Query("DELETE FROM immich_match WHERE localId IN (:ids)")
+    suspend fun deleteLocal(ids: List<Long>)
+
+    @Query("DELETE FROM immich_match WHERE remoteId IN (:remoteIds)")
+    suspend fun deleteRemote(remoteIds: List<String>)
+
+    @Query("DELETE FROM immich_match")
+    suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM immich_match")
+    suspend fun count(): Int
 }
 
 /** Width / height with [orientation] applied (90/270 swap the sides); 1 when unknown. */

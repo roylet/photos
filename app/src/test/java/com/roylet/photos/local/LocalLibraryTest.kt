@@ -33,6 +33,8 @@ import java.time.ZoneId
 @Config(sdk = [34])
 class LocalLibraryTest {
     private val db = MediaDatabase.inMemory(ApplicationProvider.getApplicationContext())
+    private val appDb = PhotosDatabase.inMemory(ApplicationProvider.getApplicationContext())
+    private val appDao = appDb.app()
     private val dao = db.media()
     private val store = FakeMediaStore()
     private var access = MediaAccess.Full
@@ -51,9 +53,9 @@ class LocalLibraryTest {
     }
 
     private fun library(mediaStoreWrites: Boolean = true, legacy: LegacyFiles? = null) =
-        MediaStoreLibrary(dao, indexer, mediaStoreWrites, runner, legacy, io, now = { now })
+        MediaStoreLibrary(dao, appDao, indexer, mediaStoreWrites, runner, legacy, io, now = { now })
 
-    private fun source(mediaStoreTrash: Boolean = true) = MediaStoreTimelineSource(dao, indexer, { access }, mediaStoreTrash)
+    private fun source(mediaStoreTrash: Boolean = true) = MediaStoreTimelineSource(dao, appDao, indexer, { access }, mediaStoreTrash)
 
     @Before fun fill() {
         store.put(photo(1, taken = utc(2026, 10, 3), bucket = 10, bucketName = "Camera").copy(isFavorite = true))
@@ -219,15 +221,15 @@ class LocalLibraryTest {
         } catch (_: ConsentDeniedException) {}
         assertEquals(legacy.copies, legacy.deleted)
         assertTrue(runBlocking { dao.byId(3) } != null)
-        assertTrue(runBlocking { dao.legacyTrash() }.isEmpty())
+        assertTrue(runBlocking { appDao.legacyTrash() }.isEmpty())
     }
 
     @Test fun `Android 10 favourites live in the app and survive a re-sync`() {
         val old = FakeMediaStore(hasGenerationsFlag = false)
         old.put(photo(7))
-        val idx = MediaIndexer(dao, old, { access }, CoroutineScope(Dispatchers.Unconfined), { zone })
+        val idx = MediaIndexer(dao, old, { access }, CoroutineScope(Dispatchers.Unconfined), { zone }, legacyFavorites = { appDao.legacyFavorites() })
         runBlocking { idx.sync() }
-        val lib = MediaStoreLibrary(dao, idx, false, runner, FakeLegacy(), io)
+        val lib = MediaStoreLibrary(dao, appDao, idx, false, runner, FakeLegacy(), io)
         runBlocking { lib.setFavorite(listOf("local:7"), true) }
         assertTrue(requests.isEmpty())
         old.update(7) { it.copy(displayName = "edited.jpg") }

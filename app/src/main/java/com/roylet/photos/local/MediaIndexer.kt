@@ -104,6 +104,8 @@ class MediaIndexer(
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
     /** Called after a sync that changed the index (refresh the timelines). */
     private val onChanged: (SyncResult) -> Unit = {},
+    /** Android 10's app-side favourites ([AppDao.legacyFavorites]). */
+    private val legacyFavorites: suspend () -> LongArray = { LongArray(0) },
 ) {
     private val mutex = Mutex()
     private val _ready = MutableStateFlow(false)
@@ -168,7 +170,7 @@ class MediaIndexer(
         // Read the generations before querying: anything that changes during the query has a
         // higher generation and is picked up next time.
         val generations = volumes.associateWith { reader.generation(it) }
-        val legacyFavorites = if (reader.hasGenerations) null else dao.legacyFavorites().toHashSet()
+        val legacyFavorites = if (reader.hasGenerations) null else legacyFavorites().toHashSet()
 
         var written = 0
         val seen: HashSet<Long>? = if (full) HashSet() else null

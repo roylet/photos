@@ -78,6 +78,8 @@ interface LocalIo {
  */
 class MediaStoreLibrary(
     private val dao: MediaDao,
+    /** Android 10's trash and favourites, and local edit recipes. */
+    private val appDao: AppDao,
     private val indexer: MediaIndexer,
     /** Android 11+ (MediaStore trash and favourites); false uses [legacy]. */
     private val mediaStoreWrites: Boolean,
@@ -97,7 +99,7 @@ class MediaStoreLibrary(
         keys(ids).filter { it > 0 }.chunked(SQL_VARS).flatMap { dao.byIds(it) }
 
     private suspend fun legacyRows(ids: List<String>): List<LegacyTrashEntity> =
-        keys(ids).filter { it < 0 }.map { -it }.chunked(SQL_VARS).flatMap { dao.legacyTrashByIds(it) }
+        keys(ids).filter { it < 0 }.map { -it }.chunked(SQL_VARS).flatMap { appDao.legacyTrashByIds(it) }
 
     private suspend fun runAll(requests: List<MediaRequest>) {
         for (r in requests) if (!runner.run(r)) throw ConsentDeniedException()
@@ -110,8 +112,8 @@ class MediaStoreLibrary(
         if (list.isEmpty()) return
         val keys = list.map { it.id }
         if (mediaStoreWrites) runAll(MediaRequest.favorite(list, favorite))
-        else if (favorite) dao.addLegacyFavorites(keys.map(::LegacyFavoriteEntity))
-        else keys.chunked(SQL_VARS).forEach { dao.removeLegacyFavorites(it) }
+        else if (favorite) appDao.addLegacyFavorites(keys.map(::LegacyFavoriteEntity))
+        else keys.chunked(SQL_VARS).forEach { appDao.removeLegacyFavorites(it) }
         keys.chunked(SQL_VARS).forEach { dao.setFavorite(it, favorite) }
     }
 
@@ -135,7 +137,7 @@ class MediaStoreLibrary(
                     files.deleteFile(path)
                     throw ConsentDeniedException()
                 }
-                dao.addLegacyTrash(item.toLegacyTrash(path, now()))
+                appDao.addLegacyTrash(item.toLegacyTrash(path, now()))
                 moved += item.id
             }
         } finally {
@@ -158,9 +160,9 @@ class MediaStoreLibrary(
         val files = legacy ?: return 0
         for (row in rows) {
             val newId = files.restore(row)
-            if (row.favorite) dao.addLegacyFavorites(listOf(LegacyFavoriteEntity(newId)))
+            if (row.favorite) appDao.addLegacyFavorites(listOf(LegacyFavoriteEntity(newId)))
             files.deleteFile(row.path)
-            dao.removeLegacyTrash(listOf(row.rowId))
+            appDao.removeLegacyTrash(listOf(row.rowId))
         }
         if (rows.isNotEmpty()) indexer.requestSync(0)
         return rows.size
@@ -179,12 +181,12 @@ class MediaStoreLibrary(
 
     private suspend fun deleteLegacy(rows: List<LegacyTrashEntity>): Int {
         rows.forEach { legacy?.deleteFile(it.path) }
-        rows.map { it.rowId }.chunked(SQL_VARS).forEach { dao.removeLegacyTrash(it) }
+        rows.map { it.rowId }.chunked(SQL_VARS).forEach { appDao.removeLegacyTrash(it) }
         return rows.size
     }
 
     override suspend fun restoreAll(): Int {
-        if (!mediaStoreWrites) return restoreLegacy(dao.legacyTrash())
+        if (!mediaStoreWrites) return restoreLegacy(appDao.legacyTrash())
         val ids = dao.trashedIds()
         if (ids.isEmpty()) return 0
         restore(ids.map { AssetRef.local(it).id })
@@ -192,7 +194,7 @@ class MediaStoreLibrary(
     }
 
     override suspend fun emptyTrash(): Int {
-        if (!mediaStoreWrites) return deleteLegacy(dao.legacyTrash())
+        if (!mediaStoreWrites) return deleteLegacy(appDao.legacyTrash())
         val ids = dao.trashedIds()
         if (ids.isEmpty()) return 0
         deleteForever(ids.map { AssetRef.local(it).id })
@@ -202,7 +204,7 @@ class MediaStoreLibrary(
     /** Android 10: drops trashed copies past their 30 days. */
     suspend fun purgeExpiredLegacyTrash() {
         if (mediaStoreWrites) return
-        deleteLegacy(dao.expiredLegacyTrash(now()))
+        deleteLegacy(appDao.expiredLegacyTrash(now()))
     }
 
     /* ---------------- Folders ---------------- */

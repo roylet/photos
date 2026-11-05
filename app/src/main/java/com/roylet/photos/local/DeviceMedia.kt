@@ -40,20 +40,26 @@ class DeviceMedia(
     private val access: () -> MediaAccess = { MediaPermissions.access(app) }
     private val mediaStoreWrites = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
 
-    val db: MediaDatabase by lazy { MediaDatabase.open(app) }
+    /** The app's own data (Android 10 trash, local edit recipes): strict migrations, never rebuilt. */
+    val appDb: PhotosDatabase by lazy { PhotosDatabase.open(app) }
+    val appDao: AppDao get() = appDb.app()
+
+    /** The MediaStore index (a cache); a v1 index hands its Android 10 rows to [appDb] while migrating. */
+    val db: MediaDatabase by lazy { MediaDatabase.open(app) { rows -> appDb.importLegacy(rows) } }
     val dao: MediaDao get() = db.media()
 
     val indexer: MediaIndexer by lazy {
-        MediaIndexer(dao, AndroidMediaStoreReader(app), access, scope, onChanged = { onChanged() })
+        MediaIndexer(dao, AndroidMediaStoreReader(app), access, scope, onChanged = { onChanged() }, legacyFavorites = { appDao.legacyFavorites() })
     }
 
-    val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, indexer, access, mediaStoreTrash = mediaStoreWrites) }
+    val timeline: MediaStoreTimelineSource by lazy { MediaStoreTimelineSource(dao, appDao, indexer, access, mediaStoreTrash = mediaStoreWrites) }
 
     private val offer = ManageMediaOffer(app, snackbar, scope, offeredManageMedia, markOfferedManageMedia)
 
     val library: MediaStoreLibrary by lazy {
         MediaStoreLibrary(
             dao = dao,
+            appDao = appDao,
             indexer = indexer,
             mediaStoreWrites = mediaStoreWrites,
             runner = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ConsentRequestRunner(app, consent, offer::maybeOffer) else MediaRequestRunner { false },

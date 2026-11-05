@@ -89,11 +89,12 @@ class DeviceScreenshotTest(private val darkTheme: Boolean) {
 
     private val outDir = File(System.getProperty("screenshotDir") ?: "build/screenshots")
     private val db = MediaDatabase.inMemory(ApplicationProvider.getApplicationContext())
+    private val appDb = com.roylet.photos.local.PhotosDatabase.inMemory(ApplicationProvider.getApplicationContext())
     private val phone = FakeMediaStore()
     private val zone = ZoneId.of("Australia/Melbourne")
     private val indexer = MediaIndexer(db.media(), phone, { MediaAccess.Full }, CoroutineScope(Dispatchers.Unconfined), { zone })
-    private val source = MediaStoreTimelineSource(db.media(), indexer, { MediaAccess.Full }, mediaStoreTrash = true)
-    private val library = MediaStoreLibrary(db.media(), indexer, true, MediaRequestRunner { true }, null, object : com.roylet.photos.local.LocalIo {
+    private val source = MediaStoreTimelineSource(db.media(), appDb.app(), indexer, { MediaAccess.Full }, mediaStoreTrash = true)
+    private val library = MediaStoreLibrary(db.media(), appDb.app(), indexer, true, MediaRequestRunner { true }, null, object : com.roylet.photos.local.LocalIo {
         override suspend fun details(item: com.roylet.photos.local.MediaEntity) = throw UnsupportedOperationException()
         override suspend fun copy(item: com.roylet.photos.local.MediaEntity, dest: File, onProgress: (Long, Long) -> Unit) = Unit
     })

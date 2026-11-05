@@ -15,6 +15,8 @@ import com.roylet.photos.ui.permissions.MediaAccess
  */
 class MediaStoreTimelineSource(
     private val dao: MediaDao,
+    /** Android 10's trash list. */
+    private val appDao: AppDao,
     private val indexer: MediaIndexer,
     private val access: () -> MediaAccess,
     /** Android 11+: MediaStore's own trash. Android 10 lists the app-private trash instead. */
@@ -45,7 +47,7 @@ class MediaStoreTimelineSource(
         val q = queryFor(filter) ?: return emptyList()
         if (!ready()) return emptyList()
         val months = if (legacyTrash(q)) {
-            if (q.favorite || q.bucketId != null) emptyList() else dao.legacyTrashMonths()
+            if (q.favorite || q.bucketId != null) emptyList() else appDao.legacyTrashMonths()
         } else dao.months(q.trashed, q.favorite, q.bucketId)
         val ordered = if (filter.newestFirst) months else months.reversed()
         return ordered.map { TimeBucket(MonthKeys.key(it.month), it.count) }
@@ -56,7 +58,7 @@ class MediaStoreTimelineSource(
         val month = MonthKeys.parse(key) ?: return emptyList()
         if (!ready()) return emptyList()
         val assets = if (legacyTrash(q)) {
-            if (q.favorite || q.bucketId != null) emptyList() else dao.legacyTrashInMonth(month).map { it.toAsset() }
+            if (q.favorite || q.bucketId != null) emptyList() else appDao.legacyTrashInMonth(month).map { it.toAsset() }
         } else dao.inMonth(month, q.trashed, q.favorite, q.bucketId).map { it.toAsset() }
         return if (filter.newestFirst) assets else assets.reversed()
     }
