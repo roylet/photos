@@ -21,6 +21,7 @@ import com.roylet.photos.video.export.SourceInfo
 import com.roylet.photos.video.io.FrameStripProvider
 import com.roylet.photos.video.model.VideoEdit
 import com.roylet.photos.video.model.VideoHistory
+import com.roylet.photos.video.preview.PreviewNotice
 import com.roylet.photos.video.preview.VideoPreviewController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,34 +34,64 @@ import java.io.File
 interface VideoPlayback {
     val outputPosition: StateFlow<Long>
     val isPlaying: StateFlow<Boolean>
+    /** A fallback or failure to show over the preview. */
+    val notice: StateFlow<PreviewNotice?>
     fun setEdit(edit: VideoEdit)
     fun togglePlay()
     fun pause()
     fun seekTo(outputMs: Long)
+    /** Pauses for a drag; [sourceTime] for a trim handle (it can show cut-out time). */
+    fun beginScrub(sourceTime: Boolean)
+    /** Shows source time [sourceMs] while a handle is dragged. */
+    fun scrubToSource(sourceMs: Long)
+    /** Back to [edit] (if given), resting on [restOutputMs]; plays again if it played before. */
+    fun endScrub(edit: VideoEdit? = null, restOutputMs: Long? = null)
+    fun retry()
 }
 
 /** [VideoPlayback] over the real preview controller. */
 class ControllerPlayback(val controller: VideoPreviewController) : VideoPlayback {
     override val outputPosition get() = controller.outputPosition
     override val isPlaying get() = controller.isPlaying
+    override val notice get() = controller.notice
     override fun setEdit(edit: VideoEdit) = controller.setEdit(edit)
     override fun togglePlay() = controller.togglePlay()
     override fun pause() = controller.pause()
     override fun seekTo(outputMs: Long) = controller.seekToOutputTime(outputMs)
+    override fun beginScrub(sourceTime: Boolean) = controller.beginScrub(sourceTime)
+    override fun scrubToSource(sourceMs: Long) = controller.scrubToSource(sourceMs)
+    override fun endScrub(edit: VideoEdit?, restOutputMs: Long?) = controller.endScrub(edit, restOutputMs)
+    override fun retry() = controller.retry()
 }
 
 /** A still player for previews and tests: holds a position, never plays. */
-class StillPlayback(position: Long = 0L, playing: Boolean = false) : VideoPlayback {
+class StillPlayback(position: Long = 0L, playing: Boolean = false, notice: PreviewNotice? = null) : VideoPlayback {
     override val outputPosition = MutableStateFlow(position)
     override val isPlaying = MutableStateFlow(playing)
+    override val notice = MutableStateFlow(notice)
     private var duration = Long.MAX_VALUE
+    private var edit: VideoEdit? = null
+    private var resume = false
+    var scrubbing = false
+        private set
     override fun setEdit(edit: VideoEdit) {
+        this.edit = edit
         duration = edit.outputDurationMs()
         outputPosition.value = outputPosition.value.coerceIn(0, duration)
     }
     override fun togglePlay() { isPlaying.value = !isPlaying.value }
     override fun pause() { isPlaying.value = false }
     override fun seekTo(outputMs: Long) { outputPosition.value = outputMs.coerceIn(0, duration) }
+    override fun beginScrub(sourceTime: Boolean) { scrubbing = true; resume = isPlaying.value; pause() }
+    override fun scrubToSource(sourceMs: Long) { edit?.sourceToOutput(sourceMs)?.let(::seekTo) }
+    override fun endScrub(edit: VideoEdit?, restOutputMs: Long?) {
+        if (edit != null) setEdit(edit)
+        restOutputMs?.let(::seekTo)
+        if (resume) isPlaying.value = true
+        scrubbing = false
+        resume = false
+    }
+    override fun retry() { notice.value = null }
 }
 
 /**
@@ -109,10 +140,16 @@ class VideoEditorSession(
     /** Crop aspect lock. */
     var cropAspect by mutableStateOf(AspectPreset.FREE)
 
-    /** While a trim handle is dragged: the exact frame under it (shown over the preview) and which edge. */
+    /**
+     * While a trim handle is dragged: which edge and its source time ([scrubMs]); the player shows
+     * that frame. [scrubFrame] is a decoded still of it, shown only where there's no live player.
+     */
     var scrubFrame by mutableStateOf<ImageBitmap?>(null)
     var scrubHandle by mutableStateOf<TrimHandle?>(null)
     var scrubMs by mutableStateOf(0L)
+
+    /** While the playhead is dragged on the strip (the preview shows a time bubble). */
+    var scrubPlayhead by mutableStateOf(false)
 
     /** Extra frames decoded for zoomed-in strips, keyed by source time. */
     val zoomFrames = mutableStateMapOf<Long, ImageBitmap>()

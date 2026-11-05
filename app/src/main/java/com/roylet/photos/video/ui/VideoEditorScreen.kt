@@ -110,6 +110,7 @@ import com.roylet.photos.util.Format
 import com.roylet.photos.video.model.OutputResolution
 import com.roylet.photos.video.model.VideoEdit
 import com.roylet.photos.video.model.VideoGeometry
+import com.roylet.photos.video.preview.PreviewNotice
 import com.roylet.photos.video.preview.VideoEditPreview
 import com.roylet.photos.video.preview.rememberVideoPreviewController
 import com.roylet.photos.video.save.VideoSaveProgress
@@ -171,7 +172,7 @@ fun VideoEditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId
                 VideoEditorFailed(p, onRetry = vm::retry, onEditThisVersion = vm::editThisVersion, onClose = onClose)
             }
             is VideoEditorPhase.Ready -> {
-                val controller = rememberVideoPreviewController()
+                val controller = rememberVideoPreviewController(assetId)
                 val file = p.session.sourceFile
                 LaunchedEffect(controller, file) { if (controller != null && file != null) controller.setSource(file) }
                 val playback = remember(controller) { controller?.let(::ControllerPlayback) ?: StillPlayback() }
@@ -319,8 +320,11 @@ private fun PreviewArea(
     val reduced = rememberReducedMotion()
     val playing by playback.isPlaying.collectAsState()
     val position by playback.outputPosition.collectAsState()
+    val notice by playback.notice.collectAsState()
+    val failed = notice as? PreviewNotice.Failed
     val inset by animateDpAsState(if (cropMode) 28.dp else 8.dp, motion(reduced, spring(dampingRatio = 0.8f, stiffness = 500f)), label = "inset")
-    val scrubbing = session.scrubHandle != null
+    val handle = session.scrubHandle
+    val scrubbing = handle != null || session.scrubPlayhead
     Box(modifier.clipToBounds()) {
         Box(
             Modifier.fillMaxSize().padding(inset)
@@ -329,8 +333,8 @@ private fun PreviewArea(
             if (preview != null) preview(Modifier.fillMaxSize())
             else StillPreview(session, edit, cropMode, Modifier.fillMaxSize())
             if (cropMode) VideoCropOverlay(session, edit, Modifier.fillMaxSize())
-            // While a trim handle is dragged: the frame under it.
-            if (scrubbing) {
+            // A dragged trim handle: the live player seeks to it; without one (or if it failed) a decoded still stands in.
+            if (handle != null && (preview == null || failed != null)) {
                 val frame = session.scrubFrame
                 Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     val img = frame ?: nearestStripFrame(session, session.scrubMs)
@@ -340,7 +344,7 @@ private fun PreviewArea(
         }
         if (!cropMode) {
             AnimatedVisibility(
-                visible = !playing && !scrubbing,
+                visible = !playing && !scrubbing && failed == null,
                 modifier = Modifier.align(Alignment.Center),
                 enter = scaleIn(motion(reduced, spring(dampingRatio = 0.5f, stiffness = 600f)), initialScale = 0.6f) + fadeIn(motion(reduced, tween(120))),
                 exit = scaleOut(motion(reduced, tween(140)), targetScale = 0.8f) + fadeOut(motion(reduced, tween(140))),
@@ -352,6 +356,9 @@ private fun PreviewArea(
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Rounded.PlayArrow, null, tint = Brutal.Ink, modifier = Modifier.size(44.dp)) }
             }
+        }
+        if (failed != null) {
+            PreviewFailedNotice(failed.message, onRetry = playback::retry, modifier = Modifier.align(Alignment.Center).padding(24.dp))
         }
         val e = edit.value
         Row(
@@ -369,13 +376,53 @@ private fun PreviewArea(
                 style = Type.Label, color = BrutalDark.Text,
             )
         }
-        val handle = session.scrubHandle
-        if (handle != null) {
-            DarkTag(
-                "${if (handle.edge == TrimEdge.START) "IN" else "OUT"} ${TrimMath.formatTime(session.scrubMs)}",
-                Modifier.align(Alignment.TopCenter).padding(top = 14.dp),
+        if (notice == PreviewNotice.NoFilters && !cropMode) {
+            Text(
+                "PREVIEW WITHOUT FILTERS",
+                style = Type.Tiny, color = BrutalDark.Text,
+                modifier = Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 14.dp)
+                    .brutalDark(fill = BrutalDark.Panel, shadow = 2.dp).padding(horizontal = 8.dp, vertical = 4.dp)
+                    .semantics { contentDescription = "Preview without filters; the saved video still gets them" },
             )
         }
+        // While dragging on the strip: where the preview is, in big type.
+        if (handle != null) {
+            ScrubBubble(
+                if (handle.edge == TrimEdge.START) "IN" else "OUT",
+                TrimMath.formatTime(session.scrubMs),
+                Modifier.align(Alignment.TopCenter).padding(top = 14.dp),
+            )
+        } else if (session.scrubPlayhead) {
+            ScrubBubble("AT", TrimMath.formatTime(position), Modifier.align(Alignment.TopCenter).padding(top = 14.dp))
+        }
+    }
+}
+
+/** The time bubble over the preview while a handle or the playhead is dragged. */
+@Composable
+private fun ScrubBubble(label: String, time: String, modifier: Modifier) {
+    Row(
+        modifier.brutalDark(fill = BrutalDark.Orange, shadow = 4.dp, border = Brutal.Ink).padding(horizontal = 12.dp, vertical = 6.dp)
+            .semantics { contentDescription = "$label $time" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = Type.Label, color = Brutal.Ink)
+        Spacer(Modifier.width(8.dp))
+        Text(time, style = Type.Title, color = Brutal.Ink)
+    }
+}
+
+/** The player failed: say so plainly, with a way to try again. */
+@Composable
+private fun PreviewFailedNotice(message: String, onRetry: () -> Unit, modifier: Modifier) {
+    Column(
+        modifier.widthIn(max = 340.dp).brutalDark(shadow = 5.dp).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        DarkTag("PREVIEW STOPPED", fill = BrutalDark.Red)
+        Text(message, style = Type.Body, color = BrutalDark.Text)
+        Text("Your edits are safe; saving still works.", style = Type.Small, color = BrutalDark.MutedText)
+        DarkButton("Retry", onRetry, modifier = Modifier.align(Alignment.End))
     }
 }
 
