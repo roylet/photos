@@ -133,6 +133,7 @@ class VideoPreviewControllerTest {
         controller.setEdit(edit)
         controller.handleError(PlaybackException("gone", null, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND))
         assertTrue(controller.notice.value is PreviewNotice.Failed)
+        assertTrue((controller.notice.value as PreviewNotice.Failed).details.startsWith("ERROR_CODE_IO_FILE_NOT_FOUND"))
         assertFalse(controller.effectsDisabled)
         controller.player.stop() // what an error leaves behind
         controller.retry()
@@ -239,5 +240,18 @@ class VideoPreviewControllerTest {
         assertEquals(2, controller.player.mediaItemCount)
         assertEquals(1, controller.player.currentMediaItemIndex)
         assertEquals(2_000L, controller.player.currentPosition)
+    }
+
+    // ---- diagnostics ----
+
+    @Test fun failureDetailsNameTheCodeAndTheDeepestCause() {
+        val root = IllegalStateException("Expected a valid end boundary for unity region.")
+        val error = PlaybackException("Unexpected runtime error", RuntimeException("wrapper", root), PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)
+        assertEquals(root, PreviewErrors.rootCause(error))
+        val d = PreviewErrors.details(error)
+        assertTrue(d, d.startsWith("ERROR_CODE_FAILED_RUNTIME_CHECK (1004)\nCause: java.lang.IllegalStateException: Expected a valid end boundary for unity region."))
+        assertTrue(d, d.contains("\n  at "))
+        val noCause = PlaybackException("gone", null, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND)
+        assertTrue(PreviewErrors.details(noCause).contains("Cause: androidx.media3.common.PlaybackException: gone"))
     }
 }

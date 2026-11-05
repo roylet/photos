@@ -126,7 +126,13 @@ class VideoEditorScreenshotTest {
 
     @Test fun previewFailed() = shoot(
         "video-01d-preview-failed",
-        workspace(session(graded), VideoTool.TRIM, notice = PreviewNotice.Failed("This phone couldn't decode the video for the preview.")),
+        workspace(session(graded), VideoTool.TRIM, notice = PreviewNotice.Failed(
+            "The preview stopped (ERROR_CODE_FAILED_RUNTIME_CHECK).",
+            "ERROR_CODE_FAILED_RUNTIME_CHECK (1004)\nCause: java.lang.IllegalStateException: Expected a valid end boundary for unity region.\n" +
+                "  at com.google.common.base.Preconditions.checkState(Preconditions.java:513)\n" +
+                "  at androidx.media3.common.audio.GainProcessor.queueInput(GainProcessor.java:115)",
+        ),
+    ),
     )
 
     @Test fun crop() {

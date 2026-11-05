@@ -85,8 +85,11 @@ sealed interface PreviewNotice {
     /** The effect pipeline failed on this phone: the preview plays without colour/crop (the export still applies them). */
     data object NoFilters : PreviewNotice
 
-    /** The player failed; [VideoPreviewController.retry] prepares it again. */
-    data class Failed(val message: String) : PreviewNotice
+    /**
+     * The player failed; [VideoPreviewController.retry] prepares it again. [details] is the
+     * technical part (error code, root cause class and message) for the person to copy.
+     */
+    data class Failed(val message: String, val details: String = "") : PreviewNotice
 }
 
 /** Error classification for the preview's fallback. */
@@ -106,6 +109,30 @@ object PreviewErrors {
         }
         return false
     }
+
+    /** The deepest [Throwable.cause] of [error] (itself when it has none); cycles are cut. */
+    fun rootCause(error: Throwable): Throwable {
+        var c = error
+        val seen = HashSet<Throwable>()
+        while (seen.add(c)) c = c.cause ?: break
+        return c
+    }
+
+    /**
+     * Copyable details: "ERROR_CODE_FAILED_RUNTIME_CHECK (1004)", then the root cause's class and
+     * message and its top frames, e.g. "java.lang.IllegalStateException: Expected a valid …".
+     */
+    fun details(error: PlaybackException): String {
+        val root = rootCause(error)
+        return buildString {
+            append(error.errorCodeName).append(" (").append(error.errorCode).append(')')
+            append("\nCause: ").append(root.javaClass.name)
+            root.message?.let { append(": ").append(it) }
+            root.stackTrace.take(DETAIL_FRAMES).forEach { append("\n  at ").append(it) }
+        }
+    }
+
+    private const val DETAIL_FRAMES = 4
 
     fun message(error: PlaybackException): String = when (error.errorCode) {
         PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "The downloaded original is missing."
@@ -363,7 +390,7 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
      * Anything else becomes a [PreviewNotice.Failed] with [retry].
      */
     internal fun handleError(error: PlaybackException) {
-        Log.w(TAG, "Preview error ${error.errorCodeName}", error)
+        android.util.Log.e(TAG, "Preview error ${error.errorCodeName} (${error.errorCode})", error)
         if (!effects.isEmpty && (PreviewErrors.isEffectError(error) || !renderedFrame)) {
             effectsDisabled = true
             effects = PreviewEffectPlan.NONE
@@ -372,7 +399,7 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
             if (player.mediaItemCount > 0) player.prepare()
             return
         }
-        _notice.value = PreviewNotice.Failed(PreviewErrors.message(error))
+        _notice.value = PreviewNotice.Failed(PreviewErrors.message(error), PreviewErrors.details(error))
     }
 
     /** After a [PreviewNotice.Failed]: prepares again at the same spot. */

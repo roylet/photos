@@ -67,6 +67,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
@@ -358,7 +361,7 @@ private fun PreviewArea(
             }
         }
         if (failed != null) {
-            PreviewFailedNotice(failed.message, onRetry = playback::retry, modifier = Modifier.align(Alignment.Center).padding(24.dp))
+            PreviewFailedNotice(failed, onRetry = playback::retry, modifier = Modifier.align(Alignment.Center).padding(24.dp))
         }
         val e = edit.value
         Row(
@@ -412,17 +415,37 @@ private fun ScrubBubble(label: String, time: String, modifier: Modifier) {
     }
 }
 
-/** The player failed: say so plainly, with a way to try again. */
+/** The player failed: say so plainly, show the selectable technical details to copy, and a way to try again. */
 @Composable
-private fun PreviewFailedNotice(message: String, onRetry: () -> Unit, modifier: Modifier) {
+private fun PreviewFailedNotice(failed: PreviewNotice.Failed, onRetry: () -> Unit, modifier: Modifier) {
+    val context = LocalContext.current
     Column(
         modifier.widthIn(max = 340.dp).brutalDark(shadow = 5.dp).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         DarkTag("PREVIEW STOPPED", fill = BrutalDark.Red)
-        Text(message, style = Type.Body, color = BrutalDark.Text)
+        Text(failed.message, style = Type.Body, color = BrutalDark.Text)
         Text("Your edits are safe; saving still works.", style = Type.Small, color = BrutalDark.MutedText)
-        DarkButton("Retry", onRetry, modifier = Modifier.align(Alignment.End))
+        if (failed.details.isNotEmpty()) {
+            SelectionContainer {
+                Text(
+                    failed.details,
+                    style = Type.Small.copy(fontFamily = FontFamily.Monospace),
+                    color = BrutalDark.MutedText,
+                    maxLines = 8,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (failed.details.isNotEmpty()) {
+                DarkButton("Copy details", {
+                    context.getSystemService(android.content.ClipboardManager::class.java)
+                        ?.setPrimaryClip(android.content.ClipData.newPlainText("Preview error", "${failed.message}\n${failed.details}"))
+                }, primary = false)
+            }
+            DarkButton("Retry", onRetry)
+        }
     }
 }
 
