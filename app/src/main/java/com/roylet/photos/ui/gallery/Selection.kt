@@ -70,6 +70,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import com.roylet.photos.domain.timeline.Visibility
+import com.roylet.photos.domain.source.Capabilities
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.sources.LocalCapabilities
+import com.roylet.photos.ui.sources.forIds
 import com.roylet.photos.ui.components.reducedMotion
 import kotlin.math.max
 import kotlin.math.min
@@ -254,22 +258,30 @@ internal fun allFavorite(ids: List<String>, timeline: TimelineRepository?): Bool
  * [LocalAssetActions]. Add-to-album and archive are the first to move into the ⋯ menu.
  */
 @Composable
-fun defaultSelectionActions(scope: SelectionScope, actions: AssetActions = LocalAssetActions.current): List<SelectionAction> {
+fun defaultSelectionActions(
+    scope: SelectionScope,
+    actions: AssetActions = LocalAssetActions.current,
+    capabilities: Capabilities = LocalCapabilities.current.forIds(scope.ids),
+): List<SelectionAction> {
     val allFav = allFavorite(scope.ids, scope.timeline)
     val unarchive = scope.timeline?.filter?.visibility == Visibility.ARCHIVE
     val toggleFav = { actions.favorite(scope.ids, !allFav, scope.timeline) }
-    return listOf(
-        SelectionAction(
+    return listOfNotNull(
+        if (Capability.FAVORITE in capabilities) SelectionAction(
             if (allFav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (allFav) "Unfavourite" else "Favourite", toggleFav,
             content = { FavoritePopButton(allFav, onClick = toggleFav) },
-        ),
-        SelectionAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", { actions.addToAlbum(scope.ids, scope.timeline) }, primary = false),
+        ) else null,
+        if (Capability.SERVER_ALBUMS in capabilities) {
+            SelectionAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", { actions.addToAlbum(scope.ids, scope.timeline) }, primary = false)
+        } else null,
         SelectionAction(Icons.Rounded.Share, "Share", { actions.share(scope.ids, scope.timeline) }),
-        SelectionAction(
+        if (Capability.ARCHIVE in capabilities) SelectionAction(
             if (unarchive) Icons.Rounded.Unarchive else Icons.Rounded.Archive, if (unarchive) "Unarchive" else "Archive",
             { actions.archive(scope.ids, scope.timeline); scope.clear() }, primary = false,
-        ),
-        SelectionAction(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() }),
+        ) else null,
+        if (Capability.TRASH in capabilities) {
+            SelectionAction(Icons.Rounded.DeleteOutline, "Delete", { actions.delete(scope.ids, scope.timeline); scope.clear() })
+        } else null,
     )
 }
 

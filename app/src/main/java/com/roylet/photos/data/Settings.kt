@@ -45,6 +45,23 @@ class Settings(context: Context) : ServerStore {
     private val _server = MutableStateFlow(readServer())
     override val server: StateFlow<ServerConfig?> = _server.asStateFlow()
 
+    private val _onboarded = MutableStateFlow(prefs.getBoolean(KEY_ONBOARDED, false) || _server.value != null)
+    /**
+     * The first-launch choice ("Use on this device" / "Connect to Immich") was made. Anyone who
+     * already had a server before onboarding existed counts as done.
+     */
+    val onboarded: StateFlow<Boolean> = _onboarded.asStateFlow()
+
+    fun completeOnboarding() {
+        prefs.edit().putBoolean(KEY_ONBOARDED, true).apply()
+        _onboarded.value = true
+    }
+
+    /** Whether the media permission prompt has been shown before (to tell "denied" from "never asked"). */
+    var askedMediaPermission: Boolean
+        get() = prefs.getBoolean(KEY_ASKED_MEDIA, false)
+        set(v) { prefs.edit().putBoolean(KEY_ASKED_MEDIA, v).apply() }
+
     fun saveServer(config: ServerConfig) {
         prefs.edit()
             .putString(KEY_PUBLIC, config.publicUrl)
@@ -59,6 +76,7 @@ class Settings(context: Context) : ServerStore {
             .putString(KEY_LOCAL_FINGERPRINT, config.localFingerprint)
             .apply()
         _server.value = config
+        if (!_onboarded.value) completeOnboarding()
     }
 
     /** Applies [change] to the saved server, if there is one. */
@@ -109,6 +127,8 @@ class Settings(context: Context) : ServerStore {
         const val KEY_FINGERPRINT = "serverFingerprint"
         const val KEY_LOCAL_VERIFIED = "localVerified"
         const val KEY_LOCAL_FINGERPRINT = "localFingerprint"
+        const val KEY_ONBOARDED = "onboarded"
+        const val KEY_ASKED_MEDIA = "askedMediaPermission"
         val SERVER_KEYS = listOf(KEY_PUBLIC, KEY_LOCAL, KEY_API_KEY, KEY_USER_ID, KEY_EMAIL, KEY_NAME, KEY_MODE, KEY_FINGERPRINT, KEY_LOCAL_VERIFIED, KEY_LOCAL_FINGERPRINT)
     }
 }

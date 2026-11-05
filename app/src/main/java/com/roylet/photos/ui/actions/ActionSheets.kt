@@ -59,6 +59,9 @@ import androidx.compose.ui.unit.dp
 import com.roylet.photos.domain.library.Album
 import com.roylet.photos.domain.library.AlbumSort
 import com.roylet.photos.domain.library.ShareLinkOptions
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.sources.LocalCapabilities
+import com.roylet.photos.ui.sources.forIds
 import com.roylet.photos.ui.components.BrutalButton
 import com.roylet.photos.ui.components.BrutalCheck
 import com.roylet.photos.ui.components.BrutalProgress
@@ -211,15 +214,19 @@ private val expiryChoices = listOf<Pair<String, Int?>>("Never" to null, "1 day" 
 @Composable
 fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
     val albumMode = sheet.albumId != null
-    var mode by remember(sheet) { mutableStateOf(if (albumMode) "link" else actions.prefs.shareMode) }
+    // Share links need Immich (and an asset it has); without them it's "send file" only.
+    val links = Capability.SHARE_LINKS in LocalCapabilities.current.forIds(sheet.ids)
+    var mode by remember(sheet, links) { mutableStateOf(if (albumMode) "link" else if (!links) "file" else actions.prefs.shareMode) }
     val albumName = sheet.albumId?.let { actions.albums.find(it)?.name }
     SheetTitle("Share", if (albumMode) albumName ?: "Album" else Format.plural(sheet.ids.size, "item"))
     Spacer(Modifier.height(14.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ModeTile(Icons.Rounded.Send, "Send file", "Originals to any app", selected = mode == "file", enabled = !albumMode, modifier = Modifier.weight(1f)) { mode = "file" }
-        ModeTile(Icons.Rounded.Link, "Share link", "A link anyone can open", selected = mode == "link", modifier = Modifier.weight(1f)) { mode = "link" }
+    if (links || albumMode) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ModeTile(Icons.Rounded.Send, "Send file", "Originals to any app", selected = mode == "file", enabled = !albumMode, modifier = Modifier.weight(1f)) { mode = "file" }
+            ModeTile(Icons.Rounded.Link, "Share link", "A link anyone can open", selected = mode == "link", modifier = Modifier.weight(1f)) { mode = "link" }
+        }
+        Spacer(Modifier.height(16.dp))
     }
-    Spacer(Modifier.height(16.dp))
     AnimatedContent(mode, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) }, label = "shareMode") { m ->
         Column {
             if (m == "file") SendFilePane(actions, sheet.ids) else LinkPane(actions, sheet)

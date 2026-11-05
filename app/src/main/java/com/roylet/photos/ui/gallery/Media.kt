@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.IntSize
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.roylet.photos.domain.source.AssetRef
 import com.roylet.photos.domain.timeline.ThumbHash
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ThumbSize
@@ -34,7 +35,10 @@ import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.viewer.LocalViewer
 import okhttp3.OkHttpClient
 
-/** Where an asset's pixels live. Screens read it from [LocalMediaUrls]. */
+/**
+ * Where an asset's pixels live. Screens read it from [LocalMediaUrls], which the app fills with a
+ * [SourceMediaUrls] that sends each id to its source's implementation.
+ */
 interface MediaUrls {
     /** Small grid thumbnail (~250px). */
     fun thumbnail(id: String): String
@@ -55,6 +59,30 @@ class ImmichMediaUrls(private val api: ImmichApi) : MediaUrls {
     override fun original(id: String) = api.originalUrl(id)
     override fun video(id: String) = api.videoPlaybackUrl(id)
     override fun person(id: String) = api.personThumbnailUrl(id)
+}
+
+/**
+ * Routes each asset id to its source (see AssetRef): `local:<id>` to [local], everything else to
+ * [immich] (or [FakeMediaUrls] without a server). The delegates get the bare key: the MediaStore
+ * id for local assets, the UUID for Immich, so [ImmichMediaUrls] is unchanged.
+ *
+ * Agent B plugs a content:// implementation in as `AppContainer.localMediaUrls`; Coil and
+ * ExoPlayer then need fetchers/data sources for those URIs (see docs/SOURCES.md).
+ */
+class SourceMediaUrls(private val immich: MediaUrls?, private val local: MediaUrls) : MediaUrls {
+    private inline fun route(id: String, url: MediaUrls.(String) -> String): String {
+        val ref = AssetRef.parse(id) ?: return (immich ?: FakeMediaUrls).url(id)
+        return if (ref.isLocal) local.url(ref.key) else (immich ?: FakeMediaUrls).url(ref.key)
+    }
+    override fun thumbnail(id: String) = route(id) { thumbnail(it) }
+    override fun preview(id: String) = route(id) { preview(it) }
+    override fun fullsize(id: String) = route(id) { fullsize(it) }
+    override fun original(id: String) = route(id) { original(it) }
+    override fun video(id: String) = route(id) { video(it) }
+    override fun person(id: String) = (immich ?: FakeMediaUrls).person(id)
+
+    override fun equals(other: Any?) = other is SourceMediaUrls && other.immich == immich && other.local == local
+    override fun hashCode() = 31 * immich.hashCode() + local.hashCode()
 }
 
 /** Placeholder URLs for previews and signed-out states; screenshot tests answer them with a Coil preview handler. */

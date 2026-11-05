@@ -42,6 +42,8 @@ import com.roylet.photos.ui.theme.Palette
  *
  * @param headerActions trailing header content, e.g. the ConnectionChip and a settings button.
  * @param selectionActions the selection bar's buttons; defaults to [defaultSelectionActions].
+ * @param banner shown between the header and the grid (e.g. the phone's "Limited access" banner).
+ * @param emptyContent replaces the default empty state once the timeline is loaded and empty.
  */
 @Composable
 fun TimelineScreen(
@@ -59,6 +61,8 @@ fun TimelineScreen(
     headerActions: @Composable RowScope.() -> Unit = {},
     selectionActions: @Composable (SelectionScope) -> List<SelectionAction> = { defaultSelectionActions(it) },
     topContent: (@Composable () -> Unit)? = null,
+    banner: (@Composable () -> Unit)? = null,
+    emptyContent: (@Composable () -> Unit)? = null,
 ) {
     val status by timeline.status.collectAsState()
     val snapshot by timeline.snapshot.collectAsState()
@@ -80,6 +84,7 @@ fun TimelineScreen(
                 ScreenHeader(title, subtitle = subtitle, onBack = onBack, actions = headerActions)
             }
         }
+        if (!selection.active) banner?.invoke()
         Box(Modifier.weight(1f)) {
             when {
                 snapshot.buckets.isNotEmpty() -> TimelineGrid(
@@ -96,7 +101,8 @@ fun TimelineScreen(
                     "Couldn't load your photos",
                     (status as TimelineRepository.Status.Failed).message,
                 ) { BrutalButton("Try again", { timeline.refresh() }, style = ButtonStyle.Primary) }
-                status == TimelineRepository.Status.Ready -> EmptyState(Icons.Rounded.PhotoLibrary, emptyTitle, emptyText)
+                status == TimelineRepository.Status.Ready ->
+                    if (emptyContent != null) emptyContent() else EmptyState(Icons.Rounded.PhotoLibrary, emptyTitle, emptyText)
                 else -> {
                     // First load: a quick spinner over the paper (months appear as soon as the list arrives).
                     androidx.compose.runtime.LaunchedEffect(timeline) { timeline.start() }
@@ -120,7 +126,21 @@ fun PhotosScreen(
     connectionChip: @Composable () -> Unit = {},
     selectionActions: @Composable (SelectionScope) -> List<SelectionAction> = { defaultSelectionActions(it) },
     topContent: (@Composable () -> Unit)? = null,
+    banner: (@Composable () -> Unit)? = null,
+    /** Replaces the timeline entirely (the phone's "no access" state). */
+    blocked: (@Composable () -> Unit)? = null,
+    emptyContent: (@Composable () -> Unit)? = null,
 ) {
+    if (blocked != null) {
+        Column(modifier.fillMaxSize().background(Palette.paper)) {
+            ScreenHeader("Photos", actions = {
+                connectionChip()
+                SquareIconButton(Icons.Rounded.Settings, "Settings", onSettings)
+            })
+            Box(Modifier.weight(1f)) { blocked() }
+        }
+        return
+    }
     TimelineScreen(
         timeline = timeline,
         title = "Photos",
@@ -135,5 +155,7 @@ fun PhotosScreen(
         },
         selectionActions = selectionActions,
         topContent = topContent,
+        banner = banner,
+        emptyContent = emptyContent,
     )
 }

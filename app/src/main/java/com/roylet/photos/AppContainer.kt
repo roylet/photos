@@ -8,7 +8,20 @@ import okio.Path.Companion.toOkioPath
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
+import com.roylet.photos.domain.library.EmptyLocalLibrary
+import com.roylet.photos.domain.library.LocalLibrary
+import com.roylet.photos.domain.library.EmptyLocalTimelineSource
+import com.roylet.photos.domain.library.LocalTimelineSource
+import com.roylet.photos.domain.source.ActiveSources
+import com.roylet.photos.domain.source.MediaSourceKind
+import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRegistry
+import com.roylet.photos.domain.timeline.TimelineSource
+import com.roylet.photos.ui.gallery.FakeMediaUrls
+import com.roylet.photos.ui.gallery.ImmichMediaUrls
+import com.roylet.photos.ui.gallery.MediaUrls
+import com.roylet.photos.ui.gallery.SourceMediaUrls
+import com.roylet.photos.ui.permissions.ConsentLauncher
 import com.roylet.photos.domain.library.AlbumStore
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.MemoryStore
@@ -69,11 +82,65 @@ class AppContainer(context: Context) {
         }
         .build()
 
-    /** Cached timelines (main, favourites, albums, ...) shared by the grid and the viewer. */
-    val timelines = TimelineRegistry(ImmichTimelineSource { api() }, session = { sessionKey() })
+    /* ---------------- Sources (see docs/SOURCES.md) ---------------- */
 
-    /** Albums, search, people, map, memories and sharing. Swappable so screenshots can use fake data. */
-    var library: LibrarySource = ImmichLibrary({ api() }, userId = { settings.server.value?.userId })
+    /** True while an Immich server is configured. Without one the app is a phone gallery. */
+    val hasServer: Boolean get() = settings.server.value != null
+
+    /** The Immich timeline (bucket API). */
+    val immichTimeline: TimelineSource = ImmichTimelineSource { api() }
+
+    /** The phone's timeline. Agent B replaces the placeholder with the MediaStore source. */
+    var localTimeline: LocalTimelineSource = EmptyLocalTimelineSource
+
+    /** The Immich library (albums, search, people, sharing, trash). */
+    val immichLibrary: LibrarySource = ImmichLibrary({ api() }, userId = { settings.server.value?.userId })
+
+    /** The phone's library (folders, favourite, trash). Agent B replaces the placeholder. */
+    var localLibrary: LocalLibrary = EmptyLocalLibrary()
+
+    /**
+     * URLs for phone assets (the bare MediaStore id in, a content:// URI out). Agent B replaces
+     * the placeholder; [mediaUrls] routes `local:` ids here.
+     */
+    var localMediaUrls: MediaUrls = FakeMediaUrls
+
+    /** Screenshots and tests pin a fake library here; null follows the active configuration. */
+    private var libraryOverride: LibrarySource? = null
+
+    /**
+     * Albums, search, people, map, memories, sharing, favourite and trash for what the app shows
+     * right now: Immich with a server, else the phone (the merged library replaces this choice
+     * in agent C). Setting it pins a library (screenshots use fake data).
+     */
+    var library: LibrarySource
+        get() = libraryOverride ?: if (hasServer) immichLibrary else localLibrary
+        set(value) { libraryOverride = value }
+
+    /** The timeline source for the active configuration; [TimelineRegistry.source] can still pin one in tests. */
+    private val activeTimeline = object : TimelineSource {
+        private fun current() = if (hasServer) immichTimeline else localTimeline
+        override suspend fun buckets(filter: TimelineFilter) = current().buckets(filter)
+        override suspend fun bucket(filter: TimelineFilter, key: String) = current().bucket(filter, key)
+    }
+
+    /** Which sources are showing and what they can do together (drives every capability check in the UI). */
+    fun sources(): ActiveSources = ActiveSources(
+        kinds = if (hasServer) setOf(MediaSourceKind.Immich) else setOf(MediaSourceKind.Local),
+        capabilities = library.capabilities,
+    )
+
+    /** Asset URLs for the grid, viewer and editors: each id goes to its own source. */
+    fun mediaUrls(): MediaUrls = SourceMediaUrls(immich = api()?.let(::ImmichMediaUrls), local = localMediaUrls)
+
+    /**
+     * The one app-wide launcher for MediaStore consent dialogs (favourite, trash, write requests).
+     * AppNav attaches it to the activity; call [ConsentLauncher.requestConsent] from UI actions.
+     */
+    val consent = ConsentLauncher()
+
+    /** Cached timelines (main, favourites, albums, ...) shared by the grid and the viewer. */
+    val timelines = TimelineRegistry(activeTimeline, session = { sessionKey() })
 
     /** The album list shared by the Albums tab, album pages and the add-to-album sheet. */
     val albums = AlbumStore({ library })
@@ -110,9 +177,10 @@ class AppContainer(context: Context) {
     /**
      * Who is signed in, for dropping per-account caches. The user id alone: the public URL can
      * change mid-session (learned from `externalDomain` after a LAN sign-in) for the same account,
-     * and dropping the timelines then would orphan the instances the screens hold.
+     * and dropping the timelines then would orphan the instances the screens hold. Without a
+     * server it's [DEVICE_SESSION], so connecting or disconnecting starts the caches afresh.
      */
-    fun sessionKey(): String? = settings.server.value?.let { it.userId.ifEmpty { it.publicUrl } }
+    fun sessionKey(): String = settings.server.value?.let { "immich:" + it.userId.ifEmpty { it.publicUrl } } ?: DEVICE_SESSION
 
     /**
      * The API for the saved server, or null when signed out. It's built on the public URL (the
@@ -127,6 +195,9 @@ class AppContainer(context: Context) {
     val videoEdits: VideoSaveManager by lazy { VideoSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }
 
     companion object {
+        /** [sessionKey] for the phone-only configuration. */
+        const val DEVICE_SESSION = "device"
+
         /**
          * Builds the shared client. Order matters:
          * 1. the connection manager rewrites requests for the server to the active address (and

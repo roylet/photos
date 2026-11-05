@@ -48,6 +48,8 @@ import com.roylet.photos.ui.components.DarkButton
 import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.BrutalDark
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.sources.LocalCapabilities
 import com.roylet.photos.ui.theme.Type
 
 /** The SAVE sheet: two big brutal choices. Slides up with a slight overshoot. */
@@ -59,6 +61,8 @@ fun SaveSheet(
     subtitle: String = "Exports a full-resolution JPEG to Immich",
     /** Extra content under the title (the video editor's export settings row). */
     extra: (@Composable () -> Unit)? = null,
+    /** "Group with original" needs stacks (Immich); hidden otherwise and the copy saves ungrouped. */
+    canGroup: Boolean = Capability.STACKS in LocalCapabilities.current,
 ) {
     val reduced = rememberReducedMotion()
     var group by rememberSaveable { mutableStateOf(true) }
@@ -75,7 +79,7 @@ fun SaveSheet(
             enter = slideInVertically(motion(reduced, spring(dampingRatio = 0.72f, stiffness = 420f))) { it } + fadeIn(motion(reduced, tween(120))),
             exit = slideOutVertically(motion(reduced, tween(200))) { it } + fadeOut(motion(reduced, tween(200))),
         ) {
-            SaveSheetContent(group, onGroupChange = { group = it }, onSave = onSave, onDismiss = onDismiss, subtitle = subtitle, extra = extra)
+            SaveSheetContent(group && canGroup, onGroupChange = { group = it }, onSave = onSave, onDismiss = onDismiss, subtitle = subtitle, extra = extra, canGroup = canGroup)
         }
     }
 }
@@ -88,6 +92,7 @@ internal fun SaveSheetContent(
     onDismiss: () -> Unit,
     subtitle: String = "Exports a full-resolution JPEG to Immich",
     extra: (@Composable () -> Unit)? = null,
+    canGroup: Boolean = true,
 ) {
     Column(
         Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 10.dp)
@@ -110,8 +115,9 @@ internal fun SaveSheetContent(
             title = "Save as copy",
             body = "Keeps the original untouched. The copy joins the same albums.",
             primary = true,
-            onClick = { onSave(SaveMode.COPY, group) },
+            onClick = { onSave(SaveMode.COPY, group && canGroup) },
         ) {
+            if (!canGroup) return@ChoiceCard
             Spacer(Modifier.height(12.dp))
             Row(
                 Modifier.clip(RoundedCornerShape(6.dp))

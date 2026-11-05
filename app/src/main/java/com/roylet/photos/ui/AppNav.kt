@@ -100,8 +100,25 @@ import com.roylet.photos.ui.settings.SettingsScreen
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.PhotosTheme
+import com.roylet.photos.domain.source.Capabilities
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.onboarding.OnboardingScreen
+import com.roylet.photos.ui.permissions.ConsentHost
+import com.roylet.photos.ui.permissions.DeviceLibraryEmpty
+import com.roylet.photos.ui.permissions.LimitedAccessBanner
+import com.roylet.photos.ui.permissions.LocalConsentLauncher
+import com.roylet.photos.ui.permissions.LocalMediaPermissions
+import com.roylet.photos.ui.permissions.MediaAccess
+import com.roylet.photos.ui.permissions.MediaAccessDenied
+import com.roylet.photos.ui.permissions.MediaAccessExplainer
+import com.roylet.photos.ui.permissions.rememberMediaPermissions
+import com.roylet.photos.ui.sources.LocalActiveSources
+import com.roylet.photos.ui.sources.LocalCapabilities
 
 object Routes {
+    const val ONBOARDING = "onboarding"
+    /** The explainer shown before the system's media permission prompt. */
+    const val MEDIA_ACCESS = "media-access"
     const val CONNECT = "connect"
     const val TIMELINE = "timeline"
     const val ALBUMS = "albums"
@@ -145,6 +162,11 @@ val Tabs = listOf(
 
 private val tabRoutes = Tabs.map { it.route }.toSet()
 
+/** The tabs the active sources support: Albums needs server albums or phone folders. */
+fun tabsFor(capabilities: Capabilities): List<NavTab> = Tabs.filter {
+    it.route != Routes.ALBUMS || Capability.SERVER_ALBUMS in capabilities || Capability.FOLDERS in capabilities
+}
+
 /** Width at which the bottom bar becomes a side rail (tablets, foldables, landscape). */
 val WideBreakpoint = 600.dp
 
@@ -152,14 +174,14 @@ val WideBreakpoint = 600.dp
 @Composable
 fun AppNav(container: AppContainer, nav: NavHostController = rememberNavController()) {
     val server by container.settings.server.collectAsState()
+    val onboarded by container.settings.onboarded.collectAsState()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
-
-    LaunchedEffect(server == null) {
-        if (server == null && nav.currentDestination?.route != null && nav.currentDestination?.route != Routes.CONNECT) {
-            nav.navigate(Routes.CONNECT) { popUpTo(0) }
-        }
-    }
+    // Which sources are showing (phone alone without a server) and what they can do together.
+    val sources = remember(server) { container.sources() }
+    val tabs = remember(sources.capabilities) { tabsFor(sources.capabilities) }
+    val permissions = rememberMediaPermissions(container.settings)
+    ConsentHost(container.consent)
 
     val selectTab: (NavTab) -> Unit = { tab ->
         nav.navigate(tab.route) {
@@ -170,10 +192,23 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     }
     val showBar = route in tabRoutes
 
-    val urls = remember(server) { container.api()?.let(::ImmichMediaUrls) ?: FakeMediaUrls }
+    val urls = remember(server) { container.mediaUrls() }
     val viewer = rememberSaveable(saver = ViewerController.Saver) { ViewerController() }
-    // A new account (or sign-out) starts the library caches afresh.
-    LaunchedEffect(server?.let { container.sessionKey() }) { container.albums.clear(); container.memories.clear(); container.search.reset() }
+    // A new account, connecting or disconnecting starts the library caches afresh, and the
+    // screens (which hold the old timelines) start again from Photos.
+    val session = remember(server) { container.sessionKey() }
+    var shownSession by rememberSaveable { mutableStateOf(session) }
+    LaunchedEffect(session) {
+        container.albums.clear(); container.memories.clear(); container.search.reset()
+        if (session != shownSession) {
+            shownSession = session
+            val current = nav.currentDestination?.route
+            if (current != null && current !in setOf(Routes.ONBOARDING, Routes.CONNECT) && (current != Routes.TIMELINE || nav.previousBackStackEntry != null)) {
+                viewer.close()
+                nav.navigate(Routes.TIMELINE) { popUpTo(0) }
+            }
+        }
+    }
     // After "Replace original", offer to undo: restores the original from Trash and trashes the edit.
     ReplaceUndoSnackbar(container, container.edits.lastReplace, container.edits::consumeLastReplace) { container.edits.undoReplace(it) }
     // The same for videos saved with "Replace original" (the save may finish after the editor closed).
@@ -185,6 +220,10 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalLibraryActions provides container.actions,
         LocalSnackbar provides container.snackbar,
         LocalViewer provides viewer,
+        LocalActiveSources provides sources,
+        LocalCapabilities provides sources.capabilities,
+        LocalMediaPermissions provides permissions,
+        LocalConsentLauncher provides container.consent,
     ) {
       SharedTransitionLayout(Modifier.fillMaxSize()) {
       CompositionLocalProvider(LocalSharedTransitionScope provides this) {
@@ -192,13 +231,13 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
             val wide = maxWidth >= WideBreakpoint
             if (wide) {
                 Row(Modifier.fillMaxSize()) {
-                    if (showBar) BrutalRail(Tabs, route, selectTab, header = { AppMark() })
-                    Host(container, nav, viewer, server != null, Modifier.weight(1f))
+                    if (showBar) BrutalRail(tabs, route, selectTab, header = { AppMark() })
+                    Host(container, nav, viewer, onboarded, Modifier.weight(1f))
                 }
             } else {
                 Column(Modifier.fillMaxSize()) {
-                    Host(container, nav, viewer, server != null, Modifier.weight(1f))
-                    if (showBar) BrutalTabBar(Tabs, route, selectTab)
+                    Host(container, nav, viewer, onboarded, Modifier.weight(1f))
+                    if (showBar) BrutalTabBar(tabs, route, selectTab)
                 }
             }
             ViewerOverlay(
@@ -264,10 +303,14 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.isViewer() =
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun Host(container: AppContainer, nav: NavHostController, viewer: ViewerController, signedIn: Boolean, modifier: Modifier) {
+private fun Host(container: AppContainer, nav: NavHostController, viewer: ViewerController, onboarded: Boolean, modifier: Modifier) {
+    val caps = LocalCapabilities.current
+    val sources = LocalActiveSources.current
+    val permissions = LocalMediaPermissions.current
     NavHost(
         navController = nav,
-        startDestination = if (signedIn) Routes.TIMELINE else Routes.CONNECT,
+        // No server needed: without one the app is the phone's gallery.
+        startDestination = if (onboarded) Routes.TIMELINE else Routes.ONBOARDING,
         modifier = modifier.background(Palette.paper),
         // immichup's push/pop motion for screens; a quick crossfade between tabs.
         enterTransition = { if (isViewer()) fadeIn(tween(220)) else if (isTabSwitch()) fadeIn(tween(160)) else slideInHorizontally { it / 3 } + fadeIn() },
@@ -275,8 +318,34 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
         popEnterTransition = { if (isViewer()) EnterTransition.None else if (isTabSwitch()) fadeIn(tween(160)) else fadeIn() },
         popExitTransition = { if (isViewer()) fadeOut(tween(260)) else if (isTabSwitch()) fadeOut(tween(120)) else slideOutHorizontally { it / 3 } + fadeOut() },
     ) {
+        composable(Routes.ONBOARDING) {
+            OnboardingScreen(
+                onUseDevice = {
+                    container.settings.completeOnboarding()
+                    nav.navigate(if (permissions.access == MediaAccess.Denied) Routes.MEDIA_ACCESS else Routes.TIMELINE) { popUpTo(0) }
+                },
+                onConnectImmich = {
+                    container.settings.completeOnboarding()
+                    nav.navigate(Routes.TIMELINE) { popUpTo(0) }
+                    nav.navigate(Routes.CONNECT)
+                },
+            )
+        }
+        composable(Routes.MEDIA_ACCESS) {
+            val done = { if (!nav.popBackStack()) nav.navigate(Routes.TIMELINE) { popUpTo(0) } }
+            MediaAccessExplainer(
+                permanentlyDenied = permissions.permanentlyDenied,
+                onAllow = { permissions.request { done() } },
+                onOpenSettings = { permissions.openSettings(); done() },
+                onNotNow = { done() },
+            )
+        }
         composable(Routes.CONNECT) {
-            ConnectScreen(container, onConnected = { nav.navigate(Routes.TIMELINE) { popUpTo(0) } })
+            ConnectScreen(
+                container,
+                onConnected = { nav.navigate(Routes.TIMELINE) { popUpTo(0) } },
+                onBack = nav.previousBackStackEntry?.let { { nav.popBackStack() } },
+            )
         }
         composable(Routes.TIMELINE) { entry ->
             CompositionLocalProvider(LocalNavAnimatedScope provides this) {
@@ -292,10 +361,35 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                     onRevealed = { entry.savedStateHandle.remove<Int>(Routes.REVEAL_INDEX) },
                     topContent = memories.takeIf { it.isNotEmpty() }?.let { list -> { MemoriesCarousel(list, onOpen = { nav.navigate(Routes.memories(it)) }) } },
                     connectionChip = {
-                        val conn by container.connection.state.collectAsState()
-                        ConnectionChip(conn, onClick = { nav.navigate(Routes.SETTINGS) })
+                        if (sources.hasImmich) {
+                            val conn by container.connection.state.collectAsState()
+                            ConnectionChip(conn, onClick = { nav.navigate(Routes.SETTINGS) })
+                        }
                     },
+                    // The phone's photos need the media permission (re-checked on every resume).
+                    blocked = if (sources.hasLocal && permissions.access == MediaAccess.Denied) {
+                        {
+                            MediaAccessDenied(
+                                permanentlyDenied = permissions.permanentlyDenied,
+                                onGrant = { permissions.request { if (it != MediaAccess.Denied) timeline.refresh() } },
+                                onOpenSettings = permissions::openSettings,
+                                onConnectImmich = if (sources.hasImmich) null else { { nav.navigate(Routes.CONNECT) } },
+                            )
+                        }
+                    } else null,
+                    banner = if (sources.hasLocal && permissions.access == MediaAccess.Partial) {
+                        { LimitedAccessBanner(onManage = { permissions.request { timeline.refresh() } }) }
+                    } else null,
+                    emptyContent = if (sources.hasLocal && !sources.hasImmich) {
+                        { DeviceLibraryEmpty(partial = permissions.access == MediaAccess.Partial, onManage = { permissions.request { timeline.refresh() } }) }
+                    } else null,
                 )
+                // Access changed (granted in the prompt or in system settings): load what's now visible.
+                val access = permissions.access
+                var seenAccess by remember { mutableStateOf(access) }
+                LaunchedEffect(access) {
+                    if (access != seenAccess) { seenAccess = access; if (sources.hasLocal) timeline.refresh(keepLoaded = true) }
+                }
             }
         }
         composable(
@@ -346,10 +440,12 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             )
         }
         composable(Routes.ALBUMS) {
+            val serverAlbums = Capability.SERVER_ALBUMS in caps
             AlbumsScreen(
-                container.albums, container.actions, container.uiPrefs,
+                container.albums, if (serverAlbums) container.actions else null, container.uiPrefs,
                 onOpen = { nav.navigate(Routes.album(it.id)) },
-                onNewAlbum = { name -> nav.navigate(Routes.newAlbum(name)) },
+                onNewAlbum = if (serverAlbums) { name -> nav.navigate(Routes.newAlbum(name)) } else null,
+                folders = !serverAlbums,
             )
         }
         composable(Routes.NEW_ALBUM, arguments = listOf(navArgument("name") { type = NavType.StringType; defaultValue = "" })) { entry ->
@@ -370,7 +466,10 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
         composable(Routes.ALBUM, arguments = listOf(navArgument("albumId") { type = NavType.StringType })) { entry ->
             val id = entry.arguments?.getString("albumId").orEmpty()
             TimelineDestination(container, viewer, entry, TimelineFilter.album(id)) { timeline, open, reveal, revealed ->
-                AlbumDetailScreen(id, container.albums, timeline, container.actions, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
+                AlbumDetailScreen(
+                    id, container.albums, timeline, if (Capability.SERVER_ALBUMS in caps) container.actions else null, open,
+                    onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed,
+                )
             }
         }
         composable(Routes.SEARCH) { entry ->
@@ -404,6 +503,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                     LibraryEntry.Archive -> nav.navigate(Routes.ARCHIVE)
                     LibraryEntry.Trash -> nav.navigate(Routes.TRASH)
                     LibraryEntry.Settings -> nav.navigate(Routes.SETTINGS)
+                    LibraryEntry.ConnectImmich -> nav.navigate(Routes.CONNECT)
                 }
             })
         }
@@ -456,7 +556,9 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                 TimelineScreen(timeline, entry.arguments?.getString("title").orEmpty().ifBlank { "Photos" }, open, onBack = { nav.popBackStack() }, revealIndex = reveal, onRevealed = revealed)
             }
         }
-        composable(Routes.SETTINGS) { SettingsScreen(container, onBack = { nav.popBackStack() }) }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(container, onBack = { nav.popBackStack() }, onConnect = { nav.navigate(Routes.CONNECT) })
+        }
     }
 }
 

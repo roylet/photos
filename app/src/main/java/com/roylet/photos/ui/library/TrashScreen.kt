@@ -25,6 +25,7 @@ import com.roylet.photos.ui.components.BrutalDialog
 import com.roylet.photos.ui.components.DialogButtons
 import com.roylet.photos.ui.components.Notice
 import com.roylet.photos.ui.components.SquareIconButton
+import com.roylet.photos.ui.sources.LocalActiveSources
 import com.roylet.photos.ui.gallery.AssetActions
 import com.roylet.photos.ui.gallery.GridSelection
 import com.roylet.photos.ui.gallery.LocalAssetActions
@@ -66,7 +67,7 @@ fun TrashScreen(
             revealIndex = revealIndex,
             onRevealed = onRevealed,
             emptyTitle = "Trash is empty",
-            emptyText = "Things you delete wait here for ${days ?: 30} days before they're gone for good.",
+            emptyText = days?.let { "Things you delete wait here for $it days before they're gone for good." } ?: "Things you delete wait here for a while before they're gone for good.",
             headerActions = {
                 if (actions != null && count > 0) {
                     SquareIconButton(Icons.Rounded.RestoreFromTrash, "Restore all", { actions.restoreAll(timeline) })
@@ -74,12 +75,15 @@ fun TrashScreen(
                 }
             },
             selectionActions = { scope -> trashSelectionActions(scope) { confirmDelete = scope } },
-            topContent = {
-                Notice(
-                    "Items in Trash are deleted for good after ${days ?: 30} days.",
-                    icon = Icons.Rounded.Info,
-                    modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 4.dp),
-                )
+            // Only when the source says how long it keeps things (the phone's period varies by Android version).
+            topContent = days?.let { d ->
+                {
+                    Notice(
+                        "Items in Trash are deleted for good after $d days.",
+                        icon = Icons.Rounded.Info,
+                        modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 4.dp),
+                    )
+                }
             },
         )
         BrutalDialog(
@@ -89,7 +93,7 @@ fun TrashScreen(
         val pending = confirmDelete
         BrutalDialog(
             pending != null, "Delete for good?", onDismiss = { confirmDelete = null },
-            text = "${Format.plural(pending?.ids?.size ?: 0, "item")} will be gone from your server. This can't be undone.",
+            text = "${Format.plural(pending?.ids?.size ?: 0, "item")} will be gone from ${if (LocalActiveSources.current.hasImmich) "your server" else "this phone"}. This can't be undone.",
         ) {
             DialogButtons("Delete", {
                 pending?.let { actions?.deleteForever(it.ids, it.timeline); it.clear() }

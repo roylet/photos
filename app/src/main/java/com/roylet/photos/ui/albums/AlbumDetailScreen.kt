@@ -50,6 +50,8 @@ import com.roylet.photos.ui.components.BrutalTextField
 import com.roylet.photos.ui.components.DialogButtons
 import com.roylet.photos.ui.components.IconBadge
 import com.roylet.photos.ui.components.SquareIconButton
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.sources.LocalCapabilities
 import com.roylet.photos.ui.components.Tag
 import com.roylet.photos.ui.gallery.AssetActions
 import com.roylet.photos.ui.gallery.FavoritePopButton
@@ -58,6 +60,7 @@ import com.roylet.photos.ui.gallery.LocalAssetActions
 import com.roylet.photos.ui.gallery.SelectionScope
 import com.roylet.photos.ui.gallery.TimelineScreen
 import com.roylet.photos.ui.gallery.allFavorite
+import com.roylet.photos.ui.gallery.defaultSelectionActions
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
@@ -140,6 +143,8 @@ fun AlbumDetailScreen(
 
 @Composable
 private fun albumSelectionActions(scope: SelectionScope, albumId: String, actions: AssetActions = LocalAssetActions.current): List<SelectionAction> {
+    // Phone folders are read-only: the timeline's own actions.
+    if (Capability.SERVER_ALBUMS !in LocalCapabilities.current) return defaultSelectionActions(scope, actions)
     val allFav = allFavorite(scope.ids, scope.timeline)
     val toggleFav = { actions.favorite(scope.ids, !allFav, scope.timeline) }
     return listOfNotNull(

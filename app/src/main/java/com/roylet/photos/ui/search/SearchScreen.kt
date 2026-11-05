@@ -73,6 +73,11 @@ import com.roylet.photos.ui.gallery.SelectionScope
 import com.roylet.photos.ui.gallery.SelectionTopBar
 import com.roylet.photos.ui.gallery.defaultSelectionActions
 import com.roylet.photos.ui.gallery.TimelineGrid
+import androidx.compose.material.icons.rounded.Info
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.components.Notice
+import com.roylet.photos.ui.sources.LocalCapabilities
+import java.time.LocalDate
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
@@ -96,6 +101,7 @@ fun SearchScreen(
     val focus = LocalFocusManager.current
     val done = result as? SearchResult.Done
     val timeline = done?.let { remember(it.filter) { timelineFor(it.filter) } }
+    val smart = Capability.SMART_SEARCH in LocalCapabilities.current
 
     Column(modifier.fillMaxSize().background(Palette.paper)) {
         if (selection.active && timeline != null) {
@@ -109,13 +115,14 @@ fun SearchScreen(
                     model.text, { model.text = it },
                     onSearch = { focus.clearFocus(); model.submit() },
                     onClear = { model.clear() },
+                    placeholder = if (smart) "Beach at sunset, red car, birthday cake…" else "File name, folder or date (2024, March 2023)…",
                     modifier = Modifier.padding(top = 12.dp),
                 )
             })
         }
         Box(Modifier.weight(1f)) {
             when (result) {
-                SearchResult.Idle -> Discover(model, onPerson, onAllPeople)
+                SearchResult.Idle -> Discover(model, onPerson, onAllPeople, smart)
                 is SearchResult.Loading -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     BrutalSpinner(size = 32.dp)
                     Spacer(Modifier.height(12.dp))
@@ -125,7 +132,10 @@ fun SearchScreen(
                     BrutalButton("Try again", { model.submit(result.query) })
                 }
                 is SearchResult.Done -> if (result.count == 0) {
-                    EmptyState(Icons.Rounded.SearchOff, "Nothing found", "Try different words: what's in the photo, a place, or a colour.")
+                    EmptyState(
+                        Icons.Rounded.SearchOff, "Nothing found",
+                        if (smart) "Try different words: what's in the photo, a place, or a colour." else "Try part of a file name, a folder, or a year or month like “2024” or “March 2023”.",
+                    )
                 } else if (timeline != null) {
                     TimelineGrid(timeline, onOpen = { i, a -> onOpen(timeline, i, a) }, selection = selection)
                 }
@@ -135,7 +145,7 @@ fun SearchScreen(
 }
 
 @Composable
-private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () -> Unit, onClear: () -> Unit, modifier: Modifier = Modifier) {
+private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () -> Unit, onClear: () -> Unit, placeholder: String, modifier: Modifier = Modifier) {
     BasicTextField(
         value = value,
         onValueChange = onChange,
@@ -150,7 +160,7 @@ private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () 
                 Icon(Icons.Rounded.Search, null, tint = Palette.ink, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
                 Box(Modifier.weight(1f)) {
-                    if (value.isEmpty()) Text("Beach at sunset, red car, birthday cake…", style = Type.Body, color = Palette.mutedInk.copy(alpha = 0.7f), maxLines = 1)
+                    if (value.isEmpty()) Text(placeholder, style = Type.Body, color = Palette.mutedInk.copy(alpha = 0.7f), maxLines = 1)
                     inner()
                 }
                 if (value.isNotEmpty()) {
@@ -165,7 +175,7 @@ private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () 
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Discover(model: SearchModel, onPerson: (Person) -> Unit, onAllPeople: () -> Unit) {
+private fun Discover(model: SearchModel, onPerson: (Person) -> Unit, onAllPeople: () -> Unit, smart: Boolean) {
     val recent by model.prefs.recentSearches.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 16.dp, bottom = 24.dp)) {
         val pad = Modifier.padding(horizontal = 16.dp)
@@ -201,11 +211,19 @@ private fun Discover(model: SearchModel, onPerson: (Person) -> Unit, onAllPeople
             }
             Spacer(Modifier.height(22.dp))
         }
+        if (!smart) {
+            Notice(
+                "Searching this phone by file name, folder or date. Connect Immich to search what's in your photos, by people and by place.",
+                icon = Icons.Rounded.Info,
+                modifier = pad,
+            )
+            Spacer(Modifier.height(22.dp))
+        }
         SectionLabel("Try", pad)
         FlowRow(pad, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Sunset", "Dog in the snow", "Birthday cake", "Mountains", "Screenshots", "Night sky").forEach { q ->
-                Chip(q, selected = false, onClick = { model.submit(SearchQuery.Text(q)) })
-            }
+            val tries = if (smart) listOf("Sunset", "Dog in the snow", "Birthday cake", "Mountains", "Screenshots", "Night sky")
+            else listOf("Screenshots", "Camera", "WhatsApp", "Downloads", LocalDate.now().year.toString(), "IMG_")
+            tries.forEach { q -> Chip(q, selected = false, onClick = { model.submit(SearchQuery.Text(q)) }) }
         }
     }
 }

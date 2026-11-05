@@ -33,6 +33,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Cloud
+import com.roylet.photos.domain.source.Capabilities
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.sources.LocalActiveSources
+import com.roylet.photos.ui.sources.LocalCapabilities
 import com.roylet.photos.ui.components.IconBadge
 import com.roylet.photos.ui.components.Pressable
 import com.roylet.photos.ui.components.ScreenHeader
@@ -43,11 +48,30 @@ import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 
 /** Where a Library tile leads. */
-enum class LibraryEntry { Favorites, People, Places, Memories, Archive, Trash, Settings }
+enum class LibraryEntry { Favorites, People, Places, Memories, Archive, Trash, Settings, ConnectImmich }
 
-/** The "Library" tab: big brutal tiles for the collections that don't get a tab of their own. */
+/**
+ * The "Library" tab: big brutal tiles for the collections that don't get a tab of their own.
+ * Only what the active sources can do is shown ([capabilities]); without a server a card offers
+ * Immich for the rest.
+ */
 @Composable
-fun LibraryScreen(onOpen: (LibraryEntry) -> Unit, modifier: Modifier = Modifier) {
+fun LibraryScreen(
+    onOpen: (LibraryEntry) -> Unit,
+    modifier: Modifier = Modifier,
+    capabilities: Capabilities = LocalCapabilities.current,
+    hasImmich: Boolean = LocalActiveSources.current.hasImmich,
+) {
+    val collections = buildList {
+        if (Capability.FAVORITE in capabilities) add(LibraryEntry.Favorites)
+        if (Capability.PEOPLE in capabilities) add(LibraryEntry.People)
+        if (Capability.MAP in capabilities) add(LibraryEntry.Places)
+        if (Capability.MEMORIES in capabilities) add(LibraryEntry.Memories)
+    }
+    val tidy = buildList {
+        if (Capability.ARCHIVE in capabilities) add(LibraryEntry.Archive)
+        if (Capability.TRASH in capabilities) add(LibraryEntry.Trash)
+    }
     Column(modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Library", actions = { SquareIconButton(Icons.Rounded.Settings, "Settings", { onOpen(LibraryEntry.Settings) }) })
         LazyVerticalGrid(
@@ -57,14 +81,27 @@ fun LibraryScreen(onOpen: (LibraryEntry) -> Unit, modifier: Modifier = Modifier)
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Collections") }
-            item { Tile(Icons.Rounded.Favorite, Palette.peach, "Favorites", "Everything you've hearted") { onOpen(LibraryEntry.Favorites) } }
-            item { Tile(Icons.Rounded.People, Palette.lilac, "People", "Faces Immich found") { onOpen(LibraryEntry.People) } }
-            item { Tile(Icons.Rounded.Map, Palette.mint, "Places", "Your photos on a map") { onOpen(LibraryEntry.Places) } }
-            item { Tile(Icons.Rounded.AutoAwesome, Palette.yellow, "Memories", "On this day, years ago") { onOpen(LibraryEntry.Memories) } }
-            item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Tidy up", Modifier.padding(top = 12.dp)) }
-            item { Tile(Icons.Rounded.Archive, Palette.sand, "Archive", "Hidden from Photos") { onOpen(LibraryEntry.Archive) } }
-            item { Tile(Icons.Rounded.Delete, Palette.current.noticeError, "Trash", "Restore or delete") { onOpen(LibraryEntry.Trash) } }
+            if (collections.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Collections") }
+            collections.forEach { e ->
+                item {
+                    when (e) {
+                        LibraryEntry.Favorites -> Tile(Icons.Rounded.Favorite, Palette.peach, "Favorites", "Everything you've hearted") { onOpen(e) }
+                        LibraryEntry.People -> Tile(Icons.Rounded.People, Palette.lilac, "People", "Faces Immich found") { onOpen(e) }
+                        LibraryEntry.Places -> Tile(Icons.Rounded.Map, Palette.mint, "Places", "Your photos on a map") { onOpen(e) }
+                        else -> Tile(Icons.Rounded.AutoAwesome, Palette.yellow, "Memories", "On this day, years ago") { onOpen(e) }
+                    }
+                }
+            }
+            if (tidy.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Tidy up", Modifier.padding(top = if (collections.isEmpty()) 0.dp else 12.dp)) }
+            tidy.forEach { e ->
+                item {
+                    if (e == LibraryEntry.Archive) Tile(Icons.Rounded.Archive, Palette.sand, "Archive", "Hidden from Photos") { onOpen(e) }
+                    else Tile(Icons.Rounded.Delete, Palette.current.noticeError, "Trash", "Restore or delete") { onOpen(e) }
+                }
+            }
+            if (!hasImmich) {
+                item(span = { GridItemSpan(maxLineSpan) }) { ImmichCard(Modifier.padding(top = 12.dp)) { onOpen(LibraryEntry.ConnectImmich) } }
+            }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Pressable({ onOpen(LibraryEntry.Settings) }, Modifier.fillMaxWidth().padding(top = 12.dp)) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -72,12 +109,29 @@ fun LibraryScreen(onOpen: (LibraryEntry) -> Unit, modifier: Modifier = Modifier)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Settings", style = Type.Title, color = Palette.ink)
-                            Text("Server, connection and account", style = Type.Small, color = Palette.mutedInk)
+                            Text(if (hasImmich) "Accounts, server and connection" else "Accounts, this device and appearance", style = Type.Small, color = Palette.mutedInk)
                         }
                         Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.ink)
                     }
                 }
             }
+        }
+    }
+}
+
+/** Offers Immich for what the phone alone can't do. */
+@Composable
+private fun ImmichCard(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Pressable(onClick, modifier.fillMaxWidth(), fill = Palette.lilac) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.Cloud, fill = Palette.card, size = 44.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Got an Immich server?", style = Type.Title, color = Palette.ink)
+                Text("Connect it for people, places, memories, smart search and shared albums.", style = Type.Small, color = Palette.ink.copy(alpha = 0.7f))
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Palette.ink, modifier = Modifier.size(20.dp))
         }
     }
 }

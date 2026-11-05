@@ -68,13 +68,23 @@ import com.roylet.photos.ui.components.ScreenHeader
 import com.roylet.photos.ui.components.SectionLabel
 import com.roylet.photos.ui.components.Tag
 import com.roylet.photos.data.ThemeMode
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.TouchApp
+import com.roylet.photos.ui.permissions.LocalMediaPermissions
+import com.roylet.photos.ui.permissions.MediaAccess
+import com.roylet.photos.ui.permissions.MediaPermissionsState
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
+fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () -> Unit = {}) {
     val server by container.settings.server.collectAsState()
     val state by container.connection.state.collectAsState()
     val activeUrl by container.connection.activeUrl.collectAsState()
@@ -95,6 +105,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
         onSignOut = container.settings::signOut,
         theme = theme,
         onTheme = container.uiPrefs::setThemeMode,
+        onConnect = onConnect,
     )
 }
 
@@ -118,114 +129,22 @@ fun SettingsContent(
     /** The Appearance choice; switching it re-themes the whole app at once. */
     theme: ThemeMode = ThemeMode.System,
     onTheme: (ThemeMode) -> Unit = {},
+    /** Opens the Immich sign-in (Accounts → Immich → Connect). */
+    onConnect: () -> Unit = {},
+    /** The phone's media access, for Accounts → This device. */
+    permissions: MediaPermissionsState = LocalMediaPermissions.current,
 ) {
     Column(Modifier.fillMaxSize().background(Palette.paper)) {
-        ScreenHeader("Settings", onBack = onBack, actions = { ConnectionChip(state) })
+        ScreenHeader("Settings", onBack = onBack, actions = { if (server != null) ConnectionChip(state) })
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).windowInsetsPadding(WindowInsets.navigationBars),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (server == null) {
-                BrutalCard(Modifier.fillMaxWidth()) { Text("Not connected", style = Type.Title, color = Palette.ink) }
-                return@Column
-            }
+            SectionLabel("Accounts")
+            ImmichAccountCard(server, onConnect = onConnect, onSignOut = onSignOut)
+            DeviceCard(permissions)
 
-            SectionLabel("Server")
-            BrutalCard(Modifier.fillMaxWidth().animateContentSize()) {
-                UrlField(
-                    tag = "Public",
-                    tagFill = Palette.blue,
-                    tagInk = Palette.onStrong,
-                    value = server.publicUrl,
-                    empty = "",
-                    active = state != ConnState.Offline && activeUrl == server.publicUrl,
-                    placeholder = "https://photos.example.com",
-                    hint = "Works from anywhere.",
-                    onSave = {
-                        if (onSavePublic(it ?: server.publicUrl)) SaveOutcome(true, "Verified: same server and account.")
-                        else SaveOutcome(false, "Saved, but couldn't confirm it's your server from here.")
-                    },
-                    allowClear = false,
-                )
-                Spacer(Modifier.height(16.dp))
-                UrlField(
-                    tag = "Home network",
-                    tagFill = Palette.mint,
-                    tagInk = Palette.ink,
-                    value = server.localUrl,
-                    empty = "Not found yet",
-                    active = state == ConnState.Home && activeUrl == server.localUrl,
-                    placeholder = "http://192.168.1.20:2283",
-                    hint = if (scan is ScanState.Found && scan.url == server.localUrl) "Found automatically on this network." else "Used whenever it answers. Found automatically on Wi-Fi.",
-                    onSave = {
-                        when (onSaveLocal(it)) {
-                            LocalUrlResult.Verified -> SaveOutcome(true, "Verified: same server and account.")
-                            LocalUrlResult.VerifiedWithNote -> SaveOutcome(true, "Verified by your account. Some server settings look different from the public address: see Connection check below.")
-                            LocalUrlResult.Unverified -> SaveOutcome(
-                                false,
-                                "Saved, but not verified, so it won't be used or sent your key. Connection check below shows which step failed.",
-                            )
-                            LocalUrlResult.NotLanAddress -> SaveOutcome(false, "Not saved: use a home network IP address like 192.168.x.x or 10.x.x.x.")
-                            LocalUrlResult.Cleared -> null
-                        }
-                    },
-                    allowClear = true,
-                )
-            }
-
-            Spacer(Modifier.height(4.dp))
-            SectionLabel("Connection")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("Auto", selected = server.mode == ConnectionMode.AUTO, onClick = { onMode(ConnectionMode.AUTO) }, icon = Icons.Rounded.AutoMode)
-                Chip("Home", selected = server.mode == ConnectionMode.HOME, onClick = { onMode(ConnectionMode.HOME) }, icon = Icons.Rounded.Bolt)
-                Chip("Remote", selected = server.mode == ConnectionMode.REMOTE, onClick = { onMode(ConnectionMode.REMOTE) }, icon = Icons.Rounded.Public)
-            }
-            Text(
-                when (server.mode) {
-                    ConnectionMode.AUTO -> "Uses your home network address whenever it answers, and the public one everywhere else."
-                    ConnectionMode.HOME -> "Always uses the home network address once it's verified on this network, even if it stops answering."
-                    ConnectionMode.REMOTE -> "Always uses the public address, even at home."
-                },
-                style = Type.Small,
-                color = Palette.mutedInk,
-            )
-
-            BrutalCard(Modifier.fillMaxWidth().animateContentSize()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Radar, fill = Palette.mint, size = 40.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Find on this network", style = Type.Title, color = Palette.ink)
-                        Text("Looks for your server on the Wi-Fi you're on.", style = Type.Small, color = Palette.mutedInk)
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                when (scan) {
-                    is ScanState.Running -> {
-                        BrutalProgress(if (scan.total == 0) 0f else scan.done.toFloat() / scan.total, fill = Palette.mint, moving = true)
-                        Spacer(Modifier.height(6.dp))
-                        Text("Checked ${scan.done} of ${scan.total} addresses…", style = Type.Small, color = Palette.mutedInk)
-                    }
-                    is ScanState.Found -> Notice("Found your server at ${scan.url}", NoticeTone.Success, Icons.Rounded.CheckCircle)
-                    ScanState.NotFound -> Notice("Didn't find your server on this network. Check it's on port 2283, or enter the address above.", NoticeTone.Warning, Icons.Rounded.WarningAmber)
-                    ScanState.NoLan -> Notice("Connect to Wi-Fi to scan your home network.", NoticeTone.Info, Icons.Rounded.WarningAmber)
-                    ScanState.NeedsPublic -> Notice("Connect once via the public address first, so the app can recognise your server on the LAN.", NoticeTone.Info, Icons.Rounded.WarningAmber)
-                    ScanState.Idle -> {}
-                }
-                if (scan !is ScanState.Idle) Spacer(Modifier.height(12.dp))
-                check?.let {
-                    ConnectionCheckPanel(it)
-                    Spacer(Modifier.height(12.dp))
-                }
-                BrutalButton(
-                    if (scan is ScanState.Running) "Scanning…" else "Scan network",
-                    onClick = onScan,
-                    enabled = scan !is ScanState.Running,
-                    style = ButtonStyle.Outline,
-                    icon = Icons.Rounded.Radar,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            if (server != null) ServerSections(server, state, activeUrl, scan, check, onMode, onSavePublic, onSaveLocal, onScan)
 
             Spacer(Modifier.height(4.dp))
             SectionLabel("Appearance")
@@ -243,29 +162,225 @@ fun SettingsContent(
                 style = Type.Small,
                 color = Palette.mutedInk,
             )
-
-            Spacer(Modifier.height(4.dp))
-            SectionLabel("Account")
-            BrutalCard(Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Person, size = 40.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(server.name ?: server.email ?: "Signed in", style = Type.Title, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (server.name != null && server.email != null) Text(server.email, style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
-            BrutalButton(
-                "Sign out",
-                onClick = onSignOut,
-                style = ButtonStyle.Danger,
-                icon = Icons.AutoMirrored.Rounded.Logout,
-                modifier = Modifier.fillMaxWidth(),
-            )
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+/** Accounts → Immich: who's signed in and DISCONNECT, or CONNECT when there's no server. */
+@Composable
+private fun ImmichAccountCard(server: ServerConfig?, onConnect: () -> Unit, onSignOut: () -> Unit) {
+    BrutalCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.Cloud, fill = Palette.lilac, size = 40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Immich", style = Type.Title, color = Palette.ink)
+                Text(
+                    if (server == null) "Your own photo server, optional" else server.publicUrl.removePrefix("https://").removePrefix("http://"),
+                    style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            if (server == null) Tag("Not connected", fill = Palette.card) else Tag("Connected", fill = Palette.mint)
+        }
+        Spacer(Modifier.height(12.dp))
+        if (server == null) {
+            Text("Connect a server for albums, people, places, memories, smart search and share links.", style = Type.Small, color = Palette.mutedInk)
+            Spacer(Modifier.height(12.dp))
+            BrutalButton("Connect to Immich", onConnect, icon = Icons.Rounded.Cloud, modifier = Modifier.fillMaxWidth())
+        } else {
+            Row(
+                Modifier.fillMaxWidth().background(Palette.sand, RoundedCornerShape(6.dp)).padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconBadge(Icons.Rounded.Person, fill = Palette.card, size = 34.dp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(server.name ?: server.email ?: "Signed in", style = Type.Title, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (server.name != null && server.email != null) Text(server.email, style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            BrutalButton("Disconnect", onSignOut, style = ButtonStyle.Danger, icon = Icons.AutoMirrored.Rounded.Logout, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            Text("Signs out and forgets the server. Photos on this phone stay.", style = Type.Small, color = Palette.mutedInk)
+        }
+    }
+}
+
+/** Accounts → This device: media access (re-checked on resume) and "Skip confirmation dialogs". */
+@Composable
+private fun DeviceCard(permissions: MediaPermissionsState) {
+    BrutalCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.PhoneAndroid, fill = Palette.mint, size = 40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("This device", style = Type.Title, color = Palette.ink)
+                Text("Photos and videos on this phone", style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(8.dp))
+            when (permissions.access) {
+                MediaAccess.Full -> Tag("Full access", fill = Palette.mint)
+                MediaAccess.Partial -> Tag("Limited", fill = Palette.yellow)
+                MediaAccess.Denied -> Tag("No access", fill = Palette.red, ink = Palette.onStrong)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            when (permissions.access) {
+                MediaAccess.Full -> "Photos can see every photo and video on this phone."
+                MediaAccess.Partial -> "Photos can only see the photos you picked. Pick more, or allow all in system settings."
+                MediaAccess.Denied ->
+                    if (permissions.permanentlyDenied) "Access is turned off. Turn on Photos and videos for this app in system settings."
+                    else "Allow access to see the photos and videos on this phone."
+            },
+            style = Type.Small, color = Palette.mutedInk,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                permissions.access == MediaAccess.Partial -> {
+                    BrutalButton("Pick photos", { permissions.request() }, icon = Icons.Rounded.TouchApp, modifier = Modifier.weight(1f))
+                    BrutalButton("Allow all", permissions::openSettings, style = ButtonStyle.Outline, modifier = Modifier.weight(1f))
+                }
+                permissions.access == MediaAccess.Denied && !permissions.permanentlyDenied ->
+                    BrutalButton("Grant access", { permissions.request() }, icon = Icons.Rounded.PhotoLibrary, modifier = Modifier.weight(1f))
+                else -> BrutalButton("Manage", permissions::openSettings, style = ButtonStyle.Outline, icon = Icons.Rounded.Settings, modifier = Modifier.weight(1f))
+            }
+        }
+        val manageMedia = permissions.manageMedia
+        if (manageMedia != null) {
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.sand))
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Skip confirmation dialogs", style = Type.Title.copy(fontSize = Type.Body.fontSize), color = Palette.ink)
+                        Spacer(Modifier.width(6.dp))
+                        if (permissions.canManageMedia) Tag("On", fill = Palette.mint) else Tag("Off", fill = Palette.card)
+                    }
+                    Text("Favourite and delete phone photos without Android asking each time.", style = Type.Small, color = Palette.mutedInk)
+                }
+                Spacer(Modifier.width(10.dp))
+                BrutalButton(if (permissions.canManageMedia) "Change" else "Allow", manageMedia, style = ButtonStyle.Outline)
+            }
+        }
+    }
+}
+
+/** Server address, connection mode and LAN discovery (only with a server). */
+@Composable
+private fun ServerSections(
+    server: ServerConfig,
+    state: ConnState,
+    activeUrl: String,
+    scan: ScanState,
+    check: ConnectionCheck?,
+    onMode: (ConnectionMode) -> Unit,
+    onSavePublic: suspend (String) -> Boolean,
+    onSaveLocal: suspend (String?) -> LocalUrlResult,
+    onScan: () -> Unit,
+) {
+        Spacer(Modifier.height(4.dp))
+        SectionLabel("Server")
+        BrutalCard(Modifier.fillMaxWidth().animateContentSize()) {
+            UrlField(
+                tag = "Public",
+                tagFill = Palette.blue,
+                tagInk = Palette.onStrong,
+                value = server.publicUrl,
+                empty = "",
+                active = state != ConnState.Offline && activeUrl == server.publicUrl,
+                placeholder = "https://photos.example.com",
+                hint = "Works from anywhere.",
+                onSave = {
+                    if (onSavePublic(it ?: server.publicUrl)) SaveOutcome(true, "Verified: same server and account.")
+                    else SaveOutcome(false, "Saved, but couldn't confirm it's your server from here.")
+                },
+                allowClear = false,
+            )
+            Spacer(Modifier.height(16.dp))
+            UrlField(
+                tag = "Home network",
+                tagFill = Palette.mint,
+                tagInk = Palette.ink,
+                value = server.localUrl,
+                empty = "Not found yet",
+                active = state == ConnState.Home && activeUrl == server.localUrl,
+                placeholder = "http://192.168.1.20:2283",
+                hint = if (scan is ScanState.Found && scan.url == server.localUrl) "Found automatically on this network." else "Used whenever it answers. Found automatically on Wi-Fi.",
+                onSave = {
+                    when (onSaveLocal(it)) {
+                        LocalUrlResult.Verified -> SaveOutcome(true, "Verified: same server and account.")
+                        LocalUrlResult.VerifiedWithNote -> SaveOutcome(true, "Verified by your account. Some server settings look different from the public address: see Connection check below.")
+                        LocalUrlResult.Unverified -> SaveOutcome(
+                            false,
+                            "Saved, but not verified, so it won't be used or sent your key. Connection check below shows which step failed.",
+                        )
+                        LocalUrlResult.NotLanAddress -> SaveOutcome(false, "Not saved: use a home network IP address like 192.168.x.x or 10.x.x.x.")
+                        LocalUrlResult.Cleared -> null
+                    }
+                },
+                allowClear = true,
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+        SectionLabel("Connection")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Auto", selected = server.mode == ConnectionMode.AUTO, onClick = { onMode(ConnectionMode.AUTO) }, icon = Icons.Rounded.AutoMode)
+            Chip("Home", selected = server.mode == ConnectionMode.HOME, onClick = { onMode(ConnectionMode.HOME) }, icon = Icons.Rounded.Bolt)
+            Chip("Remote", selected = server.mode == ConnectionMode.REMOTE, onClick = { onMode(ConnectionMode.REMOTE) }, icon = Icons.Rounded.Public)
+        }
+        Text(
+            when (server.mode) {
+                ConnectionMode.AUTO -> "Uses your home network address whenever it answers, and the public one everywhere else."
+                ConnectionMode.HOME -> "Always uses the home network address once it's verified on this network, even if it stops answering."
+                ConnectionMode.REMOTE -> "Always uses the public address, even at home."
+            },
+            style = Type.Small,
+            color = Palette.mutedInk,
+        )
+
+        BrutalCard(Modifier.fillMaxWidth().animateContentSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(Icons.Rounded.Radar, fill = Palette.mint, size = 40.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Find on this network", style = Type.Title, color = Palette.ink)
+                    Text("Looks for your server on the Wi-Fi you're on.", style = Type.Small, color = Palette.mutedInk)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            when (scan) {
+                is ScanState.Running -> {
+                    BrutalProgress(if (scan.total == 0) 0f else scan.done.toFloat() / scan.total, fill = Palette.mint, moving = true)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Checked ${scan.done} of ${scan.total} addresses…", style = Type.Small, color = Palette.mutedInk)
+                }
+                is ScanState.Found -> Notice("Found your server at ${scan.url}", NoticeTone.Success, Icons.Rounded.CheckCircle)
+                ScanState.NotFound -> Notice("Didn't find your server on this network. Check it's on port 2283, or enter the address above.", NoticeTone.Warning, Icons.Rounded.WarningAmber)
+                ScanState.NoLan -> Notice("Connect to Wi-Fi to scan your home network.", NoticeTone.Info, Icons.Rounded.WarningAmber)
+                ScanState.NeedsPublic -> Notice("Connect once via the public address first, so the app can recognise your server on the LAN.", NoticeTone.Info, Icons.Rounded.WarningAmber)
+                ScanState.Idle -> {}
+            }
+            if (scan !is ScanState.Idle) Spacer(Modifier.height(12.dp))
+            check?.let {
+                ConnectionCheckPanel(it)
+                Spacer(Modifier.height(12.dp))
+            }
+            BrutalButton(
+                if (scan is ScanState.Running) "Scanning…" else "Scan network",
+                onClick = onScan,
+                enabled = scan !is ScanState.Running,
+                style = ButtonStyle.Outline,
+                icon = Icons.Rounded.Radar,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 }
 
 private class SaveOutcome(val ok: Boolean, val message: String)

@@ -74,6 +74,8 @@ fun AlbumsScreen(
     modifier: Modifier = Modifier,
     /** Called with the new album's name; the app opens [AlbumPhotoPicker]. Null creates it empty right away. */
     onNewAlbum: ((name: String) -> Unit)? = null,
+    /** The phone's folders (read-only) rather than server albums. */
+    folders: Boolean = false,
 ) {
     val albums by store.albums.collectAsState()
     val error by store.error.collectAsState()
@@ -85,8 +87,11 @@ fun AlbumsScreen(
     Box(modifier.fillMaxSize().background(Palette.paper)) {
         Column(Modifier.fillMaxSize()) {
             ScreenHeader(
-                "Albums",
-                subtitle = albums?.let { list -> "${Format.plural(list.size, "album")} · ${"${list.count { it.shared }} shared"}" },
+                if (folders) "Folders" else "Albums",
+                subtitle = albums?.let { list ->
+                    if (folders) "${Format.plural(list.size, "folder")} on this phone"
+                    else "${Format.plural(list.size, "album")} · ${"${list.count { it.shared }} shared"}"
+                },
                 actions = { if (actions != null) BrutalButton("New album", { creating = true }, icon = Icons.Rounded.Add) },
                 below = {
                     Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -100,6 +105,7 @@ fun AlbumsScreen(
                     BrutalButton("Try again", { store.refresh() })
                 }
                 list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { BrutalSpinner(size = 32.dp) }
+                list.isEmpty() && folders -> EmptyState(Icons.Rounded.PhotoAlbum, "No folders yet", "Camera, Screenshots, Downloads and other folders with photos show up here.")
                 list.isEmpty() -> EmptyState(Icons.Rounded.PhotoAlbum, "No albums yet", "Group photos into albums to find and share them easily.") {
                     if (actions != null) BrutalButton("New album", { creating = true }, icon = Icons.Rounded.Add)
                 }

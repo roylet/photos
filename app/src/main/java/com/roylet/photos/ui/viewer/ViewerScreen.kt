@@ -115,6 +115,9 @@ import coil3.request.crossfade
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.domain.library.AssetDetails
+import com.roylet.photos.domain.source.Capabilities
+import com.roylet.photos.domain.source.Capability
+import com.roylet.photos.ui.sources.assetCapabilities
 import com.roylet.photos.ui.components.BrutalSpinner
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.components.brutalDark
@@ -309,11 +312,13 @@ fun ViewerScreen(
         val chromeAlpha = (1f - progress * 4f).coerceIn(0f, 1f)
         val enter = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { -it / 2 }
         val exit = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { -it / 2 }
+        // Only what this asset's sources can do (e.g. no archive for a photo that's only on the phone).
+        val caps = assetCapabilities(current)
         AnimatedVisibility(chrome && !info, Modifier.align(Alignment.TopCenter).graphicsLayer { alpha = chromeAlpha }, enter = enter, exit = exit) {
             TopBar(
                 current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
                 archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE,
-                onArchive = { current?.let { actions.archive(listOf(it.id), timeline) } },
+                onArchive = if (Capability.ARCHIVE in caps) { { current?.let { actions.archive(listOf(it.id), timeline) } } } else null,
             )
         }
         val enterB = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 }
@@ -323,6 +328,7 @@ fun ViewerScreen(
                 Filmstrip(pager, timeline, urls)
                 ActionBar(
                     asset = current,
+                    caps = caps,
                     onFavorite = {
                         val a = current ?: return@ActionBar
                         val fav = !a.isFavorite
@@ -603,7 +609,7 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
 }
 
 @Composable
-private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit, archived: Boolean, onArchive: () -> Unit) {
+private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit, archived: Boolean, onArchive: (() -> Unit)?) {
     Row(
         Modifier.fillMaxWidth().background(BrutalDark.Canvas)
             .drawBehind { drawLine(BrutalDark.Raised, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
@@ -632,11 +638,13 @@ private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolea
                 }
                 Spacer(Modifier.width(8.dp))
             }
-            DarkIconButton(
-                if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
-                if (archived) "Unarchive" else "Archive",
-                onArchive,
-            )
+            if (onArchive != null) {
+                DarkIconButton(
+                    if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
+                    if (archived) "Unarchive" else "Archive",
+                    onArchive,
+                )
+            }
         } else Spacer(Modifier.weight(1f))
     }
 }
@@ -644,6 +652,7 @@ private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolea
 @Composable
 private fun ActionBar(
     asset: TimelineAsset?,
+    caps: Capabilities,
     onFavorite: () -> Unit,
     onShare: () -> Unit,
     onAddToAlbum: () -> Unit,
@@ -659,12 +668,12 @@ private fun ActionBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FavoriteButton(asset?.isFavorite == true, onFavorite, enabled = asset != null)
+        if (Capability.FAVORITE in caps) FavoriteButton(asset?.isFavorite == true, onFavorite, enabled = asset != null)
         DarkIconButton(Icons.Rounded.Share, "Share", onShare, enabled = asset != null)
-        DarkIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", onAddToAlbum, enabled = asset != null)
-        DarkIconButton(Icons.Rounded.Edit, "Edit", onEdit, active = true, enabled = asset != null)
+        if (Capability.SERVER_ALBUMS in caps) DarkIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", onAddToAlbum, enabled = asset != null)
+        if (Capability.EDIT_SAVE in caps) DarkIconButton(Icons.Rounded.Edit, "Edit", onEdit, active = true, enabled = asset != null)
         DarkIconButton(Icons.Rounded.Info, "Info", onInfo, enabled = asset != null)
-        DarkIconButton(Icons.Rounded.DeleteOutline, "Delete", onDelete, enabled = asset != null)
+        if (Capability.TRASH in caps) DarkIconButton(Icons.Rounded.DeleteOutline, "Delete", onDelete, enabled = asset != null)
     }
 }
 

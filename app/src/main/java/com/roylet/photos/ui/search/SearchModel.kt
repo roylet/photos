@@ -8,6 +8,7 @@ import com.roylet.photos.data.UiPrefs
 import com.roylet.photos.domain.library.ExploreSection
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.Person
+import com.roylet.photos.domain.source.Capability
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRegistry
@@ -59,9 +60,10 @@ class SearchModel(
     fun loadDiscover() {
         if (discoverLoaded) return
         discoverLoaded = true
-        scope.launch { runCatching { library().people() }.onSuccess { people = it } }
-        scope.launch { runCatching { library().explore() }.onSuccess { explore = it } }
-        scope.launch { runCatching { library().suggestions("country") }.onSuccess { countries = it.take(12) } }
+        val caps = library().capabilities
+        if (Capability.PEOPLE in caps) scope.launch { runCatching { library().people() }.onSuccess { people = it } }
+        if (Capability.SMART_SEARCH in caps) scope.launch { runCatching { library().explore() }.onSuccess { explore = it } }
+        if (Capability.MAP in caps) scope.launch { runCatching { library().suggestions("country") }.onSuccess { countries = it.take(12) } }
     }
 
     fun submit(query: SearchQuery = SearchQuery.Text(text)) {
@@ -73,7 +75,10 @@ class SearchModel(
         job = scope.launch {
             try {
                 val assets: List<TimelineAsset> = when (query) {
-                    is SearchQuery.Text -> library().smartSearch(query.text.trim())
+                    // Without smart search (the phone alone): file name, folder or date.
+                    is SearchQuery.Text -> library().let { lib ->
+                        if (Capability.SMART_SEARCH in lib.capabilities) lib.smartSearch(query.text.trim()) else lib.basicSearch(query.text.trim())
+                    }
                     is SearchQuery.Place -> library().placeSearch(query.city, query.country)
                 }
                 val filter = timelines.putList("search-${++counter}", assets)

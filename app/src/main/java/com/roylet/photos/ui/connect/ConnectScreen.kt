@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.AppContainer
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import com.roylet.photos.ui.components.SquareIconButton
 import com.roylet.photos.data.ServerConfig
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.net.LanScanner
@@ -61,7 +63,7 @@ private suspend fun <T> step(label: String, block: suspend () -> T): T = try {
 }
 
 @Composable
-fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
+fun ConnectScreen(container: AppContainer, onConnected: () -> Unit, onBack: (() -> Unit)? = null) {
     var url by rememberSaveable { mutableStateOf("") }
     var useKey by rememberSaveable { mutableStateOf(false) }
     var email by rememberSaveable { mutableStateOf("") }
@@ -124,6 +126,7 @@ fun ConnectScreen(container: AppContainer, onConnected: () -> Unit) {
                 .windowInsetsPadding(WindowInsets.navigationBars),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            if (onBack != null) SquareIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
             BrutalCard(fill = Brutal.Orange, modifier = Modifier.fillMaxWidth()) {
                 Text("YOUR PHOTOS.\nYOUR SERVER.\nEDIT ANYTHING.", style = Type.Huge.copy(fontSize = Type.Huge.fontSize * 0.7f, lineHeight = Type.Huge.lineHeight * 0.72f), color = Brutal.Ink)
                 Spacer(Modifier.height(10.dp))
