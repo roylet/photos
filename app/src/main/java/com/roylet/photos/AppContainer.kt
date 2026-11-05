@@ -313,11 +313,14 @@ class AppContainer(context: Context) {
         RoutingEditSource(ImmichEditSource { api() }, LocalEditSource(device.dao, device.appDao) { Sha1Worker.openOriginal(app, it) })
     }
 
-    /** The Immich copy of a phone item (merged timeline), or null. */
+    /**
+     * The Immich copy of a phone item (merged timeline), or null. Only a SHA-1-confirmed copy:
+     * the editors' Both / Immich saves can trash it (Replace), so a guessed pair doesn't count.
+     */
     suspend fun remoteCopyOf(id: String): String? {
         if (!hasServer) return null
         val key = AssetRef.parse(id)?.mediaStoreId ?: return null
-        return runCatching { monthMatcher.cachedRemote(listOf(key))[key]?.remoteId }.getOrNull()
+        return runCatching { monthMatcher.cachedRemote(listOf(key))[key]?.takeIf { !it.tentative }?.remoteId }.getOrNull()
     }
 
     /** Asks for consent before a phone Replace is queued (the worker can't show the dialog). */

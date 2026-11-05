@@ -22,6 +22,12 @@ interface MonthMatcher {
     suspend fun cachedRemote(localIds: List<Long>): Map<Long, Match>
     /** Cached phone copies of [remoteIds]. */
     suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long>
+    /**
+     * Cached phone copies of [remoteIds], with whether each is only a guess. Destructive actions
+     * act on a pair only when it's confirmed; the default treats every answer as a guess.
+     */
+    suspend fun cachedLocalMatches(remoteIds: List<String>): Map<String, LocalMatch> =
+        cachedLocal(remoteIds).mapValues { LocalMatch(it.value, tentative = true) }
     /** Known pairs per month (bucket key → count), for the bucket counts before a month is loaded. */
     suspend fun pairsPerMonth(): Map<String, Int>
     /** Immich assets that went away (trashed, deleted): drop their answers. */
@@ -182,6 +188,9 @@ class MergedTimelineSource(
         }
     }
 }
+
+/** An Immich asset's phone copy; [tentative] = a file name + time + size guess, not a SHA-1. */
+data class LocalMatch(val localId: Long, val tentative: Boolean)
 
 /** A matcher that knows no pairs (tests, screenshots, and before anything is matched). */
 object NoPairs : MonthMatcher {

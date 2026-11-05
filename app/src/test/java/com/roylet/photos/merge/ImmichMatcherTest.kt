@@ -156,6 +156,20 @@ class ImmichMatcherTest {
         assertEquals(0, remote.monthCalls)
     }
 
+    @Test fun `cached phone copies say whether they're a guess, and drop answers for an edited item`() {
+        match()
+        assertEquals(mapOf("r1" to LocalMatch(1, tentative = true), "r2" to LocalMatch(2, tentative = true)), runBlocking { matcher.cachedLocalMatches(listOf("r1", "r2")) })
+        runBlocking { dao.setSha1(1, sha(1), dao.byId(1)!!.generation) }
+        remote.known[sha(1)] = "r1"
+        runBlocking { matcher.onHashed(listOf(1)) }
+        assertEquals(LocalMatch(1, tentative = false), runBlocking { matcher.cachedLocalMatches(listOf("r1")) }["r1"])
+        // The phone item changed (new generation): its old answer no longer names it.
+        store.put(photo(1, taken = t1)) // bumps its generation
+        runBlocking { indexer.sync() }
+        assertTrue(runBlocking { matcher.cachedLocalMatches(listOf("r1")) }.isEmpty())
+        assertTrue(runBlocking { matcher.cachedLocal(listOf("r1")) }.isEmpty())
+    }
+
     @Test fun `offline gives no answers and caches nothing`() {
         remote.offline = true
         assertTrue(match().isEmpty())

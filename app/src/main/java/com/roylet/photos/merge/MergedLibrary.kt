@@ -73,6 +73,23 @@ class MergedLibrary(
         return (s.remote + s.local.mapNotNull { copies[it] }).distinct()
     }
 
+    /**
+     * The pairs a delete may act on both sides of: only SHA-1-confirmed ones. A guessed pair
+     * (same name, time and size) might be two different photos, so it never drives a delete of
+     * the other copy. Returns (confirmed phone → Immich, confirmed Immich → phone, guessed ids).
+     */
+    private suspend fun confirmedPairs(s: Split): Triple<Map<String, String>, Map<String, String>, Set<String>> {
+        val keys = s.local.mapNotNull { id -> localKey(id)?.let { it to id } }.toMap()
+        val remote = if (keys.isEmpty()) emptyMap() else runCatching { pairs().cachedRemote(keys.keys.toList()) }.getOrDefault(emptyMap())
+        val local = if (s.remote.isEmpty()) emptyMap() else runCatching { pairs().cachedLocalMatches(s.remote) }.getOrDefault(emptyMap())
+        val guessed = HashSet<String>()
+        val ofLocal = HashMap<String, String>()
+        for ((k, m) in remote) { val id = keys[k] ?: continue; if (m.tentative) guessed += id else ofLocal[id] = m.remoteId }
+        val ofRemote = HashMap<String, String>()
+        for ((r, m) in local) if (m.tentative) guessed += r else ofRemote[r] = AssetRef.local(m.localId).id
+        return Triple(ofLocal, ofRemote, guessed)
+    }
+
     /** Where a phone item should be read from: itself, or for an Immich id its phone copy when known. */
     private suspend fun preferLocal(id: String): String = if (AssetRef.isLocal(id)) id else localCopies(listOf(id))[id] ?: id
 
@@ -91,14 +108,16 @@ class MergedLibrary(
 
     /* ---------------- Trash ---------------- */
 
+    /** Items whose other copy is confirmed (SHA-1): only these get the "delete from" choice. */
     override suspend fun pairedIds(ids: List<String>): Set<String> {
-        val s = split(ids)
-        return remoteCopies(s.local).keys + localCopies(s.remote).keys
+        val (ofLocal, ofRemote, _) = confirmedPairs(split(ids))
+        return ofLocal.keys + ofRemote.keys
     }
 
     override suspend fun trash(ids: List<String>, target: DeleteTarget): TrashReceipt {
         val s = split(ids)
-        val plan = plan(s.local, s.remote, remoteCopies(s.local), localCopies(s.remote), target)
+        val (ofLocal, ofRemote, guessed) = confirmedPairs(s)
+        val plan = plan(s.local, s.remote, ofLocal, ofRemote, target, guessed)
         if (plan.local.isNotEmpty()) local.trash(plan.local)
         if (plan.remote.isNotEmpty()) {
             try {
@@ -223,8 +242,11 @@ class MergedLibrary(
 
     companion object {
         /**
-         * Which copies a delete trashes. Paired items follow [target]; one-sided items always go
-         * from the side they're on.
+         * Which copies a delete trashes. Confirmed pairs ([remoteOfLocal], [localOfRemote]) follow
+         * [target]; one-sided items always go from the side they're on. [guessed] items (a
+         * tentative pair: the other copy is only a guess) only ever lose their own copy, and only
+         * when [target] includes their side: "Immich" never trashes a phone file that only looks
+         * backed up, and the guessed Immich asset is never touched from a phone item.
          */
         fun plan(
             localIds: List<String>,
@@ -232,6 +254,7 @@ class MergedLibrary(
             remoteOfLocal: Map<String, String>,
             localOfRemote: Map<String, String>,
             target: DeleteTarget,
+            guessed: Set<String> = emptySet(),
         ): TrashReceipt {
             val l = LinkedHashSet<String>()
             val r = LinkedHashSet<String>()
@@ -243,8 +266,22 @@ class MergedLibrary(
                     DeleteTarget.Both -> { l += phone; r += server }
                 }
             }
-            for (id in localIds) remoteOfLocal[id]?.let { pairOf(id, it) } ?: l.add(id)
-            for (id in remoteIds) localOfRemote[id]?.let { pairOf(it, id) } ?: r.add(id)
+            for (id in localIds) {
+                val other = remoteOfLocal[id]
+                when {
+                    other != null -> pairOf(id, other)
+                    id in guessed -> if (target != DeleteTarget.Immich) { l += id; partial = true } else partial = true
+                    else -> l += id
+                }
+            }
+            for (id in remoteIds) {
+                val other = localOfRemote[id]
+                when {
+                    other != null -> pairOf(other, id)
+                    id in guessed -> if (target != DeleteTarget.Device) { r += id; partial = true } else partial = true
+                    else -> r += id
+                }
+            }
             return TrashReceipt(l.toList(), r.toList(), partial)
         }
 

@@ -202,8 +202,18 @@ class ImmichMatcher(
             .associate { it.localId to Match(it.remoteId!!, it.tentative) }
     }
 
-    override suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long> =
-        if (remoteIds.isEmpty()) emptyMap() else remoteIds.chunked(SQL_VARS).flatMap { cache.byRemoteIds(it) }.associate { it.remoteId!! to it.localId }
+    override suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long> = cachedLocalMatches(remoteIds).mapValues { it.value.localId }
+
+    /** Phone copies of [remoteIds] whose answer is still at the phone item's current generation (a confirmed one wins over a guess). */
+    override suspend fun cachedLocalMatches(remoteIds: List<String>): Map<String, LocalMatch> {
+        if (remoteIds.isEmpty()) return emptyMap()
+        val rows = remoteIds.chunked(SQL_VARS).flatMap { cache.byRemoteIds(it) }
+        if (rows.isEmpty()) return emptyMap()
+        val gens = rows.map { it.localId }.distinct().chunked(SQL_VARS).flatMap { media.byIds(it) }.associate { it.id to it.generation }
+        return rows.filter { it.remoteId != null && gens[it.localId] == it.generation }
+            .sortedBy { !it.tentative } // confirmed rows last, so they win in associate
+            .associate { it.remoteId!! to LocalMatch(it.localId, it.tentative) }
+    }
 
     override suspend fun pairsPerMonth(): Map<String, Int> = cache.pairsPerMonth().associate { MonthKeys.key(it.month) to it.count }
 

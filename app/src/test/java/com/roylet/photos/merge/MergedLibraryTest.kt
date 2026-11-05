@@ -40,8 +40,45 @@ class MergedLibraryTest {
         override suspend fun matchMonth(bucketKey: String, localIds: List<Long>, remoteIds: Set<String>) = emptyMap<Long, Match>()
         override suspend fun cachedRemote(localIds: List<Long>): Map<Long, Match> = localIds.mapNotNull { l -> map[l]?.let { l to Match(it, false) } }.toMap()
         override suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long> = map.entries.filter { it.value in remoteIds }.associate { it.value to it.key }
+        override suspend fun cachedLocalMatches(remoteIds: List<String>) = cachedLocal(remoteIds).mapValues { LocalMatch(it.value, tentative = false) }
         override suspend fun pairsPerMonth(): Map<String, Int> = emptyMap()
         override suspend fun forgetRemote(remoteIds: Collection<String>) { forgotten += remoteIds }
+    }
+
+    /** local:1 ↔ a guessed (file name + time), local:2 ↔ b confirmed. */
+    private val guesses = object : MonthMatcher {
+        override suspend fun matchMonth(bucketKey: String, localIds: List<Long>, remoteIds: Set<String>) = emptyMap<Long, Match>()
+        override suspend fun cachedRemote(localIds: List<Long>): Map<Long, Match> =
+            mapOf(1L to Match("a", tentative = true), 2L to Match("b", tentative = false)).filterKeys { it in localIds }
+        override suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long> = mapOf("a" to 1L, "b" to 2L).filterKeys { it in remoteIds }
+        override suspend fun cachedLocalMatches(remoteIds: List<String>) =
+            mapOf("a" to LocalMatch(1L, tentative = true), "b" to LocalMatch(2L, tentative = false)).filterKeys { it in remoteIds }
+        override suspend fun pairsPerMonth(): Map<String, Int> = emptyMap()
+    }
+
+    @Test fun `a guessed pair never deletes the other copy`() {
+        val l = MergedLibrary(immich, phone) { guesses }
+        // Only the confirmed pair is offered the choice.
+        assertEquals(setOf("local:2"), runBlocking { l.pairedIds(listOf("local:1", "local:2")) })
+        // Both: the guessed item loses only its own (phone) copy; the confirmed pair loses both.
+        val both = runBlocking { l.trash(listOf("local:1", "local:2"), DeleteTarget.Both) }
+        assertEquals(listOf("local:1", "local:2"), both.local)
+        assertEquals(listOf("b"), both.remote)
+        assertTrue(both.partial)
+        assertEquals(listOf("trash b"), immich.calls.filter { it.startsWith("trash") })
+    }
+
+    @Test fun `a guessed pair under the other side's choice isn't touched`() {
+        val l = MergedLibrary(immich, phone) { guesses }
+        // "Immich" for a phone item whose Immich copy is only a guess: the phone file stays, and so does "a".
+        val r = runBlocking { l.trash(listOf("local:1"), DeleteTarget.Immich) }
+        assertTrue(r.local.isEmpty() && r.remote.isEmpty())
+        assertTrue(phone.calls.isEmpty())
+        assertTrue(immich.calls.none { it.startsWith("trash") })
+        // "This device" for the Immich asset of a guessed pair (favourites view): its phone guess isn't deleted.
+        val d = runBlocking { l.trash(listOf("a"), DeleteTarget.Device) }
+        assertTrue(d.local.isEmpty() && d.remote.isEmpty())
+        assertTrue(phone.calls.isEmpty())
     }
 
     private val phone = Phone()

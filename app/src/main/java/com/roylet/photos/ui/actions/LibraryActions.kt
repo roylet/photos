@@ -245,6 +245,12 @@ class LibraryActions(
         scope.launch {
             runCatching { lib.trash(ids, target) }
                 .onSuccess { receipt ->
+                    if (receipt.local.isEmpty() && receipt.remote.isEmpty()) {
+                        // Only guessed pairs, and the choice was the side that's only a guess: nothing went.
+                        rollBack()
+                        snackbar.show("Nothing deleted: not confirmed as the same photo in ${target.label} yet")
+                        return@onSuccess
+                    }
                     if (receipt.partial) timelines?.forEachRepo { r -> if (r.filter.isTrashed != true && r.filter.listId == null) r.refresh(keepLoaded = true) }
                     val where = when {
                         receipt.local.isNotEmpty() && receipt.remote.isEmpty() -> " on this device"
