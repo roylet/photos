@@ -365,11 +365,11 @@ fun AdjustPanel(session: VideoEditorSession, edit: State<VideoEdit>, modifier: M
             AdjustPage.CURVE -> CurvePanel(session.colorEdits, recipe, m)
             AdjustPage.HSL -> HslPanel(session.colorEdits, recipe, m)
             AdjustPage.EFFECTS -> Column(m.verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                Hint("Clarity, dehaze and sharpen are photo-only for now.", Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                 for (p in VideoEffects) SessionSlider(session.colorEdits, recipe, p)
                 for (p in PhotoOnlyEffects) {
                     ValueSlider(p.label, p.default, p.range, p.default, { formatValue(p, it) }, {}, {}, {}, {}, enabled = false)
                 }
-                Hint("Clarity, dehaze and sharpen are photo-only for now.", Modifier.padding(horizontal = 8.dp))
             }
         }
     }

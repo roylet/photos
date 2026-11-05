@@ -109,6 +109,11 @@ fun TrimPanel(session: VideoEditorSession, playback: VideoPlayback, edit: State<
             resetZoomKey = resetZoom,
             modifier = Modifier.fillMaxWidth(),
         )
+        Text(
+            if (zoom > 1.01f) "DRAG THE BAR TO SCROLL · PINCH TO ZOOM" else "TAP A CLIP · DRAG HANDLES · PINCH TO ZOOM",
+            style = Type.Tiny, color = BrutalDark.MutedText, maxLines = 1,
+            modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 0.dp),
+        )
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -134,8 +139,6 @@ fun TrimPanel(session: VideoEditorSession, playback: VideoPlayback, edit: State<
             if (zoom > 1.01f) {
                 Text(String.format(Locale.US, "%.1f×", zoom), style = Type.Label, color = BrutalDark.Orange)
                 DarkIconButton(Icons.Rounded.ZoomOutMap, "Fit whole video", { resetZoom++ })
-            } else {
-                Text("PINCH TO ZOOM", style = Type.Tiny, color = BrutalDark.MutedText)
             }
             DarkIconButton(Icons.Rounded.RestartAlt, "Reset trim", {
                 session.history.update { it.resetSegments() }
@@ -475,7 +478,7 @@ private fun DrawScope.drawFrames(v: TimelineViewport, bank: FrameBank, pad: Floa
     val visL = max(left, pad - HandleW.toPx())
     val visR = min(right, pad + v.widthPx + HandleW.toPx())
     drawRoundRect(BrutalDark.Raised, Offset(left, top), Size(right - left, h), r)
-    val tileW = (h * aspect.coerceIn(0.56f, 1.78f)).coerceAtLeast(8f)
+    val tileW = (h * aspect.coerceIn(0.56f, 1f)).coerceAtLeast(8f)
     val firstTile = floor((visL - left) / tileW).toInt().coerceAtLeast(0)
     val lastTile = ceil((visR - left) / tileW).toInt()
     clipRect(left = left, top = top, right = right, bottom = top + h) {

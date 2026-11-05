@@ -544,9 +544,10 @@ fun VideoSaveProgressPanel(progress: VideoSaveProgress?, onBackground: () -> Uni
                         StageSteps(p.stage.step(), p.fraction)
                         Text(p.detail?.let { "${p.stage.label} · $it" } ?: p.stage.label, style = Type.Small, color = BrutalDark.MutedText, maxLines = 2)
                         Text("You can leave; the save keeps going with a notification.", style = Type.Small, color = BrutalDark.MutedText)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                            DarkButton("Cancel", onCancel, primary = false)
-                            DarkButton("Continue in background", onBackground, primary = false)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DarkButton("Cancel save", onCancel, primary = false)
+                            Spacer(Modifier.weight(1f))
+                            DarkButton("Hide", onBackground)
                         }
                     }
                     is VideoSaveProgress.Failed -> {
@@ -615,7 +616,8 @@ fun VideoEditorLoading(p: VideoEditorPhase.Loading, onClose: () -> Unit) {
                     val shown = 8
                     for (i in 0 until shown) {
                         val idx = (i * strip.count / shown).coerceIn(0, strip.count - 1)
-                        val f = strip.frames.getOrNull(idx)
+                        // Not loaded yet: the nearest frame that is, so the strip fills smoothly.
+                        val f = strip.frames.getOrNull(idx) ?: strip.nearest(strip.timesMs[idx], strip.timesMs.last() + strip.timesMs.first())
                         Box(Modifier.weight(1f).fillMaxHeight().background(BrutalDark.Raised)) {
                             if (f != null) Image(f, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         }
