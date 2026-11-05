@@ -45,6 +45,11 @@ interface LocalMediaWriter {
     fun write(id: Long, isVideo: Boolean, from: File)
     /** IS_PENDING = 0: the item appears in every gallery. */
     fun publish(id: Long, isVideo: Boolean)
+    /**
+     * Reads the published item back: true only when it holds [expectedBytes] bytes (> 0) and
+     * decodes (an image's bounds, a video's duration). Replace trashes the original only after this.
+     */
+    fun verify(id: Long, isVideo: Boolean, expectedBytes: Long): Boolean
     /** Removes an item this app inserted (a failed save). */
     fun delete(id: Long, isVideo: Boolean)
 }
@@ -106,6 +111,8 @@ class LocalSaveSink(
                     withContext(Dispatchers.IO) {
                         writer.write(id, input.isVideo, input.file)
                         writer.publish(id, input.isVideo)
+                        // Nothing is trashed (Replace) until the new file is complete and readable.
+                        if (!writer.verify(id, input.isVideo, input.file.length())) throw java.io.IOException("the saved file is empty or unreadable")
                     }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -204,7 +211,8 @@ class AndroidMediaWriter(private val context: Context) : LocalMediaWriter {
     }
 
     override fun write(id: Long, isVideo: Boolean, from: File) {
-        val out = resolver.openOutputStream(mediaUri(id, isVideo), "w") ?: throw LocalSaveException("Couldn't open the new file.")
+        // "wt": truncate, so a retry into the same item never leaves the tail of an earlier attempt.
+        val out = resolver.openOutputStream(mediaUri(id, isVideo), "wt") ?: throw LocalSaveException("Couldn't open the new file.")
         out.use { o -> from.inputStream().use { it.copyTo(o, 64 * 1024) } }
     }
 
@@ -215,6 +223,23 @@ class AndroidMediaWriter(private val context: Context) : LocalMediaWriter {
     override fun delete(id: Long, isVideo: Boolean) {
         resolver.delete(mediaUri(id, isVideo), null, null)
     }
+
+    override fun verify(id: Long, isVideo: Boolean, expectedBytes: Long): Boolean = runCatching {
+        val uri = mediaUri(id, isVideo)
+        val size = resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: return false
+        if (size <= 0 || (expectedBytes > 0 && size != expectedBytes)) return false
+        if (isVideo) {
+            val r = android.media.MediaMetadataRetriever()
+            try {
+                r.setDataSource(context, uri)
+                (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) > 0
+            } finally { r.release() }
+        } else {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+            bounds.outWidth > 0 && bounds.outHeight > 0
+        }
+    }.getOrDefault(false)
 }
 
 /**

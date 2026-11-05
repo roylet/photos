@@ -55,6 +55,13 @@ class FakeWriter : LocalMediaWriter {
     }
     override fun publish(id: Long, isVideo: Boolean) { pending[id] = false; log += "publish $id" }
     override fun delete(id: Long, isVideo: Boolean) { pending.remove(id); log += "delete $id" }
+    /** Makes the written file read back short (a truncated write). */
+    var truncate = false
+    override fun verify(id: Long, isVideo: Boolean, expectedBytes: Long): Boolean {
+        val b = bytes[id] ?: return false
+        val size = if (truncate) b.size / 2 else b.size
+        return pending[id] == false && size > 0 && size.toLong() == expectedBytes
+    }
 }
 
 class FakeTrasher(private val log: MutableList<String>, var allow: Boolean = true) : LocalTrasher {
@@ -132,6 +139,21 @@ class LocalSaveSinkTest {
         assertTrue(e is LocalSaveException)
         assertEquals(listOf("insert 100 pending", "delete 100"), writer.log)
         assertNull(checkpoint.newId)
+    }
+
+    @Test fun `replace never trashes the original when the new file doesn't read back whole`() {
+        writer.truncate = true
+        val e = runCatching { runBlocking { sink().save(input(SaveMode.REPLACE)) } }.exceptionOrNull()
+        assertTrue(e is LocalSaveException)
+        assertEquals(listOf("insert 100 pending", "write 100", "publish 100", "delete 100"), writer.log)
+        assertNull(checkpoint.trashed)
+    }
+
+    @Test fun `replace never trashes the original for an empty render`() {
+        rendered.writeText("")
+        val e = runCatching { runBlocking { sink().save(input(SaveMode.REPLACE)) } }.exceptionOrNull()
+        assertTrue(e is LocalSaveException)
+        assertFalse(writer.log.any { it.startsWith("trash") })
     }
 
     @Test fun `a folder Android won't take falls back to Pictures, Photos Edited`() {
