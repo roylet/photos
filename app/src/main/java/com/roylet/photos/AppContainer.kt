@@ -42,6 +42,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import com.roylet.photos.merge.ImmichMatcher
+import com.roylet.photos.merge.ImmichRemoteLookup
+import com.roylet.photos.merge.MergedTimelineSource
+import com.roylet.photos.merge.MonthMatcher
 import com.roylet.photos.data.UiPrefs
 import com.roylet.photos.ui.actions.AndroidShareLauncher
 import com.roylet.photos.ui.actions.LibraryActions
@@ -146,10 +154,43 @@ class AppContainer(context: Context) {
         get() = libraryOverride ?: if (hasServer) serverLibrary else localLibrary
         set(value) { libraryOverride = value }
 
+    /** Pairs phone items with their Immich copies (SHA-1, else a filename/date/size guess); cached in the index. */
+    val matcher: ImmichMatcher by lazy {
+        ImmichMatcher(device.db.matches(), device.dao, ImmichRemoteLookup { api() }).also { m ->
+            device.onHashed = { ids -> if (hasServer) m.onHashed(ids) }
+        }
+    }
+
+    private var monthMatcherOverride: MonthMatcher? = null
+
+    /** What the merged timeline asks for matches; tests and screenshots pin a fake. */
+    var monthMatcher: MonthMatcher
+        get() = monthMatcherOverride ?: matcher
+        set(value) { monthMatcherOverride = value }
+
+    /** The phone's timeline as it is right now ([localTimeline] can be re-pinned). */
+    private val currentLocalTimeline = object : TimelineSource {
+        override suspend fun buckets(filter: TimelineFilter) = localTimeline.buckets(filter)
+        override suspend fun bucket(filter: TimelineFilter, key: String) = localTimeline.bucket(filter, key)
+    }
+
+    /** With a server: the phone and Immich in one timeline (docs/SOURCES.md §9). */
+    val mergedTimeline = MergedTimelineSource(currentLocalTimeline, immichTimeline) { monthMatcher }
+
+    init {
+        // Another server or account: old matches don't apply; hashing only runs while there's a server.
+        appScope.launch {
+            settings.server.map { it?.let { s -> s.publicUrl + "|" + s.userId } }.distinctUntilChanged().drop(1).collect {
+                runCatching { matcher.clear() }
+                runCatching { device.scheduleHashing() }
+            }
+        }
+    }
+
     /** The timeline source for the active configuration; [TimelineRegistry.source] can still pin one in tests. */
     private val activeTimeline = object : TimelineSource {
         // Phone folders and timelines pinned to the phone (Library → On this device) read the index even with a server.
-        private fun current(filter: TimelineFilter) = if (hasServer && !filter.isLocal) immichTimeline else localTimeline
+        private fun current(filter: TimelineFilter) = if (hasServer && !filter.isLocal) mergedTimeline else localTimeline
         override suspend fun buckets(filter: TimelineFilter) = current(filter).buckets(filter)
         override suspend fun bucket(filter: TimelineFilter, key: String) = current(filter).bucket(filter, key)
     }

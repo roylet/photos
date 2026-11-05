@@ -322,6 +322,13 @@ interface MatchDao {
     @Query("DELETE FROM immich_match")
     suspend fun clear()
 
+    /** Phone items per month that have a current Immich match (bucket counts before a month is merged). */
+    @Query(
+        """SELECT m.month AS month, COUNT(*) AS count FROM media m JOIN immich_match x ON x.localId = m.id AND x.generation = m.generation
+           WHERE x.remoteId IS NOT NULL AND m.trashed = 0 GROUP BY m.month""",
+    )
+    suspend fun pairsPerMonth(): List<MonthCount>
+
     @Query("SELECT COUNT(*) FROM immich_match")
     suspend fun count(): Int
 }

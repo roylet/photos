@@ -10,6 +10,7 @@ import com.roylet.photos.local.MatchDao
 import com.roylet.photos.local.MatchEntity
 import com.roylet.photos.local.MediaDao
 import com.roylet.photos.local.MediaEntity
+import com.roylet.photos.local.MonthKeys
 import com.roylet.photos.local.SQL_VARS
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -134,7 +135,7 @@ class ImmichMatcher(
     private val now: () -> Long = System::currentTimeMillis,
     /** How long "Immich doesn't have it" holds before asking again (a backup may have run). */
     private val negativeTtlMs: Long = 6 * 3_600_000L,
-) {
+) : MonthMatcher {
     private val monthCache = ConcurrentHashMap<String, List<RemoteCandidate>>()
     private val mutex = Mutex()
 
@@ -148,7 +149,7 @@ class ImmichMatcher(
      * used as is; the rest are worked out from the month's Immich details (fetched once per session
      * per month, and only when something needs it).
      */
-    suspend fun matchMonth(bucketKey: String, localIds: List<Long>, remoteIds: Set<String>): Map<Long, Match> = mutex.withLock {
+    override suspend fun matchMonth(bucketKey: String, localIds: List<Long>, remoteIds: Set<String>): Map<Long, Match> = mutex.withLock {
         if (localIds.isEmpty() || remoteIds.isEmpty()) return emptyMap()
         val locals = localIds.chunked(SQL_VARS).flatMap { media.byIds(it) }.map { it.toCandidate() }
         val cached = localIds.chunked(SQL_VARS).flatMap { cache.byLocalIds(it) }.associateBy { it.localId }
@@ -192,6 +193,19 @@ class ImmichMatcher(
         cache.upsert(hashed.map { MatchEntity(it.id, it.generation, answers[it.sha1], tentative = false, checkedAt = t) })
         version++
     }
+
+    override suspend fun cachedRemote(localIds: List<Long>): Map<Long, Match> {
+        if (localIds.isEmpty()) return emptyMap()
+        val gens = localIds.chunked(SQL_VARS).flatMap { media.byIds(it) }.associate { it.id to it.generation }
+        return localIds.chunked(SQL_VARS).flatMap { cache.byLocalIds(it) }
+            .filter { it.remoteId != null && gens[it.localId] == it.generation }
+            .associate { it.localId to Match(it.remoteId!!, it.tentative) }
+    }
+
+    override suspend fun cachedLocal(remoteIds: List<String>): Map<String, Long> =
+        if (remoteIds.isEmpty()) emptyMap() else remoteIds.chunked(SQL_VARS).flatMap { cache.byRemoteIds(it) }.associate { it.remoteId!! to it.localId }
+
+    override suspend fun pairsPerMonth(): Map<String, Int> = cache.pairsPerMonth().associate { MonthKeys.key(it.month) to it.count }
 
     /** Cached Immich copy of a phone item (current generation only). */
     suspend fun remoteOf(localId: Long): Match? {
