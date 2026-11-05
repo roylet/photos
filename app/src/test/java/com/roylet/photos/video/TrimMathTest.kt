@@ -215,6 +215,17 @@ class TrimMathTest {
         assertEquals("1:02:03.5", TrimMath.formatTime(3_723_500))
         assertEquals("12.6s", TrimMath.formatDuration(12_600))
         assertEquals("1m 05s", TrimMath.formatDuration(65_000))
+        assertEquals("0.0s", TrimMath.formatDuration(40))
+    }
+
+    @Test fun durationAndOutLabelsAgreeForAnUntrimmedClip() {
+        // The phone: a 24.86 s clip showed OUT 0:24.8 but DURATION 24.9s.
+        val cases = mapOf(24_860L to ("0:24.8" to "24.8s"), 24_899L to ("0:24.8" to "24.8s"), 59_999L to ("0:59.9" to "59.9s"), 9_950L to ("0:09.9" to "9.9s"))
+        for ((ms, labels) in cases) {
+            val e = com.roylet.photos.video.model.VideoEdit.initial(ms)
+            assertEquals(labels.first, TrimMath.formatTime(e.segments.last().endMs))
+            assertEquals(labels.second, TrimMath.formatDuration(e.outputDurationMs()))
+        }
     }
 
     @Test fun speedSliderIsLogarithmicAroundOne() {

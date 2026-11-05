@@ -258,11 +258,14 @@ object TrimMath {
         else String.format(Locale.US, "%d:%02d.%d", m, sec, tenths)
     }
 
-    /** "12.4s", "1m 05s", "1h 02m". */
+    /**
+     * "12.4s", "1m 05s", "1h 02m". Tenths are cut, not rounded, exactly like [formatTime], so an
+     * untrimmed 24 860 ms clip reads OUT 0:24.8 and DURATION 24.8s (rounding made it 24.9s).
+     */
     fun formatDuration(ms: Long): String {
         val t = ms.coerceAtLeast(0)
         return when {
-            t < 60_000 -> String.format(Locale.US, "%.1fs", t / 1000.0)
+            t < 60_000 -> String.format(Locale.US, "%d.%ds", t / 1000, (t / 100) % 10)
             t < 3_600_000 -> String.format(Locale.US, "%dm %02ds", t / 60_000, (t / 1000) % 60)
             else -> String.format(Locale.US, "%dh %02dm", t / 3_600_000, (t / 60_000) % 60)
         }
