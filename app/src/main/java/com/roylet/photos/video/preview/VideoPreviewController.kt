@@ -11,6 +11,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
@@ -193,6 +196,20 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         _outputPosition.value = ms.coerceIn(0, e.outputDurationMs())
     }
 
+    /**
+     * The screen went to the background: pause and free the decoders (a 4K one is scarce); the
+     * playlist, effects and position are kept for [onForeground].
+     */
+    fun onBackground() {
+        player.pause()
+        player.stop()
+    }
+
+    /** Back from [onBackground]: prepares again at the same position (paused). */
+    fun onForeground() {
+        if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
+    }
+
     /** Stops playback and frees the decoder and GL pipeline. The controller can't be reused. */
     fun release() {
         scope.cancel()
@@ -256,7 +273,8 @@ private class GainRenderersFactory(context: Context, private val gain: LiveGain)
 
 /**
  * Remembers a [VideoPreviewController] for this composition (using the app's shared OkHttp client
- * for remote sources) and releases it on dispose. Null in previews/screenshots.
+ * for remote sources), pauses it and frees its decoders while the app is in the background, and
+ * releases it on dispose. Null in previews/screenshots.
  */
 @Composable
 fun rememberVideoPreviewController(): VideoPreviewController? {
@@ -264,6 +282,18 @@ fun rememberVideoPreviewController(): VideoPreviewController? {
     val context = LocalContext.current
     val client = LocalMediaHttpClient.current
     val controller = remember { VideoPreviewController(context, client) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(controller, lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> controller.onBackground()
+                Lifecycle.Event.ON_START -> controller.onForeground()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     DisposableEffect(controller) { onDispose { controller.release() } }
     return controller
 }
