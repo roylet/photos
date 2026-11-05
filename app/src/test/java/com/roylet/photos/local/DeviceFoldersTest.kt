@@ -105,6 +105,7 @@ class DeviceFoldersTest {
         assertEquals("DCIM/Camera", hints[1])
         assertEquals("SD card · DCIM/Camera", hints[2])
         assertEquals("Pictures/Camera", hints[3])
+        assertEquals("…/Media/WhatsApp Images", DeviceFolders.pathHint(DeviceFolders.of(5, "WhatsApp Images", "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/", null, 1, 1, null)))
         assertNull(hints[4])
         assertTrue(sd.removable)
         assertFalse(internal.removable)
