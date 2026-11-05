@@ -33,7 +33,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -51,6 +50,8 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -69,7 +70,6 @@ import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.video.model.VideoEdit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -188,7 +188,7 @@ fun TrimStrip(
     val haptics = rememberHaptics()
     val reduced = rememberReducedMotion()
     val measurer = rememberTextMeasurer(cacheSize = 32)
-    val scope = rememberCoroutineScope()
+    val padPx = with(LocalDensity.current) { StripPad.toPx() }
     val position = playback.outputPosition.collectAsState()
     val playing by playback.isPlaying.collectAsState()
     var vp by remember(session) { mutableStateOf(TimelineViewport(session.durationMs, 0f)) }
@@ -260,6 +260,14 @@ fun TrimStrip(
         modifier
             .height(RulerH + StripH + 8.dp + MiniH + 6.dp)
             .semantics { contentDescription = "Trim timeline" }
+            .onSizeChanged { sz ->
+                val w = sz.width - 2 * padPx
+                if (w > 0f && vp.widthPx != w) {
+                    // First layout (or a resize): keep the zoom, re-clamp the scroll.
+                    val ratio = if (vp.widthPx > 0f) w / vp.widthPx else 1f
+                    vp = vp.copy(widthPx = w, scrollPx = vp.scrollPx * ratio).clamped()
+                }
+            }
             .pointerInput(session) {
                 val pad = StripPad.toPx()
                 val stripTop = RulerH.toPx()
@@ -394,12 +402,6 @@ fun TrimStrip(
             },
     ) {
         val pad = StripPad.toPx()
-        val w = size.width - 2 * pad
-        if (vp.widthPx != w && w > 0f) {
-            // First layout (or a resize): keep the zoom, re-clamp the scroll.
-            val ratio = if (vp.widthPx > 0f) w / vp.widthPx else 1f
-            vp = vp.copy(widthPx = w, scrollPx = vp.scrollPx * ratio).clamped()
-        }
         val e = edit.value
         val v = vp
         val stripTop = RulerH.toPx()

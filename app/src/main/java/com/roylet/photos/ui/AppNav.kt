@@ -3,6 +3,7 @@ package com.roylet.photos.ui
 import com.roylet.photos.ui.components.SnackTone
 
 import com.roylet.photos.editor.ui.EditorScreen
+import com.roylet.photos.video.ui.VideoEditorScreen
 
 import com.roylet.photos.ui.components.ConnectionChip
 
@@ -110,6 +111,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val VIEWER = "viewer?filter={filter}&index={index}&id={id}"
     const val EDIT = "edit/{assetId}"
+    const val EDIT_VIDEO = "editVideo/{assetId}"
     const val ALBUM = "album/{albumId}"
     const val NEW_ALBUM = "album-new?name={name}"
     const val PERSON = "person/{personId}?name={name}"
@@ -124,6 +126,7 @@ object Routes {
     /** Opens the viewer on [index] of the timeline described by [filter]. */
     fun viewer(filter: TimelineFilter, index: Int, id: String) = "viewer?filter=${filter.encode()}&index=$index&id=$id"
     fun edit(assetId: String) = "edit/$assetId"
+    fun editVideo(assetId: String) = "editVideo/$assetId"
     fun album(id: String) = "album/$id"
     fun newAlbum(name: String) = "album-new?name=${android.net.Uri.encode(name)}"
     fun memories(index: Int) = "memories?index=$index"
@@ -173,23 +176,9 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
     // A new account (or sign-out) starts the library caches afresh.
     LaunchedEffect(server?.let { container.sessionKey() }) { container.albums.clear(); container.memories.clear(); container.search.reset() }
     // After "Replace original", offer to undo: restores the original from Trash and trashes the edit.
-    val replaced by container.edits.lastReplace.collectAsState()
-    LaunchedEffect(replaced) {
-        val result = replaced ?: return@LaunchedEffect
-        container.edits.consumeLastReplace()
-        container.snackbar.show("Original moved to Trash", actionLabel = "Undo", tone = SnackTone.Success) {
-            // The app scope, so the undo finishes even if this screen goes away meanwhile.
-            container.uiScope.launch {
-                try {
-                    container.edits.undoReplace(result)
-                    container.timelines.invalidateAll()
-                    container.snackbar.show("Original restored", tone = SnackTone.Success)
-                } catch (e: Exception) {
-                    container.snackbar.error("Couldn't undo: ${e.message ?: "unknown error"}")
-                }
-            }
-        }
-    }
+    ReplaceUndoSnackbar(container, container.edits.lastReplace, container.edits::consumeLastReplace) { container.edits.undoReplace(it) }
+    // The same for videos saved with "Replace original" (the save may finish after the editor closed).
+    ReplaceUndoSnackbar(container, container.videoEdits.lastReplace, container.videoEdits::consumeLastReplace) { container.videoEdits.undoReplace(it) }
     CompositionLocalProvider(
         LocalMediaUrls provides urls,
         LocalMediaHttpClient provides container.http,
@@ -217,6 +206,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
                 viewer, entry,
                 timelineFor = { container.timelines.get(it) },
                 onEdit = { id -> nav.navigate(Routes.edit(id)) },
+                onEditVideo = { id -> nav.navigate(Routes.editVideo(id)) },
                 loadDetails = { id -> container.api()?.asset(id) },
             )
             ActionSheets(container.actions)
@@ -329,6 +319,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                         startId = args?.getString("id"),
                         onBack = { nav.popBackStack() },
                         onEdit = { id -> nav.navigate(Routes.edit(id)) },
+                        onEditVideo = { id -> nav.navigate(Routes.editVideo(id)) },
                         onIndexChange = { nav.previousBackStackEntry?.savedStateHandle?.set(Routes.REVEAL_INDEX, it) },
                         loadDetails = { id -> container.api()?.asset(id) },
                     )
@@ -344,6 +335,15 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                     // EditSaveManager already refreshed the cached timelines (new asset, maybe a trashed original).
                     nav.popBackStack()
                 },
+            )
+        }
+        composable(Routes.EDIT_VIDEO, arguments = listOf(navArgument("assetId") { type = NavType.StringType })) { entry ->
+            val assetId = entry.arguments?.getString("assetId").orEmpty()
+            VideoEditorScreen(
+                assetId = assetId,
+                onClose = { nav.popBackStack() },
+                // VideoSaveManager refreshes the cached timelines when the save finishes.
+                onSaved = { nav.popBackStack() },
             )
         }
         composable(Routes.ALBUMS) {
@@ -458,5 +458,34 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.SETTINGS) { SettingsScreen(container, onBack = { nav.popBackStack() }) }
+    }
+}
+
+/**
+ * After a "Replace original" save, offers to undo it: restores the original from Trash and
+ * trashes the edit. [undo] runs in the app scope, so it finishes even if the screen goes away.
+ */
+@Composable
+private fun ReplaceUndoSnackbar(
+    container: AppContainer,
+    lastReplace: kotlinx.coroutines.flow.StateFlow<com.roylet.photos.editor.save.SaveResult?>,
+    consume: () -> Unit,
+    undo: suspend (com.roylet.photos.editor.save.SaveResult) -> Unit,
+) {
+    val replaced by lastReplace.collectAsState()
+    LaunchedEffect(replaced) {
+        val result = replaced ?: return@LaunchedEffect
+        consume()
+        container.snackbar.show("Original moved to Trash", actionLabel = "Undo", tone = SnackTone.Success) {
+            container.uiScope.launch {
+                try {
+                    undo(result)
+                    container.timelines.invalidateAll()
+                    container.snackbar.show("Original restored", tone = SnackTone.Success)
+                } catch (e: Exception) {
+                    container.snackbar.error("Couldn't undo: ${e.message ?: "unknown error"}")
+                }
+            }
+        }
     }
 }

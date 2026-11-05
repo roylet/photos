@@ -112,6 +112,7 @@ fun ViewerOverlay(
     currentEntry: NavBackStackEntry?,
     timelineFor: (TimelineFilter) -> TimelineRepository,
     onEdit: (String) -> Unit,
+    onEditVideo: (String) -> Unit = onEdit,
     loadDetails: suspend (String) -> AssetDto?,
     modifier: Modifier = Modifier,
 ) {
@@ -138,6 +139,7 @@ fun ViewerOverlay(
                 startId = controller.focusId ?: req.startId,
                 onBack = { controller.close() },
                 onEdit = onEdit,
+                onEditVideo = onEditVideo,
                 onIndexChange = { i ->
                     controller.moveTo(i, timeline.snapshot.value.assetAt(i)?.id)
                     // The grid underneath scrolls along, so the close morph lands on the right cell.

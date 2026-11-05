@@ -153,6 +153,8 @@ fun ViewerScreen(
     onBack: () -> Unit,
     onEdit: (assetId: String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Edit for videos (the video editor); defaults to [onEdit]. */
+    onEditVideo: (assetId: String) -> Unit = onEdit,
     startId: String? = null,
     onIndexChange: (Int) -> Unit = {},
     loadDetails: suspend (String) -> AssetDto? = { null },
@@ -329,7 +331,7 @@ fun ViewerScreen(
                     },
                     onShare = { current?.let { actions.share(listOf(it.id), timeline) } },
                     onAddToAlbum = { current?.let { actions.addToAlbum(listOf(it.id), timeline) } },
-                    onEdit = { current?.let { onEdit(it.id) } },
+                    onEdit = { current?.let { if (it.isVideo) onEditVideo(it.id) else onEdit(it.id) } },
                     onInfo = { info = true },
                     onDelete = { current?.let { actions.delete(listOf(it.id), timeline) } },
                 )
