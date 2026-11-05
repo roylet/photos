@@ -31,6 +31,7 @@ class CastService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, player).setId("cast").setSessionActivity(open).build()
+        container.cast.onServiceStarted()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -41,9 +42,25 @@ class CastService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        (application as PhotosApp).container.cast.onServiceStopped()
         // The player belongs to the process-wide cast device; only the session goes.
         session?.release()
         session = null
         super.onDestroy()
+    }
+}
+
+/** Starts [CastService] when a cast session connects, stops it when it ends. */
+class AndroidCastServiceLauncher(context: android.content.Context) : CastServiceLauncher {
+    private val app = context.applicationContext
+
+    override fun start() {
+        // Connecting happens with the app in front; if it was resumed in the background, the
+        // relay still starts on demand and the system media controls simply aren't there.
+        runCatching { app.startService(Intent(app, CastService::class.java)) }
+    }
+
+    override fun stop() {
+        runCatching { app.stopService(Intent(app, CastService::class.java)) }
     }
 }

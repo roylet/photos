@@ -8,7 +8,18 @@ import okio.Path.Companion.toOkioPath
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.video.VideoFrameDecoder
 import com.roylet.photos.data.Settings
+import com.roylet.photos.cast.AndroidCastServiceLauncher
+import com.roylet.photos.cast.AndroidJpegTranscoder
+import com.roylet.photos.cast.AndroidPhoneFiles
+import com.roylet.photos.cast.CastController
+import com.roylet.photos.cast.CastResolver
+import com.roylet.photos.cast.CastSessionManager
+import com.roylet.photos.cast.CastUrls
+import com.roylet.photos.cast.HttpImmichRelay
 import com.roylet.photos.cast.Media3CastDevice
+import com.roylet.photos.cast.PhoneMediaProxy
+import com.roylet.photos.cast.RelayLifecycle
+import com.roylet.photos.immich.await
 import com.roylet.photos.domain.library.LocalLibrary
 import com.roylet.photos.domain.library.LocalTimelineSource
 import com.roylet.photos.domain.timeline.TimelineRepository
@@ -423,6 +434,56 @@ class AppContainer(context: Context) {
 
     /** The Cast SDK and Media3's remote player; [Media3CastDevice.init] runs from MainActivity (main thread). */
     val castDevice: Media3CastDevice by lazy { Media3CastDevice(app) }
+
+    /** Immich child sessions for the TV's `?sessionKey=` URLs; null without a server. */
+    private var castSessionsHeld: CastSessionManager? = null
+    private var castSessionsFor: String? = null
+
+    @Synchronized
+    fun castSessions(): CastSessionManager? {
+        val s = settings.server.value ?: return null
+        val key = s.publicUrl + "|" + s.userId
+        if (castSessionsFor != key) {
+            castSessionsFor = key
+            castSessionsHeld = CastSessionManager(http, { settings.server.value?.publicUrl }, ::serverSessionToken)
+        }
+        return castSessionsHeld
+    }
+
+    /** Where direct cast URLs point: the public HTTPS address, if it qualifies and the setting is on. */
+    fun castDirectBase(): String? = CastUrls.directBase(settings.server.value?.publicUrl, uiPrefs.castUsePublic.value)
+
+    /** The phone-side media server the TV reads phone-only items from (started by [CastService]). */
+    val castRelay: PhoneMediaProxy by lazy {
+        val env = AndroidNetworkEnvironment(app)
+        PhoneMediaProxy(
+            wifiAddress = { env.lan()?.address },
+            phone = AndroidPhoneFiles(app) { device.dao },
+            immich = { settings.server.value?.let { HttpImmichRelay(http, it.publicUrl) } },
+            transcoder = AndroidJpegTranscoder(),
+        )
+    }
+
+    /** Casting: what's on the TV, the slideshow, and the session's clean-up. See docs/SOURCES.md §11. */
+    val cast: CastController by lazy {
+        val resolver = CastResolver(
+            directBase = ::castDirectBase,
+            keys = ::castSessions,
+            probe = { url -> castProbe(url) },
+            proxy = castRelay,
+            relayNote = { if (uiPrefs.castUsePublic.value) CastResolver.NOTE_NO_PUBLIC else CastResolver.NOTE_PUBLIC_OFF },
+        )
+        val relay = object : RelayLifecycle {
+            override fun start() = castRelay.start()
+            override fun stop() = castRelay.stop()
+        }
+        CastController(castDevice, resolver, ::castSessions, relay, AndroidCastServiceLauncher(app), uiScope)
+    }
+
+    /** HEAD of a cast URL through the shared client: the Content-Type the TV will get. */
+    private suspend fun castProbe(url: String): String? = runCatching {
+        http.newCall(okhttp3.Request.Builder().url(url).head().build()).await().use { if (it.isSuccessful) it.header("Content-Type") else null }
+    }.getOrNull()
 
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }
 

@@ -44,6 +44,18 @@ class UiPrefs(context: Context?) {
         prefs?.edit()?.putBoolean("showBackupBadges", show)?.apply()
     }
 
+    private val _castPublic = MutableStateFlow(prefs?.getBoolean("castUsePublic", true) ?: true)
+    /**
+     * Settings → Casting → "Use public address for casting": Immich items go to the TV as direct
+     * public HTTPS URLs (on by default); off relays them through the phone.
+     */
+    val castUsePublic: StateFlow<Boolean> = _castPublic.asStateFlow()
+
+    fun setCastUsePublic(on: Boolean) {
+        _castPublic.value = on
+        prefs?.edit()?.putBoolean("castUsePublic", on)?.apply()
+    }
+
     /** Library → On this device: hidden folders and which folders show in Photos (bucket ids). */
     var folderPrefs: FolderPrefs
         get() = prefs?.let { p ->
