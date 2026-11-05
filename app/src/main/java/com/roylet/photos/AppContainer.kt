@@ -191,6 +191,8 @@ class AppContainer(context: Context) {
                 runCatching { matcher.clear() }
                 mergedTimeline.reset()
                 runCatching { device.scheduleHashing() }
+                // Signed out: the account's thumbnails and previews don't stay on the phone.
+                if (it == null) runCatching { imageLoader.memoryCache?.clear(); imageLoader.diskCache?.clear() }
             }
         }
     }
