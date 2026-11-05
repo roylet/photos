@@ -43,6 +43,7 @@ import com.roylet.photos.video.export.Media3Compositions
 import com.roylet.photos.video.export.VideoColorEffect
 import com.roylet.photos.video.export.VideoEffectSpec
 import com.roylet.photos.video.export.isVideoColorIdentity
+import com.roylet.photos.video.model.AudioSettings
 import com.roylet.photos.video.model.TimeRange
 import com.roylet.photos.video.model.VideoEdit
 import kotlinx.coroutines.Job
@@ -243,8 +244,9 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         color.set(e.color)
         updateEffects(e)
         player.playbackParameters = PlaybackParameters(e.speed)
-        player.volume = if (e.audio.mute) 0f else 1f
-        liveGain.gain = if (e.audio.mute) 0f else e.audio.gain
+        val audio = PreviewAudio.of(e.audio)
+        player.volume = audio.playerVolume
+        liveGain.gain = audio.gain
 
         val u = uri ?: return
         if (sourceScrub) return // the playlist comes back in [endScrub]
@@ -461,12 +463,38 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     }
 }
 
-/** A gain the audio sink applies live (the preview's volume, up to 200 %). Never reports unity, so it stays active. */
+/** What the preview hands the player for [AudioSettings]: [playerVolume] stays in 0..1, [gain] (0..2) goes to the [LiveGain]. */
+data class PreviewAudio(val playerVolume: Float, val gain: Float) {
+    companion object {
+        fun of(audio: AudioSettings): PreviewAudio {
+            val a = audio.normalized()
+            return if (a.mute) PreviewAudio(0f, 0f) else PreviewAudio(1f, (a.volume / 100f).coerceIn(0f, MAX_GAIN))
+        }
+
+        const val MAX_GAIN = 2f
+    }
+}
+
+/**
+ * A gain the audio sink applies live (the preview's volume, up to 200 %).
+ *
+ * Media3's [GainProcessor] contract: [isUnityUntil] is only asked while the gain is exactly 1 and
+ * must return a real sample position (`C.TIME_UNSET` fails a `checkState` on the playback thread,
+ * which is what stopped every 100 % preview in v0.2.1 with ERROR_CODE_FAILED_RUNTIME_CHECK), or
+ * `C.TIME_END_OF_SOURCE`, which would make the processor inactive and freeze the volume at 100 %.
+ * So it reports a short unity region ahead ([UNITY_CHUNK_SECONDS]); the processor passes that
+ * through untouched and asks again, so a volume change is heard within a fraction of a second.
+ */
 @OptIn(UnstableApi::class)
-internal class LiveGain : GainProcessor.GainProvider {
+class LiveGain : GainProcessor.GainProvider {
     @Volatile var gain: Float = 1f
     override fun getGainFactorAtSamplePosition(samplePosition: Long, sampleRate: Int): Float = gain
-    override fun isUnityUntil(samplePosition: Long, sampleRate: Int): Long = C.TIME_UNSET
+    override fun isUnityUntil(samplePosition: Long, sampleRate: Int): Long =
+        samplePosition.coerceAtLeast(0) + (sampleRate * UNITY_CHUNK_SECONDS).toLong().coerceAtLeast(1)
+
+    private companion object {
+        const val UNITY_CHUNK_SECONDS = 0.05
+    }
 }
 
 @OptIn(UnstableApi::class)
