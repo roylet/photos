@@ -57,7 +57,10 @@ class DeleteChoiceTest {
         shareDir = File("build/tmp"),
         timelines = registry,
         session = { session },
+        inBackedUpFolder = { ids -> ids.any { it in backedUp } },
     )
+    /** Items in a folder that backup covers. */
+    private var backedUp = emptySet<String>()
 
     @Test fun `deleting an item on both sides asks where from`() {
         actions.delete(listOf(first[0].id, first[2].id), repo)
@@ -94,5 +97,22 @@ class DeleteChoiceTest {
         snackbar.current!!.onAction!!()
         assertEquals(TrashReceipt(listOf(first[0].id), listOf("remote-${first[0].id}")), lib.restored.single())
         assertTrue(repo.snapshot.value.indexOf(first[0].id) >= 0)
+    }
+
+    @Test fun `in a backed-up folder the sheet says so, and a remembered "Immich" asks again`() {
+        backedUp = setOf(first[0].id)
+        actions.delete(listOf(first[0].id), repo)
+        assertTrue((actions.sheet as ActionSheet.DeleteChoice).backedUp)
+        actions.chooseDelete(DeleteTarget.Immich)
+        // Remembered "Immich": not in a backed-up folder → used as is.
+        actions.delete(listOf(first[1].id), repo)
+        assertNull(actions.sheet)
+        assertEquals(listOf(first[1].id) to DeleteTarget.Immich, lib.trashed.last())
+        // In a backed-up folder → asked again, with the warning.
+        lib.trashed.clear()
+        backedUp = setOf(first[1].id)
+        actions.delete(listOf(first[1].id), repo)
+        assertTrue((actions.sheet as ActionSheet.DeleteChoice).backedUp)
+        assertTrue(lib.trashed.isEmpty())
     }
 }

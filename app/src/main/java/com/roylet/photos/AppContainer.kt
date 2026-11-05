@@ -157,7 +157,7 @@ class AppContainer(context: Context) {
     var localMediaUrls: MediaUrls = LocalMediaUrls
 
     /** With a server: the phone and Immich together (favourite both copies, delete where asked, albums + folders). */
-    private val serverLibrary: LibrarySource by lazy { MergedLibrary(immichLibrary, localLibrary) { monthMatcher } }
+    private val serverLibrary: LibrarySource by lazy { MergedLibrary(immichLibrary, localLibrary, remoteDeletions = backup) { monthMatcher } }
 
     /** Screenshots and tests pin a fake library here; null follows the active configuration. */
     private var libraryOverride: LibrarySource? = null
@@ -293,6 +293,15 @@ class AppContainer(context: Context) {
         )
     }
 
+    /** Whether any of [ids] (phone or Immich ids) is in a folder backup covers: the delete sheet warns then. */
+    suspend fun inBackedUpFolder(ids: List<String>): Boolean {
+        if (!hasServer) return false
+        val phone = ids.mapNotNull { AssetRef.parse(it)?.mediaStoreId }
+        val remote = ids.filterNot(AssetRef::isLocal)
+        val viaCopies = if (remote.isEmpty()) emptyList() else runCatching { monthMatcher.cachedLocal(remote).values.toList() }.getOrDefault(emptyList())
+        return runCatching { backup.inBackedUpFolder(phone + viaCopies) }.getOrDefault(false)
+    }
+
     /** Today's memories for the carousel above the timeline. */
     val memories = MemoryStore({ library })
 
@@ -317,6 +326,7 @@ class AppContainer(context: Context) {
             shareDir = File(app.cacheDir, "share"),
             timelines = timelines,
             session = ::sessionKey,
+            inBackedUpFolder = ::inBackedUpFolder,
         )
     }
 

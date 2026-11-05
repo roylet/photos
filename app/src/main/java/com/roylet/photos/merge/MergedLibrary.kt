@@ -6,6 +6,7 @@ import com.roylet.photos.domain.library.DeleteTarget
 import com.roylet.photos.domain.library.ExploreSection
 import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.LocalLibrary
+import com.roylet.photos.domain.library.RemoteDeletionListener
 import com.roylet.photos.domain.library.MapMarker
 import com.roylet.photos.domain.library.Memory
 import com.roylet.photos.domain.library.Person
@@ -36,6 +37,8 @@ import java.time.LocalDate
 class MergedLibrary(
     private val immich: LibrarySource,
     private val local: LocalLibrary,
+    /** Told when an Immich copy is deleted while its phone copy stays, and when it's restored (backup, §10). */
+    private val remoteDeletions: RemoteDeletionListener? = null,
     private val pairs: () -> MonthMatcher,
 ) : LibrarySource, TargetedTrash {
 
@@ -128,13 +131,25 @@ class MergedLibrary(
                 throw e
             }
         }
-        if (plan.remote.isNotEmpty()) runCatching { pairs().forgetRemote(plan.remote) }
+        if (plan.remote.isNotEmpty()) {
+            // Confirmed pairs that lost only their Immich copy: backup must not upload the phone file again.
+            val gone = plan.remote.toHashSet()
+            val stays = plan.local.toHashSet()
+            val kept = HashMap<Long, String>()
+            for ((phone, server) in ofLocal) if (server in gone && phone !in stays) localKey(phone)?.let { kept[it] = server }
+            for ((server, phone) in ofRemote) if (server in gone && phone !in stays) localKey(phone)?.let { kept[it] = server }
+            if (kept.isNotEmpty()) runCatching { remoteDeletions?.remoteCopiesDeleted(kept) }
+            runCatching { pairs().forgetRemote(plan.remote) }
+        }
         return plan
     }
 
     override suspend fun restore(receipt: TrashReceipt) {
         if (receipt.local.isNotEmpty()) local.restore(receipt.local)
-        if (receipt.remote.isNotEmpty()) immich.restore(receipt.remote)
+        if (receipt.remote.isNotEmpty()) {
+            immich.restore(receipt.remote)
+            runCatching { remoteDeletions?.remoteCopiesRestored(receipt.remote) }
+        }
     }
 
     /** A plain trash (no choice asked): each id's own copy. */
@@ -147,7 +162,10 @@ class MergedLibrary(
     override suspend fun restore(ids: List<String>) {
         val s = split(ids)
         if (s.local.isNotEmpty()) local.restore(s.local)
-        if (s.remote.isNotEmpty()) immich.restore(s.remote)
+        if (s.remote.isNotEmpty()) {
+            immich.restore(s.remote)
+            runCatching { remoteDeletions?.remoteCopiesRestored(s.remote) }
+        }
     }
 
     override suspend fun deleteForever(ids: List<String>) {

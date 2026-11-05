@@ -256,10 +256,18 @@ fun DeleteChoiceContent(sheet: ActionSheet.DeleteChoice, onChoose: (DeleteTarget
         style = Type.Small, color = Palette.mutedInk,
     )
     Spacer(Modifier.height(14.dp))
+    // In a backed-up folder, "Immich" asks once more: the phone copy won't be backed up again.
+    var confirmImmich by remember(sheet) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         DeleteOption(Icons.Rounded.PhoneAndroid, "This device", "Frees space on the phone. Immich keeps its copy.") { onChoose(DeleteTarget.Device) }
-        DeleteOption(Icons.Rounded.Cloud, "Immich", "Removes it from the server. The phone keeps its copy.") { onChoose(DeleteTarget.Immich) }
-        DeleteOption(Icons.Rounded.DeleteOutline, "Both", "Gone from the phone and from Immich.", danger = true) { onChoose(DeleteTarget.Both) }
+        DeleteOption(
+            Icons.Rounded.Cloud,
+            if (confirmImmich) "Immich only" else "Immich",
+            if (confirmImmich) "Tap again to delete from Immich and keep the phone copy." else "Removes it from the server. The phone keeps its copy.",
+            selected = confirmImmich,
+        ) { if (sheet.backedUp && !confirmImmich) confirmImmich = true else onChoose(DeleteTarget.Immich) }
+        if (confirmImmich) Text("It won't be backed up again. Delete from phone too?", style = Type.Body, color = Palette.ink)
+        DeleteOption(Icons.Rounded.DeleteOutline, "Both", "Gone from the phone and from Immich.", danger = true, highlighted = confirmImmich) { onChoose(DeleteTarget.Both) }
     }
     Spacer(Modifier.height(12.dp))
     Text(
@@ -269,8 +277,23 @@ fun DeleteChoiceContent(sheet: ActionSheet.DeleteChoice, onChoose: (DeleteTarget
 }
 
 @Composable
-private fun DeleteOption(icon: ImageVector, title: String, subtitle: String, danger: Boolean = false, onClick: () -> Unit) {
-    Pressable(onClick, Modifier.fillMaxWidth(), fill = if (danger) Palette.red else Palette.card, shadow = 3.dp) {
+private fun DeleteOption(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    danger: Boolean = false,
+    selected: Boolean = false,
+    /** A deeper, orange shadow: the suggested answer. */
+    highlighted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Pressable(
+        onClick,
+        Modifier.fillMaxWidth(),
+        fill = if (danger) Palette.red else if (selected) Palette.sand else Palette.card,
+        shadow = if (highlighted) 6.dp else 3.dp,
+        shadowColor = if (highlighted) Brutal.Orange else Palette.shadow,
+    ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             val ink = if (danger) Palette.onStrong else Palette.ink
             Icon(icon, null, tint = ink, modifier = Modifier.size(24.dp))

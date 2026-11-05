@@ -35,7 +35,13 @@ sealed interface ActionSheet {
     /** [albumId] set: the sheet offers an album link (send-file is disabled). */
     data class Share(val ids: List<String>, val albumId: String? = null) : ActionSheet
     /** "Delete from: this device / Immich / both", for a selection with [paired] items on both. */
-    data class DeleteChoice(val ids: List<String>, val timeline: TimelineRepository?, val paired: Int) : ActionSheet
+    data class DeleteChoice(
+        val ids: List<String>,
+        val timeline: TimelineRepository?,
+        val paired: Int,
+        /** Some are in a folder that's backed up: choosing "Immich" warns that they won't be backed up again. */
+        val backedUp: Boolean = false,
+    ) : ActionSheet
 }
 
 /** Hands files or text to other apps; Android's share sheet and clipboard in the app. */
@@ -78,6 +84,8 @@ class LibraryActions(
     private val timelines: TimelineRegistry? = null,
     /** Who's signed in: the remembered delete choice lasts for one session. */
     private val session: () -> Any? = { null },
+    /** Whether any of these ids is in a folder backup covers (docs/SOURCES.md §10). */
+    private val inBackedUpFolder: suspend (List<String>) -> Boolean = { false },
 ) : AssetActions {
 
     /** The answer to "Delete from:" for this session (asked once, then used for every delete). */
@@ -185,11 +193,14 @@ class LibraryActions(
         if (lib is TargetedTrash) {
             // Items on both the phone and Immich: ask where to delete them from (once a session).
             val remembered = deleteTarget
-            if (remembered != null) return deleteFrom(lib, ids, remembered, timeline)
+            if (remembered != null && remembered != DeleteTarget.Immich) return deleteFrom(lib, ids, remembered, timeline)
             scope.launch {
                 val paired = runCatching { lib.pairedIds(ids) }.getOrDefault(emptySet())
-                if (paired.isEmpty()) deleteFrom(lib, ids, DeleteTarget.Both, timeline)
-                else sheet = ActionSheet.DeleteChoice(ids, timeline, paired.size)
+                if (paired.isEmpty()) return@launch deleteFrom(lib, ids, DeleteTarget.Both, timeline)
+                // A remembered "Immich" still asks when backup covers the photos: they won't be backed up again.
+                val backedUp = runCatching { inBackedUpFolder(paired.toList()) }.getOrDefault(false)
+                if (remembered != null && !backedUp) deleteFrom(lib, ids, remembered, timeline)
+                else sheet = ActionSheet.DeleteChoice(ids, timeline, paired.size, backedUp)
             }
             return
         }
