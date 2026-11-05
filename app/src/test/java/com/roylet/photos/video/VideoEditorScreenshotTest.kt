@@ -135,6 +135,11 @@ class VideoEditorScreenshotTest {
     ),
     )
 
+    @Test fun previewSimplified() = shoot(
+        "video-01e-preview-simplified",
+        workspace(session(graded), VideoTool.TRIM, position = 4_000, notice = PreviewNotice.Simplified),
+    )
+
     @Test fun crop() {
         val s = session(graded.copy(geometry = VideoGeometry(crop = CropRect(0.341797f, 0f, 0.658203f, 1f))))
         s.cropAspect = AspectPreset.P9_16

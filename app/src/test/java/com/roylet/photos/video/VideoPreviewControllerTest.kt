@@ -254,4 +254,83 @@ class VideoPreviewControllerTest {
         val noCause = PlaybackException("gone", null, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND)
         assertTrue(PreviewErrors.details(noCause).contains("Cause: androidx.media3.common.PlaybackException: gone"))
     }
+
+    // ---- the simplified fallback ----
+
+    private fun runtimeCheck() = PlaybackException(
+        "Unexpected runtime error", IllegalStateException("checkState"), PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK,
+    )
+
+    @Test fun aFailureFallsBackOnceToThePlainSourceAndStillPlays() {
+        // Kept [0, 3 s) and [6 s, 10 s), at 2x, graded.
+        val e = graded.withSpeed(2f)
+        controller.setEdit(e)
+        controller.seekToOutputTime(2_000) // source 7 s
+        controller.play()
+        // Effects on and no frame yet: first the effects go (the existing fallback) ...
+        controller.handleError(runtimeCheck())
+        assertEquals(PreviewNotice.NoFilters, controller.notice.value)
+        assertFalse(controller.simplified)
+        // ... and when it still fails, the plain source.
+        controller.handleError(runtimeCheck())
+
+        assertTrue(controller.simplified)
+        assertEquals(PreviewNotice.Simplified, controller.notice.value)
+        val p = controller.player
+        assertEquals(1, p.mediaItemCount)
+        assertEquals(0L, p.getMediaItemAt(0).clippingConfiguration.startPositionMs)
+        assertEquals(C.TIME_END_OF_SOURCE, p.getMediaItemAt(0).clippingConfiguration.endPositionMs)
+        assertTrue(controller.effects.isEmpty)
+        assertEquals(1f, p.playbackParameters.speed)
+        assertTrue(p.playWhenReady)
+        assertNotEquals(Player.STATE_IDLE, p.playbackState)
+        assertEquals(7_000L, p.currentPosition) // same moment, now in source time
+        assertEquals(2_000L, controller.outputPosition.value)
+        assertEquals(3_500L, controller.outputDuration.value) // the edit's own length
+
+        // Seeks map output time to source time; the look and speed stay off.
+        controller.seekToOutputTime(1_000) // kept 2 s -> source 2 s
+        assertEquals(2_000L, p.currentPosition)
+        controller.setEdit(e.copy(color = Recipe(light = Light(exposure = 0.3f))))
+        assertTrue(controller.effects.isEmpty)
+        assertEquals(PreviewNotice.Simplified, controller.notice.value)
+
+        // A second failure is reported, with details; retry keeps the simplified mode.
+        controller.handleError(runtimeCheck())
+        val failed = controller.notice.value as PreviewNotice.Failed
+        assertTrue(failed.details.startsWith("ERROR_CODE_FAILED_RUNTIME_CHECK"))
+        p.stop()
+        controller.retry()
+        assertEquals(PreviewNotice.Simplified, controller.notice.value)
+        assertNotEquals(Player.STATE_IDLE, p.playbackState)
+    }
+
+    @Test fun theSimplifiedPreviewSkipsCutsAndStopsAtTheEnd() {
+        controller.setEdit(edit) // kept [0, 3 s) and [6 s, 10 s)
+        controller.handleError(runtimeCheck())
+        controller.play()
+        val p = controller.player
+        p.seekTo(0, 4_000) // in the cut
+        controller.emulateTrims()
+        assertEquals(6_000L, p.currentPosition)
+        controller.emulateTrims()
+        assertEquals(6_000L, p.currentPosition) // kept time: nothing to do
+        controller.setEdit(edit.copy(segments = listOf(TimeRange(0, 3_000), TimeRange(6_000, 8_000))))
+        p.seekTo(0, 8_500)
+        controller.emulateTrims()
+        assertFalse(p.playWhenReady)
+        assertEquals(8_000L, p.currentPosition)
+        assertEquals(5_000L, controller.outputPosition.value)
+        // Play at the end starts over at the first kept moment.
+        controller.play()
+        assertEquals(0L, p.currentPosition)
+        assertTrue(p.playWhenReady)
+    }
+
+    @Test fun unreadableFilesAreReportedNotSimplified() {
+        controller.setEdit(edit)
+        controller.handleError(PlaybackException("gone", null, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND))
+        assertFalse(controller.simplified)
+        assertTrue(controller.notice.value is PreviewNotice.Failed)
+    }
 }

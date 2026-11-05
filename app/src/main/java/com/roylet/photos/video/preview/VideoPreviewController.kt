@@ -86,6 +86,12 @@ sealed interface PreviewNotice {
     data object NoFilters : PreviewNotice
 
     /**
+     * The edited playback failed: the preview plays the plain source (no clipping, effects or
+     * speed) and emulates the trims by seeking over the cuts. The export still uses the real edit.
+     */
+    data object Simplified : PreviewNotice
+
+    /**
      * The player failed; [VideoPreviewController.retry] prepares it again. [details] is the
      * technical part (error code, root cause class and message) for the person to copy.
      */
@@ -133,6 +139,9 @@ object PreviewErrors {
     }
 
     private const val DETAIL_FRAMES = 4
+
+    /** Worth retrying as the simplified preview: anything but an unreadable source (IO errors). */
+    fun canSimplify(error: PlaybackException): Boolean = error.errorCode !in 2000..2999
 
     fun message(error: PlaybackException): String = when (error.errorCode) {
         PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "The downloaded original is missing."
@@ -207,6 +216,13 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     /** Set after the effect pipeline failed: the rest of this session previews without effects. */
     internal var effectsDisabled = false
         private set
+
+    /**
+     * Set after the edited playback (clipped playlist, speed, effects) failed: the rest of this
+     * session plays one plain item of the source and emulates the trims ([TrimEmulation]).
+     */
+    internal var simplified = false
+        private set
     private var renderedFrame = false
 
     private var scrubbing = false
@@ -258,7 +274,7 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     }
 
     private fun learnSourceDuration(timeline: Timeline) {
-        val unclipped = sourceScrub
+        val unclipped = sourceScrub || simplified
         val last = player.mediaItemCount - 1
         if (last < 0 || (!unclipped && last != playlist.lastIndex)) return
         val clip = player.getMediaItemAt(last).clippingConfiguration
@@ -327,7 +343,7 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         val colorChanged = e.color != color.recipe
         color.set(e.color)
         updateEffects(e)
-        player.playbackParameters = PlaybackParameters(e.speed)
+        player.playbackParameters = PlaybackParameters(if (simplified) 1f else e.speed)
         val audio = PreviewAudio.of(e.audio)
         player.volume = audio.playerVolume
         liveGain.gain = audio.gain
@@ -340,6 +356,15 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
             val target = sourceMs?.let { e.sourceToOutput(it) } ?: keepOutputMs
             val out = target.coerceIn(0, e.outputDurationMs())
             val pos = e.outputToSource(out)
+            if (simplified) {
+                // One plain item of the source; the trims are emulated while it plays.
+                val current = player.takeIf { it.mediaItemCount == 1 }?.getMediaItemAt(0)
+                if (current?.mediaId == SOURCE_ID && current.localConfiguration?.uri == u) player.seekTo(0, pos.sourceMs)
+                else player.setMediaItem(sourceItem(u), pos.sourceMs)
+                if (player.playbackState == Player.STATE_IDLE) player.prepare()
+                _outputPosition.value = out
+                return
+            }
             val ranges = PreviewRanges.validated(e.segments, e.sourceDurationMs)
             if (ranges.size != e.segments.size) {
                 // Can't happen for a normalised edit; never hand Media3 a bad range.
@@ -367,8 +392,8 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
      * effects and some re-prepares at the same spot so the renderer picks up the new video path.
      */
     private fun updateEffects(e: VideoEdit) {
-        val plan = PreviewEffectPlan.of(e, effectsDisabled)
-        if (effectsDisabled && _notice.value !is PreviewNotice.Failed) _notice.value = if (PreviewEffectPlan.of(e).isEmpty) null else PreviewNotice.NoFilters
+        val plan = if (simplified) PreviewEffectPlan.NONE else PreviewEffectPlan.of(e, effectsDisabled)
+        if (effectsDisabled && !simplified && _notice.value !is PreviewNotice.Failed) _notice.value = if (PreviewEffectPlan.of(e).isEmpty) null else PreviewNotice.NoFilters
         if (plan == effects) return
         val reprepare = plan.isEmpty != effects.isEmpty && player.playbackState != Player.STATE_IDLE
         effects = plan
@@ -387,7 +412,8 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
     /**
      * A player error. Effects on and the effect pipeline to blame (or no frame ever made it out):
      * drop the effects for this session, prepare again where it was and keep its play state.
-     * Anything else becomes a [PreviewNotice.Failed] with [retry].
+     * Otherwise, once, unless the file itself is unreadable: fall back to the [simplified]
+     * preview. Anything after that becomes a [PreviewNotice.Failed] with [retry].
      */
     internal fun handleError(error: PlaybackException) {
         android.util.Log.e(TAG, "Preview error ${error.errorCodeName} (${error.errorCode})", error)
@@ -399,14 +425,38 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
             if (player.mediaItemCount > 0) player.prepare()
             return
         }
+        if (!simplified && PreviewErrors.canSimplify(error) && uri != null && edit != null) {
+            enterSimplified()
+            return
+        }
         _notice.value = PreviewNotice.Failed(PreviewErrors.message(error), PreviewErrors.details(error))
+    }
+
+    /** Switches to the [simplified] preview at the same output time, keeping play/pause. */
+    private fun enterSimplified() {
+        val e = edit ?: return
+        Log.w(TAG, "Edited preview failed; retrying with the plain source (simplified preview)")
+        val at = _outputPosition.value.coerceIn(0, e.outputDurationMs())
+        simplified = true
+        renderedFrame = false
+        if (!effects.isEmpty) { effects = PreviewEffectPlan.NONE; player.setVideoEffects(emptyList()) }
+        _notice.value = PreviewNotice.Simplified
+        if (sourceScrub) return // [endScrub] puts the (now simplified) playback back
+        playlist = emptyList()
+        apply(e, at, keepSourceMoment = false)
     }
 
     /** After a [PreviewNotice.Failed]: prepares again at the same spot. */
     fun retry() = onPlayerLooper { retryNow() }
 
     private fun retryNow() {
-        if (_notice.value is PreviewNotice.Failed) _notice.value = if (effectsDisabled) PreviewNotice.NoFilters else null
+        if (_notice.value is PreviewNotice.Failed) {
+            _notice.value = when {
+                simplified -> PreviewNotice.Simplified
+                effectsDisabled -> PreviewNotice.NoFilters
+                else -> null
+            }
+        }
         if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
     }
 
@@ -433,7 +483,7 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         if (playlist.isEmpty() || sourceScrub) return
         val out = ms.coerceIn(0, e.outputDurationMs())
         val pos = e.outputToSource(out)
-        player.seekTo(pos.segmentIndex, pos.offsetMs)
+        if (simplified) player.seekTo(0, pos.sourceMs) else player.seekTo(pos.segmentIndex, pos.offsetMs)
         _outputPosition.value = out
     }
 
@@ -454,7 +504,7 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         if (sourceTime && u != null && edit != null) {
             val at = if (playlist.isNotEmpty()) currentSourceMs() else 0L
             sourceScrub = true
-            player.setMediaItem(MediaItem.Builder().setUri(u).setMediaId("source").build(), at)
+            player.setMediaItem(sourceItem(u), at)
             if (player.playbackState == Player.STATE_IDLE) player.prepare()
         }
     }
@@ -517,13 +567,17 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         return e.sourceToOutput(sourceMs.coerceIn(nearest.startMs, nearest.endMs)) ?: 0L
     }
 
+    private fun sourceItem(u: Uri): MediaItem = MediaItem.Builder().setUri(u).setMediaId(SOURCE_ID).build()
+
     private fun currentSourceMs(): Long {
+        if (simplified) return player.currentPosition.coerceAtLeast(0)
         val i = player.currentMediaItemIndex.coerceIn(0, (playlist.size - 1).coerceAtLeast(0))
         return (playlist.getOrNull(i)?.startMs ?: 0L) + player.currentPosition.coerceAtLeast(0)
     }
 
     private fun currentOutputMs(e: VideoEdit): Long {
         if (playlist.isEmpty() || sourceScrub) return _outputPosition.value
+        if (simplified) return sourceToOutputClamped(e, player.currentPosition.coerceAtLeast(0))
         val i = player.currentMediaItemIndex.coerceIn(0, playlist.size - 1)
         val before = playlist.take(i).sumOf { it.durationMs }
         return ((before + player.currentPosition.coerceAtLeast(0)) / e.speed.toDouble()).roundToLong()
@@ -539,8 +593,27 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
         ticker?.cancel()
         ticker = scope.launch {
             while (isActive) {
+                emulateTrims()
                 publishPosition()
                 delay(33)
+            }
+        }
+    }
+
+    /**
+     * Simplified preview only, while playing: jumps over cut-out time and stops at the end of
+     * the last kept range ([TrimEmulation]).
+     */
+    internal fun emulateTrims() {
+        val e = edit ?: return
+        if (!simplified || sourceScrub || scrubbing || player.mediaItemCount == 0) return
+        when (val step = TrimEmulation.step(e, player.currentPosition.coerceAtLeast(0), EMULATION_LOOKAHEAD_MS)) {
+            TrimEmulation.Step.Continue -> Unit
+            is TrimEmulation.Step.SeekTo -> player.seekTo(0, step.sourceMs)
+            is TrimEmulation.Step.End -> {
+                player.pause()
+                player.seekTo(0, step.sourceMs)
+                _outputPosition.value = e.outputDurationMs()
             }
         }
     }
@@ -559,6 +632,11 @@ class VideoPreviewController(context: Context, httpClient: OkHttpClient? = null)
 
         /** Play pressed this close to the end starts over. */
         const val END_SLACK_MS = 250L
+
+        const val SOURCE_ID = "source"
+
+        /** About half the ~33 ms position tick: the simplified preview jumps a cut this early. */
+        const val EMULATION_LOOKAHEAD_MS = 20L
     }
 }
 
