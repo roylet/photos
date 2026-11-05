@@ -127,6 +127,52 @@ class VideoSaveTest {
     private fun JsonObject.bool(k: String) = this[k]!!.jsonPrimitive.content.toBooleanStrict()
     private fun body(key: String): JsonObject = Json.parseToJsonElement(bodies[key]!!).jsonObject
 
+    /** A phone video: details and bytes from this "phone", saved by a recording sink. */
+    private inner class PhoneSource : com.roylet.photos.editor.save.EditSource {
+        override suspend fun info(id: String) = com.roylet.photos.immich.EditAssetInfo(
+            id = id, type = "VIDEO", originalFileName = "VID_5.mp4", fileCreatedAt = "2024-05-01T10:00:00Z", fileModifiedAt = "2024-05-01T10:00:00Z", checksum = "g3",
+        )
+        override suspend fun metadata(id: String, key: String) = null
+        override suspend fun obtain(info: com.roylet.photos.immich.EditAssetInfo, dest: File, onProgress: (Long, Long) -> Unit): File {
+            dest.parentFile?.mkdirs(); dest.writeText("PHONE-BYTES"); return dest
+        }
+    }
+
+    private val sinkLog = mutableListOf<String>()
+    private val phoneSink = object : com.roylet.photos.editor.save.SaveSink {
+        override suspend fun save(input: com.roylet.photos.editor.save.SinkInput, onProgress: (com.roylet.photos.editor.save.SinkStage, Float) -> Unit): com.roylet.photos.editor.save.SaveResult {
+            sinkLog += "${input.targetId} ${input.mimeType} ${input.isVideo} ${input.filename} ${input.mode} ${input.editKey}"
+            return com.roylet.photos.editor.save.SaveResult("local:200", input.targetId, input.mode, originalTrashed = input.mode == SaveMode.REPLACE, local = true)
+        }
+        override suspend fun undoReplace(result: com.roylet.photos.editor.save.SaveResult) {}
+    }
+
+    @Test fun aPhoneVideoIsExportedAndSavedOnThePhoneWithoutTheServer() = runTest {
+        val job = VideoSaveJob(null, originals, engine, workDir, probe = { SourceInfo(1920, 1080, 10_000, "video/avc") }, caps = { EncoderCaps() },
+            sources = PhoneSource(), localSink = { _, _ -> phoneSink })
+        val r = job.run(VideoSaveJobSpec("j2", "local:5", "local:5", edit.toJson(), SaveMode.REPLACE, false,
+            destination = com.roylet.photos.editor.save.SaveDestination.DEVICE)) { _, _ -> }
+        assertEquals("PHONE-BYTES", engine.input)
+        assertEquals(listOf("local:5 video/mp4 true VID_5-edited.mp4 REPLACE ${VideoEditMetadata.KEY}"), sinkLog)
+        assertTrue(log.isEmpty()) // no Immich calls
+        assertEquals("local:200", r.newAssetId)
+        assertTrue(r.originalTrashed)
+    }
+
+    @Test fun aMergedVideoSavedToBothGoesToThePhoneThenToItsImmichCopy() = runTest {
+        val job = VideoSaveJob(api, originals, engine, workDir, probe = { SourceInfo(1920, 1080, 10_000, "video/avc") }, caps = { EncoderCaps() },
+            sources = PhoneSource(), localSink = { _, _ -> phoneSink })
+        val r = job.run(VideoSaveJobSpec("j3", "local:5", "local:5", edit.toJson(), SaveMode.COPY, false,
+            destination = com.roylet.photos.editor.save.SaveDestination.BOTH, remoteTargetId = old)) { _, _ -> }
+        assertEquals(1, sinkLog.size)
+        assertEquals(listOf("GET /api/assets/$old", "POST /api/assets", "PUT /api/assets/copy", "PUT /api/assets/$new/metadata"), log)
+        // Immich's copy of the edit points at Immich's copy of the original.
+        val item = body("PUT /api/assets/$new/metadata")["items"]!!.jsonArray.single().jsonObject
+        assertEquals(old, VideoEditMetadata.decode(item["value"]!!.jsonObject)!!.first)
+        assertEquals("local:200", r.newAssetId)
+        assertEquals(new, r.companion!!.newAssetId)
+    }
+
     @Test fun copyDownloadsExportsUploadsCopiesAlbumsStacksAndStoresTheEdit() = runTest {
         val r = save(SaveMode.COPY)
         assertEquals(

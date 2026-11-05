@@ -3,13 +3,17 @@ package com.roylet.photos.video.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.roylet.photos.editor.save.SaveMode
+import com.roylet.photos.domain.source.AssetRef
+import com.roylet.photos.editor.save.EditSource
+import com.roylet.photos.editor.save.ImmichEditSource
+import com.roylet.photos.editor.save.SaveDestination
+import com.roylet.photos.editor.save.SaveRequest
+import com.roylet.photos.editor.save.SaveStarter
 import com.roylet.photos.immich.EditAssetInfo
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
 import com.roylet.photos.immich.TimeBucketAssetsDto
 import com.roylet.photos.immich.asset
-import com.roylet.photos.immich.assetInfo
-import com.roylet.photos.immich.getMetadata
 import com.roylet.photos.immich.videoPlaybackUrl
 import com.roylet.photos.ui.viewer.VideoFrameStrip
 import com.roylet.photos.util.Format
@@ -43,7 +47,15 @@ sealed interface VideoEditorPhase {
     data class Loading(val title: String, val detail: String, val fraction: Float?, val strip: VideoFrameStrip? = null) : VideoEditorPhase
     /** The video was saved by this editor: continue from its source, or edit it as it is. */
     data class Choose(val asset: EditAssetInfo, val sourceId: String, val edit: VideoEdit) : VideoEditorPhase
-    data class Ready(val session: VideoEditorSession, val target: EditAssetInfo, val sourceId: String) : VideoEditorPhase
+    data class Ready(
+        val session: VideoEditorSession,
+        val target: EditAssetInfo,
+        val sourceId: String,
+        /** Where the save sheet can save to; the first is the default (where the video lives). */
+        val destinations: List<SaveDestination> = listOf(SaveDestination.IMMICH),
+        /** The Immich copy of a phone video, for saves that include Immich. */
+        val remoteTargetId: String? = null,
+    ) : VideoEditorPhase
     data class Failed(val message: String, val canEditThisVersion: Boolean = false) : VideoEditorPhase
 }
 
@@ -59,7 +71,21 @@ class VideoEditorViewModel(
     private val manager: VideoSaveManager,
     private val http: OkHttpClient?,
     private val frames: FrameStripProvider = FrameStripProvider(),
+    /** Where the original comes from: Immich or this phone. */
+    private val source: () -> EditSource = { ImmichEditSource(api) },
+    private val remoteCopy: suspend (String) -> String? = { null },
+    private val starter: SaveStarter = SaveStarter { true },
 ) : ViewModel() {
+    private val _destination = MutableStateFlow<SaveDestination?>(null)
+    /** The save sheet's destination choice. */
+    val destination: StateFlow<SaveDestination?> = _destination.asStateFlow()
+
+    private val _notice = MutableStateFlow<String?>(null)
+    /** A one-off message (e.g. the user declined the consent dialog). */
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    fun setDestination(d: SaveDestination) { _destination.value = d }
+    fun consumeNotice() { _notice.value = null }
     private val _phase = MutableStateFlow<VideoEditorPhase>(VideoEditorPhase.Loading("Opening", "Fetching video details", null))
     val phase: StateFlow<VideoEditorPhase> = _phase.asStateFlow()
 
@@ -82,29 +108,28 @@ class VideoEditorViewModel(
 
     private fun start() = load {
         _phase.value = VideoEditorPhase.Loading("Opening", "Fetching video details", null)
-        val api = api() ?: throw ImmichException("Sign in to edit videos.")
-        val info = api.assetInfo(assetId)
+        val src = source()
+        val info = src.info(assetId)
         if (!info.type.equals("VIDEO", ignoreCase = true)) throw ImmichException("This isn't a video.")
         target = info
-        val meta = runCatching { api.getMetadata(assetId, VideoEditMetadata.KEY) }.getOrNull()?.let(VideoEditMetadata::decode)
+        val meta = src.metadata(assetId, VideoEditMetadata.KEY)?.let(VideoEditMetadata::decode)
         if (meta != null && meta.first != assetId) _phase.value = VideoEditorPhase.Choose(info, meta.first, meta.second)
-        else open(api, info, info, null)
+        else open(info, info, null)
     }
 
     /** Re-edit: open the original the edit was made from, with that edit. */
     fun continueFromOriginal() {
         val choose = _phase.value as? VideoEditorPhase.Choose ?: return
         load(onError = { "The original couldn't be opened (${ImmichApi.describe(it)})." to true }) {
-            val api = api() ?: throw ImmichException("Sign in to edit videos.")
             _phase.value = VideoEditorPhase.Loading("Opening", "Finding the original", null)
-            val source = api.assetInfo(choose.sourceId)
-            open(api, source, choose.asset, choose.edit)
+            val original = source().info(choose.sourceId)
+            open(original, choose.asset, choose.edit)
         }
     }
 
     fun editThisVersion() {
         val info = target ?: run { start(); return }
-        load { open(api() ?: throw ImmichException("Sign in to edit videos."), info, info, null) }
+        load { open(info, info, null) }
     }
 
     private fun load(onError: (Exception) -> Pair<String, Boolean> = { ImmichApi.describe(it) to false }, block: suspend () -> Unit) {
@@ -120,20 +145,23 @@ class VideoEditorViewModel(
         }
     }
 
-    private suspend fun open(api: ImmichApi, source: EditAssetInfo, target: EditAssetInfo, edit: VideoEdit?) {
-        // The strip can start from the server while the original downloads.
-        val hintMs = edit?.sourceDurationMs ?: runCatching { TimeBucketAssetsDto.parseDurationMs(api.asset(source.id).duration) }.getOrNull() ?: 0L
+    private suspend fun open(source: EditAssetInfo, target: EditAssetInfo, edit: VideoEdit?) {
+        // An Immich video's strip can start from the server while the original downloads.
+        val onPhone = AssetRef.isLocal(source.id)
+        val api = if (onPhone) null else api()
+        val hintMs = edit?.sourceDurationMs ?: api?.let { a -> runCatching { TimeBucketAssetsDto.parseDurationMs(a.asset(source.id).duration) }.getOrNull() } ?: 0L
         val remoteStrip = if (hintMs > 0) VideoFrameStrip(FrameStripProvider.sampleTimes(hintMs, VideoEditorSession.STRIP_FRAMES)) else null
-        val remoteJob = if (remoteStrip != null && http != null && manager.originals.cached(source) == null) {
+        val remoteJob = if (api != null && remoteStrip != null && http != null && manager.originals.cached(source) == null) {
             viewModelScope.launch { runCatching { frames.fillRemote(remoteStrip, http, api.videoPlaybackUrl(source.id)) } }
         } else null
 
         val name = source.originalFileName
-        _phase.value = VideoEditorPhase.Loading("Downloading original", name, 0f, remoteStrip)
+        val title = if (onPhone) "Opening original" else "Downloading original"
+        _phase.value = VideoEditorPhase.Loading(title, name, 0f, remoteStrip)
         val file = try {
-            manager.originals.obtain(api, source) { done, total ->
+            manager.originals.obtain(source(), source) { done, total ->
                 val detail = if (total > 0) "$name · ${Format.bytes(done)} of ${Format.bytes(total)}" else "$name · ${Format.bytes(done)}"
-                _phase.value = VideoEditorPhase.Loading("Downloading original", detail, if (total > 0) done.toFloat() / total else null, remoteStrip)
+                _phase.value = VideoEditorPhase.Loading(title, detail, if (total > 0) done.toFloat() / total else null, remoteStrip)
             }
         } finally {
             remoteJob?.cancel()
@@ -157,7 +185,11 @@ class VideoEditorViewModel(
         val session = VideoEditorSession(
             sourceFile = file, source = info.copy(durationMs = duration), caps = caps, initial = initial, strip = strip, frames = frames,
         )
-        _phase.value = VideoEditorPhase.Ready(session, target, source.id)
+        val targetOnPhone = AssetRef.isLocal(target.id)
+        val remote = if (targetOnPhone) runCatching { remoteCopy(target.id) }.getOrNull() else null
+        val destinations = SaveDestination.choicesFor(targetOnPhone, inImmich = !targetOnPhone || remote != null)
+        if (_destination.value !in destinations) _destination.value = destinations.first()
+        _phase.value = VideoEditorPhase.Ready(session, target, source.id, destinations, remote)
         viewModelScope.launch {
             frames.fill(strip, file)
         }
@@ -174,7 +206,15 @@ class VideoEditorViewModel(
         val ready = _phase.value as? VideoEditorPhase.Ready ?: return
         if (_saveJob.value != null && saveProgress.value is VideoSaveProgress.Running) return
         ready.session.history.endGesture()
-        _saveJob.value = manager.enqueue(ready.target.id, ready.sourceId, ready.session.history.edit, mode, group)
+        val destination = _destination.value ?: ready.destinations.first()
+        val edit = ready.session.history.edit
+        viewModelScope.launch {
+            val job = starter.start(SaveRequest(ready.target.id, mode, group, destination, ready.remoteTargetId)) { r ->
+                manager.enqueue(r.targetId, ready.sourceId, edit, r.mode, r.group, r.destination, r.remoteTargetId)
+            }
+            if (job == null) _notice.value = "Not saved: Android didn't allow replacing the original. Save as a copy instead?"
+            else _saveJob.value = job
+        }
     }
 
     /** Stops the running save (nothing on the server is touched). */

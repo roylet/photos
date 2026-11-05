@@ -2,6 +2,15 @@ package com.roylet.photos.video.save
 
 import com.roylet.photos.editor.save.SaveMode
 import com.roylet.photos.editor.save.SaveResult
+import com.roylet.photos.editor.save.EditSource
+import com.roylet.photos.editor.save.ImmichEditSource
+import com.roylet.photos.editor.save.LocalSaveException
+import com.roylet.photos.editor.save.SaveDestination
+import com.roylet.photos.editor.save.SaveSink
+import com.roylet.photos.editor.save.SinkInput
+import com.roylet.photos.editor.save.SinkStage
+import com.roylet.photos.editor.save.combineResults
+import com.roylet.photos.local.LocalSaveCheckpoint
 import com.roylet.photos.immich.EditAssetInfo
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
@@ -31,6 +40,12 @@ data class VideoSaveJobSpec(
     val editJson: String,
     val mode: SaveMode,
     val group: Boolean,
+    /** This phone, Immich or both (docs/SOURCES.md §9). */
+    val destination: SaveDestination = SaveDestination.IMMICH,
+    /** The Immich copy of a phone [targetId], for a save to Immich. */
+    val remoteTargetId: String? = null,
+    /** The phone half's progress (rewritten as it goes). */
+    val localCheckpoint: LocalSaveCheckpoint = LocalSaveCheckpoint(),
 )
 
 /**
@@ -42,18 +57,26 @@ data class VideoSaveJobSpec(
  * was attempted (see [VideoSaveFlow.run]'s `uploadAttemptedBefore`).
  */
 class VideoSaveJob(
-    private val api: ImmichApi,
+    /** Null when the save doesn't go to Immich. */
+    private val api: ImmichApi?,
     private val originals: VideoOriginals,
     private val engine: VideoExportEngine,
     private val workDir: File,
     private val probe: (File) -> SourceInfo,
     private val caps: (SourceInfo) -> EncoderCaps,
+    /** Where the original comes from (Immich or this phone). */
+    private val sources: EditSource = ImmichEditSource { api },
+    /** The phone's sink for this job, resuming from its checkpoint. */
+    private val localSink: ((LocalSaveCheckpoint, (LocalSaveCheckpoint) -> Unit) -> SaveSink)? = null,
+    /** Persists the spec when the phone half's checkpoint moves. */
+    private val onSpec: (VideoSaveJobSpec) -> Unit = {},
 ) {
-    suspend fun run(spec: VideoSaveJobSpec, onProgress: (VideoSaveStage, Float) -> Unit): SaveResult {
+    suspend fun run(spec0: VideoSaveJobSpec, onProgress: (VideoSaveStage, Float) -> Unit): SaveResult {
+        var spec = spec0
         val edit = VideoEdit.fromJson(spec.editJson)
         if (edit.isIdentity) throw ImmichException("There are no changes to save.")
-        val target = api.assetInfo(spec.targetId)
-        val source = if (spec.sourceId == spec.targetId) target else api.assetInfo(spec.sourceId)
+        val target = sources.info(spec.targetId)
+        val source = if (spec.sourceId == spec.targetId) target else sources.info(spec.sourceId)
         if (!source.type.equals("VIDEO", ignoreCase = true)) throw ImmichException("Only videos can be saved with the video editor.")
 
         val filename = VideoSaveFlow.editedFilename(target.originalFileName)
@@ -63,7 +86,7 @@ class VideoSaveJob(
         if (!(exported.isFile && out.isFile && out.length() > 0)) {
             exported.delete()
             onProgress(VideoSaveStage.DOWNLOADING, 0f)
-            val original = originals.obtain(api, source) { done, total ->
+            val original = originals.obtain(sources, source) { done, total ->
                 onProgress(VideoSaveStage.DOWNLOADING, if (total > 0) done.toFloat() / total else 0f)
             }
             // The editor opening another video mustn't prune this original mid-export.
@@ -71,10 +94,29 @@ class VideoSaveJob(
         }
         val exportWarning = exported.readText().ifBlank { null }
 
-        val uploadMarker = File(workDir, UPLOAD_STARTED)
-        val attemptedBefore = uploadMarker.exists()
-        uploadMarker.writeText("1")
-        val result = VideoSaveFlow(api).run(target, source.id, out, filename, edit, spec.mode, spec.group, attemptedBefore, onProgress)
+        // The phone first (no network), then Immich.
+        val local = if (spec.destination.local) {
+            val sink = (localSink ?: throw LocalSaveException("Saving on this phone isn't available."))(spec.localCheckpoint) { cp ->
+                spec = spec.copy(localCheckpoint = cp); onSpec(spec)
+            }
+            sink.save(
+                SinkInput(spec.targetId, source.id, out, filename, "video/mp4", isVideo = true,
+                    VideoEditMetadata.KEY, VideoEditMetadata.encode(source.id, edit), spec.mode, spec.group),
+            ) { stage, f -> onProgress(stage.toVideoStage(), f) }
+        } else null
+        val remote = if (spec.destination.immich) {
+            val api = api ?: throw ImmichException("Not signed in")
+            val remoteTarget = if (spec.remoteTargetId != null || com.roylet.photos.domain.source.AssetRef.isLocal(target.id)) {
+                api.assetInfo(spec.remoteTargetId ?: throw ImmichException("This video isn't in Immich."))
+            } else target
+            // A phone item's edit points at its Immich copy there (Immich can't open `local:` ids).
+            val renderSource = if (com.roylet.photos.domain.source.AssetRef.isLocal(source.id)) remoteTarget.id else source.id
+            val uploadMarker = File(workDir, UPLOAD_STARTED)
+            val attemptedBefore = uploadMarker.exists()
+            uploadMarker.writeText("1")
+            VideoSaveFlow(api).run(remoteTarget, renderSource, out, filename, edit, spec.mode, spec.group, attemptedBefore, onProgress)
+        } else null
+        val result = combineResults(local, remote)
         return if (result.warning == null && exportWarning != null) result.copy(warning = exportWarning) else result
     }
 
@@ -100,6 +142,16 @@ class VideoSaveJob(
     }
 
     companion object {
+        /** A sink's stage as the video editor shows it. */
+        fun SinkStage.toVideoStage(): VideoSaveStage = when (this) {
+            SinkStage.WRITING, SinkStage.UPLOADING -> VideoSaveStage.UPLOADING
+            SinkStage.LINKING -> VideoSaveStage.LINKING
+            SinkStage.GROUPING -> VideoSaveStage.GROUPING
+            SinkStage.TRASHING -> VideoSaveStage.TRASHING
+            SinkStage.RECIPE -> VideoSaveStage.RECIPE
+            SinkStage.DONE -> VideoSaveStage.DONE
+        }
+
         const val EXPORT_DONE = "export.done"
         const val UPLOAD_STARTED = "upload.started"
         const val SPACE_MARGIN = 64L * 1024 * 1024

@@ -328,7 +328,9 @@ class AppContainer(context: Context) {
     }
 
     /** Video-editor saves (download → export → upload WorkManager jobs), originals cache and REPLACE undo. */
-    val videoEdits: VideoSaveManager by lazy { VideoSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }) }
+    val videoEdits: VideoSaveManager by lazy {
+        VideoSaveManager(app, { api() }, onSaved = { timelines.invalidateAll() }, sources = { editSource }, localSink = { cp, onCp -> device.saveSink(cp, onCp) })
+    }
 
     companion object {
         /** [sessionKey] for the phone-only configuration. */

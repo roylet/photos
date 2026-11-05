@@ -1,10 +1,12 @@
 package com.roylet.photos.video.io
 
+import com.roylet.photos.editor.save.EditSource
+import com.roylet.photos.editor.save.ImmichEditSource
+
 import android.os.StatFs
 import com.roylet.photos.immich.EditAssetInfo
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
-import com.roylet.photos.immich.downloadOriginal
 import com.roylet.photos.util.Format
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -19,8 +21,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Videos can be gigabytes, so only the [keep] most recently used originals are kept, and a
  * download refuses to start without room for it plus [headroomBytes].
  *
- * Downloads go through [downloadOriginal] (the shared OkHttp client, so the API key and LAN/public
- * switching apply) into a `.part` file that is renamed only when complete. Two callers asking for
+ * Originals come from an [EditSource]: an Immich download (the shared OkHttp client, so the API
+ * key and LAN/public switching apply) or a copy of a phone video, into a `.part` file that is
+ * renamed only when complete. Two callers asking for
  * the same original (the editor and a queued save) share one download.
  *
  * Pruning never deletes an original that is still needed: one [hold]s (the open editor, a running
@@ -60,7 +63,7 @@ class VideoOriginals(
 
     /** Where [info]'s original lives once downloaded. The checksum in the name catches a replaced asset. */
     fun fileFor(info: EditAssetInfo): File =
-        File(File(dir, "${info.id}-${Integer.toHexString(info.checksum.hashCode())}"), safeName(info.originalFileName))
+        File(File(dir, "${folderKey(info.id)}-${Integer.toHexString(info.checksum.hashCode())}"), safeName(info.originalFileName))
 
     /** The cached original, or null when it isn't downloaded (completely) yet. */
     fun cached(info: EditAssetInfo): File? = fileFor(info).takeIf { it.isFile }
@@ -69,13 +72,17 @@ class VideoOriginals(
      * Returns the local original, downloading it first when needed. [onProgress] gets
      * (bytes, total or -1). Throws [ImmichException] for a full disk or a failed download.
      */
-    suspend fun obtain(api: ImmichApi, info: EditAssetInfo, onProgress: (Long, Long) -> Unit = { _, _ -> }): File {
+    suspend fun obtain(api: ImmichApi, info: EditAssetInfo, onProgress: (Long, Long) -> Unit = { _, _ -> }): File =
+        obtain(ImmichEditSource { api }, info, onProgress)
+
+    /** The same from any [EditSource]: an Immich download, or a copy of a phone video. */
+    suspend fun obtain(source: EditSource, info: EditAssetInfo, onProgress: (Long, Long) -> Unit = { _, _ -> }): File {
         val file = fileFor(info)
         val folder = file.parentFile!!
-        return hold(file).use { locks.getOrPut(file.path) { Mutex() }.withLock { download(api, info, file, folder, onProgress) } }
+        return hold(file).use { locks.getOrPut(file.path) { Mutex() }.withLock { download(source, info, file, folder, onProgress) } }
     }
 
-    private suspend fun download(api: ImmichApi, info: EditAssetInfo, file: File, folder: File, onProgress: (Long, Long) -> Unit): File {
+    private suspend fun download(source: EditSource, info: EditAssetInfo, file: File, folder: File, onProgress: (Long, Long) -> Unit): File {
         if (file.isFile) {
             folder.setLastModified(System.currentTimeMillis())
             onProgress(file.length(), file.length())
@@ -87,7 +94,7 @@ class VideoOriginals(
             folder.setLastModified(System.currentTimeMillis())
         }
         var checked = false
-        return api.downloadOriginal(info.id, file, edited = info.isEdited) { done, total ->
+        return source.obtain(info, file) { done, total ->
             if (!checked && total > 0) {
                 checked = true
                 val free = freeBytes(folder)
@@ -106,7 +113,7 @@ class VideoOriginals(
     fun prune(except: File? = null) {
         val pending = runCatching(pendingSourceIds).getOrDefault(emptySet())
         val folders = dir.listFiles { f ->
-            f.isDirectory && f != except && !isHeld(f) && pending.none { id -> f.name.startsWith("$id-") }
+            f.isDirectory && f != except && !isHeld(f) && pending.none { id -> f.name.startsWith("${folderKey(id)}-") }
         }?.sortedByDescending { it.lastModified() } ?: return
         val budget = (keep - (if (except != null) 1 else 0)).coerceAtLeast(0)
         folders.drop(budget).forEach { it.deleteRecursively() }
@@ -116,6 +123,9 @@ class VideoOriginals(
     fun freeSpace(): Long = freeBytes(dir.apply { mkdirs() })
 
     companion object {
+        /** Folder-safe form of an asset id (`local:5` → `local_5`). */
+        fun folderKey(id: String) = id.replace(':', '_')
+
         fun safeName(name: String) = name.replace(Regex("[^A-Za-z0-9._-]"), "_").take(120).ifBlank { "video.mp4" }
     }
 }

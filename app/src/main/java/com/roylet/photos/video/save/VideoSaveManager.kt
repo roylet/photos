@@ -25,6 +25,12 @@ import com.roylet.photos.PhotosApp
 import com.roylet.photos.R
 import com.roylet.photos.editor.save.SaveMode
 import com.roylet.photos.editor.save.SaveResult
+import com.roylet.photos.editor.save.EditSource
+import com.roylet.photos.editor.save.ImmichEditSource
+import com.roylet.photos.editor.save.LocalSaveException
+import com.roylet.photos.editor.save.SaveDestination
+import com.roylet.photos.editor.save.SaveSink
+import com.roylet.photos.local.LocalSaveCheckpoint
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichException
 import com.roylet.photos.video.export.EncoderCaps
@@ -77,6 +83,10 @@ class VideoSaveManager(
     private val engine: (Context) -> VideoExportEngine = { Media3VideoExporter(it) },
     private val probe: (File) -> SourceInfo = SourceProbe::probe,
     private val caps: (SourceInfo) -> EncoderCaps = { SourceProbe.encoderCaps(it) },
+    /** Where originals come from (Immich or this phone). */
+    private val sources: () -> EditSource = { ImmichEditSource(api) },
+    /** The phone's sink for one job; null without phone saves. */
+    private val localSink: ((LocalSaveCheckpoint, (LocalSaveCheckpoint) -> Unit) -> SaveSink)? = null,
 ) {
     private val app = context.applicationContext
     private val _jobs = MutableStateFlow<Map<String, VideoSaveProgress>>(emptyMap())
@@ -95,14 +105,23 @@ class VideoSaveManager(
      * Queues a save of [edit] (made on [sourceId]'s original) for the asset [targetId]. Copy keeps
      * the original ([group] stacks the two); replace copies everything over and trashes it.
      */
-    fun enqueue(targetId: String, sourceId: String = targetId, edit: VideoEdit, mode: SaveMode, group: Boolean): String {
+    fun enqueue(
+        targetId: String,
+        sourceId: String = targetId,
+        edit: VideoEdit,
+        mode: SaveMode,
+        group: Boolean,
+        destination: SaveDestination = SaveDestination.IMMICH,
+        remoteTargetId: String? = null,
+    ): String {
         val jobId = UUID.randomUUID().toString()
-        val spec = VideoSaveJobSpec(jobId, targetId, sourceId, edit.normalized().toJson(), mode, group)
-        specFile(jobId).apply { parentFile?.mkdirs() }.writeText(ImmichApi.json.encodeToString(VideoSaveJobSpec.serializer(), spec))
+        val spec = VideoSaveJobSpec(jobId, targetId, sourceId, edit.normalized().toJson(), mode, group, destination, remoteTargetId)
+        writeSpec(spec)
         report(jobId, VideoSaveProgress.Running(VideoSaveStage.QUEUED, 0f))
         val request = OneTimeWorkRequestBuilder<VideoSaveWorker>()
             .setInputData(workDataOf(VideoSaveWorker.KEY_JOB_ID to jobId))
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            // A save to this phone alone needs no network.
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(if (destination.immich) NetworkType.CONNECTED else NetworkType.NOT_REQUIRED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag(TAG)
@@ -121,8 +140,11 @@ class VideoSaveManager(
 
     /** Undo a REPLACE: restores the original from Trash and sends the edit to Trash. */
     suspend fun undoReplace(result: SaveResult) {
-        val api = api() ?: throw ImmichException("Not signed in")
-        VideoSaveFlow(api).undoReplace(result)
+        for (part in result.parts) {
+            if (!part.originalTrashed) continue
+            if (part.local) (localSink ?: throw LocalSaveException("Saving on this phone isn't available."))(LocalSaveCheckpoint()) {}.undoReplace(part)
+            else VideoSaveFlow(api() ?: throw ImmichException("Not signed in")).undoReplace(part)
+        }
         _lastReplace.compareAndSet(result, null)
         runCatching { onSaved(result) }
     }
@@ -156,14 +178,22 @@ class VideoSaveManager(
     /** Runs one attempt. Keeps the spec and work files when it throws, for a retry; see [finish]. */
     internal suspend fun run(jobId: String, onProgress: (VideoSaveStage, Float) -> Unit): SaveResult {
         val spec = readSpec(jobId) ?: throw ImmichException("This save was lost; please save again.")
-        val api = api() ?: throw ImmichException("Not signed in")
-        return VideoSaveJob(api, originals, engine(app), workDir(jobId), probe, caps).run(spec, onProgress)
+        val api = if (spec.destination.immich) api() ?: throw ImmichException("Not signed in") else api()
+        return VideoSaveJob(api, originals, engine(app), workDir(jobId), probe, caps, sources(), localSink, onSpec = ::writeSpec).run(spec, onProgress)
     }
 
     /** Deletes a job's spec and work files (after success, a permanent failure or a cancel). */
     internal fun finish(jobId: String) {
         workDir(jobId).deleteRecursively()
         specFile(jobId).delete()
+    }
+
+    /** Atomically (temp file + rename) rewrites a spec. */
+    private fun writeSpec(spec: VideoSaveJobSpec) {
+        val f = specFile(spec.jobId).apply { parentFile?.mkdirs() }
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        tmp.writeText(ImmichApi.json.encodeToString(VideoSaveJobSpec.serializer(), spec))
+        if (!tmp.renameTo(f)) { f.writeText(tmp.readText()); tmp.delete() }
     }
 
     private fun specFile(jobId: String) = File(app.filesDir, "video-save/$jobId.json")

@@ -1,5 +1,7 @@
 package com.roylet.photos.video.ui
 
+import com.roylet.photos.editor.save.SaveDestination
+
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.activity.compose.BackHandler
@@ -153,10 +155,16 @@ fun VideoEditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId
     val app = LocalContext.current.applicationContext as PhotosApp
     val container = app.container
     val vm: VideoEditorViewModel = viewModel(key = "video-editor-$assetId") {
-        VideoEditorViewModel(assetId, container::api, container.videoEdits, container.http)
+        VideoEditorViewModel(
+            assetId, container::api, container.videoEdits, container.http,
+            source = { container.editSource }, remoteCopy = container::remoteCopyOf, starter = container.saveStarter,
+        )
     }
     val phase by vm.phase.collectAsStateWithLifecycle()
     val save by vm.saveProgress.collectAsStateWithLifecycle()
+    val destination by vm.destination.collectAsStateWithLifecycle()
+    val notice by vm.notice.collectAsStateWithLifecycle()
+    LaunchedEffect(notice) { notice?.let { container.snackbar.show(it); vm.consumeNotice() } }
     LaunchedEffect(save) { (save as? VideoSaveProgress.Done)?.let { onSaved(it.result.newAssetId) } }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -192,6 +200,9 @@ fun VideoEditorScreen(assetId: String, onClose: () -> Unit, onSaved: (newAssetId
                     saveProgress = save,
                     onCancelSave = vm::cancelSave,
                     onDismissSave = vm::clearSave,
+                    destinations = p.destinations,
+                    destination = destination,
+                    onDestination = vm::setDestination,
                 )
             }
         }
@@ -220,6 +231,9 @@ fun VideoEditorWorkspace(
     initialTool: VideoTool = VideoTool.TRIM,
     initialSheet: Boolean = false,
     initialAdjustPage: AdjustPage = AdjustPage.LIGHT,
+    destinations: List<SaveDestination> = listOf(SaveDestination.IMMICH),
+    destination: SaveDestination? = null,
+    onDestination: (SaveDestination) -> Unit = {},
 ) {
     var tool by rememberSaveable { mutableStateOf(initialTool) }
     var sheet by rememberSaveable { mutableStateOf(initialSheet) }
@@ -274,8 +288,11 @@ fun VideoEditorWorkspace(
             visible = sheet && saveProgress == null,
             onDismiss = { sheet = false },
             onSave = { mode, group -> sheet = false; onSave(mode, group) },
-            subtitle = "Exports an MP4 and uploads it to Immich",
             extra = { ExportSummaryRow(session, edit) { sheet = false; tool = VideoTool.EXPORT } },
+            destinations = destinations,
+            destination = destination ?: destinations.first(),
+            onDestination = onDestination,
+            video = true,
         )
         VideoSaveProgressPanel(saveProgress, onBackground = onClose, onCancel = onCancelSave, onDismiss = onDismissSave)
     }
