@@ -144,39 +144,82 @@ object TrimMath {
         return TrimDrag(next, edge, snapped?.takeIf { it == edge })
     }
 
+    /** Source time of [handle]'s edge. */
+    fun edgeMs(edit: VideoEdit, handle: TrimHandle): Long {
+        val s = edit.segments[handle.segment]
+        return if (handle.edge == TrimEdge.START) s.startMs else s.endMs
+    }
+
+    /** True when [handle]'s edge is shared with the neighbouring segment (a split with nothing cut out). */
+    fun isSharedCut(edit: VideoEdit, handle: TrimHandle): Boolean {
+        val s = edit.segments[handle.segment]
+        return when (handle.edge) {
+            TrimEdge.START -> edit.segments.getOrNull(handle.segment - 1)?.endMs == s.startMs
+            TrimEdge.END -> edit.segments.getOrNull(handle.segment + 1)?.startMs == s.endMs
+        }
+    }
+
     /**
-     * What strip x [x] hits: a handle within [handleSlopPx] (on a shared cut, the side the finger
-     * is on decides), else the kept segment under it, else a gap.
+     * Strip x of the centre of [handle]'s grip, [handleWidthPx] wide. A handle sits just outside
+     * the kept range (START to the left of its edge, END to the right), so it never covers kept
+     * frames; on a shared cut the two handles sit side by side, each over its own segment.
      */
-    fun hitTest(edit: VideoEdit, vp: TimelineViewport, x: Float, handleSlopPx: Float): StripHit {
+    fun handleCentreX(edit: VideoEdit, vp: TimelineViewport, handle: TrimHandle, handleWidthPx: Float): Float {
+        val x = vp.xOf(edgeMs(edit, handle))
+        val half = handleWidthPx / 2f
+        val outside = if (handle.edge == TrimEdge.START) x - half else x + half
+        val inside = if (handle.edge == TrimEdge.START) x + half else x - half
+        return if (isSharedCut(edit, handle)) inside else outside
+    }
+
+    /**
+     * What strip x [x] hits. Handles win: any handle whose grip centre ([handleCentreX]) is within
+     * [handleHalfHitPx] (half of the ≥ 48 dp touch target, which reaches past the strip's ends);
+     * the nearest wins, and on a tie the side the finger is on. Otherwise the kept segment under
+     * it, else a gap. (The playhead is never hit-tested: a drag that isn't on a handle scrubs.)
+     */
+    fun hitTest(edit: VideoEdit, vp: TimelineViewport, x: Float, handleHalfHitPx: Float, handleWidthPx: Float = 0f): StripHit {
         var best: TrimHandle? = null
         var bestD = Float.MAX_VALUE
-        edit.segments.forEachIndexed { i, s ->
-            val sx = vp.xOf(s.startMs)
-            val ex = vp.xOf(s.endMs)
-            // Handles sit just outside their edge: START to the left, END to the right.
-            val ds = abs(x - sx)
-            val de = abs(x - ex)
-            if (ds <= handleSlopPx && (ds < bestD || (ds == bestD && x >= sx))) { best = TrimHandle(i, TrimEdge.START); bestD = ds }
-            if (de <= handleSlopPx && (de < bestD || (de == bestD && x < ex))) { best = TrimHandle(i, TrimEdge.END); bestD = de }
-        }
-        // On a shared cut (end of i == start of i+1) the finger's side picks the handle.
-        best?.let { h ->
-            val s = edit.segments[h.segment]
-            val cut = vp.xOf(if (h.edge == TrimEdge.START) s.startMs else s.endMs)
-            if (h.edge == TrimEdge.START && x < cut) {
-                val prev = edit.segments.getOrNull(h.segment - 1)
-                if (prev != null && prev.endMs == s.startMs) return StripHit.Handle(TrimHandle(h.segment - 1, TrimEdge.END))
+        edit.segments.forEachIndexed { i, _ ->
+            for (edge in TrimEdge.entries) {
+                val h = TrimHandle(i, edge)
+                val c = handleCentreX(edit, vp, h, handleWidthPx)
+                val d = abs(x - c)
+                if (d > handleHalfHitPx) continue
+                // A tie (e.g. a shared cut with zero-width grips): END owns the left side, START the right.
+                val fingerSide = if (edge == TrimEdge.END) x < c else x >= c
+                if (d < bestD || (d == bestD && fingerSide)) { best = h; bestD = d }
             }
-            if (h.edge == TrimEdge.END && x >= cut) {
-                val next = edit.segments.getOrNull(h.segment + 1)
-                if (next != null && next.startMs == s.endMs) return StripHit.Handle(TrimHandle(h.segment + 1, TrimEdge.START))
-            }
-            return StripHit.Handle(h)
         }
+        best?.let { return StripHit.Handle(it) }
         val ms = vp.msAt(x)
         val idx = edit.segments.indexOfFirst { ms >= it.startMs && ms < it.endMs || (ms == it.endMs && it == edit.segments.last()) }
         return if (idx >= 0) StripHit.Segment(idx) else StripHit.Gap
+    }
+
+    /** Where the finger grabbed [handle] relative to its edge, so the edge doesn't jump to the finger. */
+    fun grabOffset(edit: VideoEdit, vp: TimelineViewport, handle: TrimHandle, downX: Float): Float = vp.xOf(edgeMs(edit, handle)) - downX
+
+    /** Source time a handle dragged to finger x [x] asks for, keeping the [grabOffset]. */
+    fun dragRequestMs(vp: TimelineViewport, x: Float, grabOffset: Float): Long = vp.msAt(x + grabOffset)
+
+    /** How far before an OUT edge the preview shows (its last kept frame, not the first cut one). */
+    const val OUT_FRAME_BACK_MS = 40L
+
+    /** Source time to show in the preview for a handle at [edgeMs]. */
+    fun previewSourceMs(handle: TrimHandle, edgeMs: Long): Long =
+        if (handle.edge == TrimEdge.END) (edgeMs - OUT_FRAME_BACK_MS).coerceAtLeast(0) else edgeMs
+
+    /**
+     * Output time the preview rests on after [handle] is released on [edit]: the frame at the handle
+     * (IN: the segment's first frame; OUT: its last), mapped through the new edit's timeline.
+     */
+    fun restOutputMs(edit: VideoEdit, handle: TrimHandle): Long {
+        val s = edit.segments.getOrNull(handle.segment) ?: return 0L
+        val src = previewSourceMs(handle, edgeMs(edit, handle)).coerceIn(s.startMs, s.endMs)
+        // A shared cut maps to the later segment; ask for the time inside this one.
+        return edit.segmentOutputStartMs(handle.segment) + ((src - s.startMs) / edit.speed.toDouble()).roundToLong()
     }
 
     /** [sourceMs] moved into the nearest kept segment (the playhead can't sit in cut-out time). */

@@ -380,7 +380,7 @@ private fun PreviewArea(
             Text(
                 "PREVIEW WITHOUT FILTERS",
                 style = Type.Tiny, color = BrutalDark.Text,
-                modifier = Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 14.dp)
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp)
                     .brutalDark(fill = BrutalDark.Panel, shadow = 2.dp).padding(horizontal = 8.dp, vertical = 4.dp)
                     .semantics { contentDescription = "Preview without filters; the saved video still gets them" },
             )

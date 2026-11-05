@@ -31,7 +31,10 @@ import com.roylet.photos.video.model.VideoEdit
 import com.roylet.photos.video.model.VideoGeometry
 import com.roylet.photos.video.save.VideoSaveProgress
 import com.roylet.photos.video.save.VideoSaveStage
+import com.roylet.photos.video.preview.PreviewNotice
 import com.roylet.photos.video.ui.AdjustPage
+import com.roylet.photos.video.ui.TrimEdge
+import com.roylet.photos.video.ui.TrimHandle
 import com.roylet.photos.video.ui.StillPlayback
 import com.roylet.photos.video.ui.VideoEditorLoading
 import com.roylet.photos.video.ui.VideoEditorPhase
@@ -99,11 +102,32 @@ class VideoEditorScreenshotTest {
         sheet: Boolean = false,
         progress: VideoSaveProgress? = null,
         page: AdjustPage = AdjustPage.LIGHT,
+        notice: PreviewNotice? = null,
     ): @Composable () -> Unit = {
-        VideoEditorWorkspace(s, StillPlayback(position), null, {}, { _, _ -> }, progress, initialTool = tool, initialSheet = sheet, initialAdjustPage = page)
+        VideoEditorWorkspace(s, StillPlayback(position, notice = notice), null, {}, { _, _ -> }, progress, initialTool = tool, initialSheet = sheet, initialAdjustPage = page)
     }
 
     @Test fun trim() = shoot("video-01-trim", workspace(session(graded, selected = 1), VideoTool.TRIM, position = 9_000))
+
+    /** Dragging clip 2's OUT handle: the preview shows that frame with a time bubble. */
+    @Test fun trimScrubHandle() {
+        val s = session(graded, selected = 1)
+        s.scrubHandle = TrimHandle(1, TrimEdge.END)
+        s.scrubMs = 21_800
+        shoot("video-01b-trim-scrub-handle", workspace(s, VideoTool.TRIM, position = 15_000))
+    }
+
+    /** Dragging the playhead, on a phone whose effect pipeline failed (preview without filters). */
+    @Test fun trimScrubPlayhead() {
+        val s = session(graded)
+        s.scrubPlayhead = true
+        shoot("video-01c-trim-scrub-playhead", workspace(s, VideoTool.TRIM, position = 11_300, notice = PreviewNotice.NoFilters))
+    }
+
+    @Test fun previewFailed() = shoot(
+        "video-01d-preview-failed",
+        workspace(session(graded), VideoTool.TRIM, notice = PreviewNotice.Failed("This phone couldn't decode the video for the preview.")),
+    )
 
     @Test fun crop() {
         val s = session(graded.copy(geometry = VideoGeometry(crop = CropRect(0.341797f, 0f, 0.658203f, 1f))))

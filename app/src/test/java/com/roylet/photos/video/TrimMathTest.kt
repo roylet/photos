@@ -142,6 +142,71 @@ class TrimMathTest {
         assertEquals(StripHit.Handle(TrimHandle(1, TrimEdge.START)), TrimMath.hitTest(split, vp, 505f, 20f))
     }
 
+    // ---- big handles: hit areas, grab offset, priority, preview times ----
+
+    // A 1000 px strip over 10 s, 12 px grips with a 48 px target (half = 24).
+    private val grip = 12f
+    private val half = 24f
+
+    @Test fun gripsSitOutsideTheKeptRange() {
+        val vp = TimelineViewport(10_000, 1000f)
+        assertEquals(-6f, TrimMath.handleCentreX(two, vp, TrimHandle(0, TrimEdge.START), grip))
+        assertEquals(406f, TrimMath.handleCentreX(two, vp, TrimHandle(0, TrimEdge.END), grip))
+        assertEquals(594f, TrimMath.handleCentreX(two, vp, TrimHandle(1, TrimEdge.START), grip))
+        // A shared cut: each grip over its own segment.
+        val split = ten.splitAt(5_000)
+        assertEquals(494f, TrimMath.handleCentreX(split, vp, TrimHandle(0, TrimEdge.END), grip))
+        assertEquals(506f, TrimMath.handleCentreX(split, vp, TrimHandle(1, TrimEdge.START), grip))
+    }
+
+    @Test fun enlargedTargetsReachPastTheStripEnds() {
+        val vp = TimelineViewport(10_000, 1000f)
+        // The finger in the inset left of the strip (x < 0) still grabs IN, up to 30 px out.
+        assertEquals(StripHit.Handle(TrimHandle(0, TrimEdge.START)), TrimMath.hitTest(ten, vp, -29f, half, grip))
+        assertEquals(StripHit.Handle(TrimHandle(0, TrimEdge.END)), TrimMath.hitTest(ten, vp, 1029f, half, grip))
+        assertEquals(StripHit.Segment(0), TrimMath.hitTest(ten, vp, -31f, half, grip)) // beyond it: no handle (clamped onto the clip)
+        // 17 px into the strip is still the handle (it wins over the clip under it)…
+        assertEquals(StripHit.Handle(TrimHandle(0, TrimEdge.START)), TrimMath.hitTest(ten, vp, 17f, half, grip))
+        // …past its target it's the clip.
+        assertEquals(StripHit.Segment(0), TrimMath.hitTest(ten, vp, 19f, half, grip))
+    }
+
+    @Test fun nearestHandleWinsAndSharedCutsGoByFingerSide() {
+        val vp = TimelineViewport(10_000, 1000f)
+        // In the gap between two clips: whichever grip is nearer.
+        assertEquals(StripHit.Handle(TrimHandle(0, TrimEdge.END)), TrimMath.hitTest(two, vp, 420f, half, grip))
+        assertEquals(StripHit.Handle(TrimHandle(1, TrimEdge.START)), TrimMath.hitTest(two, vp, 580f, half, grip))
+        assertEquals(StripHit.Gap, TrimMath.hitTest(two, vp, 500f, half, grip))
+        val split = ten.splitAt(5_000)
+        assertEquals(StripHit.Handle(TrimHandle(0, TrimEdge.END)), TrimMath.hitTest(split, vp, 499f, half, grip))
+        assertEquals(StripHit.Handle(TrimHandle(1, TrimEdge.START)), TrimMath.hitTest(split, vp, 501f, half, grip))
+    }
+
+    @Test fun grabOffsetKeepsTheEdgeWhereItWas() {
+        val vp = TimelineViewport(10_000, 1000f)
+        val h = TrimHandle(0, TrimEdge.END)
+        val offset = TrimMath.grabOffset(two, vp, h, downX = 415f) // grabbed 15 px right of the edge
+        assertEquals(-15f, offset)
+        assertEquals(4_000L, TrimMath.dragRequestMs(vp, 415f, offset)) // no jump on touch-down
+        assertEquals(4_500L, TrimMath.dragRequestMs(vp, 465f, offset))
+    }
+
+    @Test fun trimPreviewMapsHandlesToOutputTime() {
+        val trimmed = two.copy(segments = listOf(TimeRange(1_000, 4_000), TimeRange(6_000, 9_000)))
+        // IN of clip 2 rests on its first frame: 3 s of clip 1 come before it.
+        assertEquals(3_000L, TrimMath.restOutputMs(trimmed, TrimHandle(1, TrimEdge.START)))
+        // OUT rests on the last kept frame, not past it.
+        assertEquals(6_000L - TrimMath.OUT_FRAME_BACK_MS, TrimMath.restOutputMs(trimmed, TrimHandle(1, TrimEdge.END)))
+        assertEquals(8_960L, TrimMath.previewSourceMs(TrimHandle(1, TrimEdge.END), 9_000))
+        assertEquals(1_000L, TrimMath.previewSourceMs(TrimHandle(0, TrimEdge.START), 1_000))
+        // At 2× speed the output time halves.
+        assertEquals(1_500L, TrimMath.restOutputMs(trimmed.withSpeed(2f), TrimHandle(1, TrimEdge.START)))
+        // On a shared cut, OUT of the first part stays in the first part.
+        val split = ten.splitAt(5_000)
+        assertEquals(4_960L, TrimMath.restOutputMs(split, TrimHandle(0, TrimEdge.END)))
+        assertEquals(5_000L, TrimMath.restOutputMs(split, TrimHandle(1, TrimEdge.START)))
+    }
+
     // ---- labels, speed, estimate ----
 
     @Test fun timeFormatting() {

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -68,6 +69,7 @@ import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.BrutalDark
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.video.model.VideoEdit
+import com.roylet.photos.video.preview.PreviewNotice
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import java.util.Locale
@@ -80,10 +82,17 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-private val StripPad = 20.dp
+/**
+ * Horizontal inset of the strip: keeps the handles at a full-length trim out of the system back
+ * gesture zone at the screen edges (and leaves room for their touch targets).
+ */
+private val StripPad = 32.dp
 private val RulerH = 18.dp
 private val StripH = 58.dp
-private val HandleW = 15.dp
+/** The visible grip: slim, just outside the kept range so it doesn't cover kept frames. */
+private val HandleW = 12.dp
+/** The invisible touch target centred on each grip (≥ 48 dp), reaching past the strip's ends. */
+private val HandleHit = 48.dp
 private val MiniH = 8.dp
 
 /**
@@ -192,6 +201,8 @@ fun TrimStrip(
     val reduced = rememberReducedMotion()
     val measurer = rememberTextMeasurer(cacheSize = 32)
     val padPx = with(LocalDensity.current) { StripPad.toPx() }
+    // From the screen edge to the far side of a full-length handle's touch target.
+    val edgeZonePx = with(LocalDensity.current) { (StripPad + HandleHit).toPx() }
     val position = playback.outputPosition.collectAsState()
     val playing by playback.isPlaying.collectAsState()
     var vp by remember(session) { mutableStateOf(TimelineViewport(session.durationMs, 0f)) }
@@ -219,12 +230,14 @@ fun TrimStrip(
             if (mode == StripMode.NONE && vp.zoom > 1f) vp = vp.revealing(TrimMath.playheadSourceMs(edit.value, p), vp.widthPx * 0.15f)
         }
     }
-    // The exact frame under a dragged handle, for the preview (latest wins; the strip frame shows meanwhile).
-    LaunchedEffect(session) {
+    // Without a working live player: decode the exact frame under a dragged handle for the preview
+    // (latest wins; the strip frame shows meanwhile). The live player seeks there itself.
+    LaunchedEffect(session, playback) {
         val file = session.sourceFile ?: return@LaunchedEffect
         val frames = session.frames ?: return@LaunchedEffect
         snapshotFlow { if (session.scrubHandle != null) session.scrubMs else null }.collectLatest { ms ->
             if (ms == null) { session.scrubFrame = null; return@collectLatest }
+            if (playback is ControllerPlayback && playback.notice.value !is PreviewNotice.Failed) return@collectLatest
             delay(24)
             frames.frame(file, ms, maxPx = 720)?.let { session.scrubFrame = it.asImageBitmap() }
         }
@@ -263,6 +276,11 @@ fun TrimStrip(
         modifier
             .height(RulerH + StripH + 8.dp + MiniH + 6.dp)
             .semantics { contentDescription = "Trim timeline" }
+            // Drags here are ours, not Android's back gesture: the whole strip, and the handle zones
+            // at both ends explicitly (they reach into the edge where the back gesture lives).
+            .systemGestureExclusion()
+            .systemGestureExclusion { c -> Rect(0f, 0f, edgeZonePx, c.size.height.toFloat()) }
+            .systemGestureExclusion { c -> Rect(c.size.width - edgeZonePx, 0f, c.size.width.toFloat(), c.size.height.toFloat()) }
             .onSizeChanged { sz ->
                 val w = sz.width - 2 * padPx
                 if (w > 0f && vp.widthPx != w) {
@@ -271,18 +289,19 @@ fun TrimStrip(
                     vp = vp.copy(widthPx = w, scrollPx = vp.scrollPx * ratio).clamped()
                 }
             }
-            .pointerInput(session) {
+            .pointerInput(session, playback) {
                 val pad = StripPad.toPx()
                 val stripTop = RulerH.toPx()
                 val stripBottom = stripTop + StripH.toPx()
                 val miniTop = stripBottom + 8.dp.toPx()
-                val slop = 22.dp.toPx()
+                val hitHalf = HandleHit.toPx() / 2f
+                val handleW = HandleW.toPx()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val v0 = vp
                     val x0 = down.position.x - pad
                     val startEdit = session.history.edit
-                    val hit = if (down.position.y >= miniTop - 2.dp.toPx() && v0.zoom > 1f) null else TrimMath.hitTest(startEdit, v0, x0, slop)
+                    val hit = if (down.position.y >= miniTop - 2.dp.toPx() && v0.zoom > 1f) null else TrimMath.hitTest(startEdit, v0, x0, hitHalf, handleW)
                     var m = when {
                         hit == null -> StripMode.MINIMAP
                         hit is StripHit.Handle -> StripMode.HANDLE
@@ -295,18 +314,20 @@ fun TrimStrip(
                     var grabOffset = 0f
                     var targets: List<Long> = emptyList()
                     if (m == StripMode.HANDLE && handle != null) {
-                        val s = startEdit.segments[handle.segment]
-                        val edgeMs = if (handle.edge == TrimEdge.START) s.startMs else s.endMs
-                        grabOffset = v0.xOf(edgeMs) - x0
+                        // The handle wins over the playhead and the clip; the edge keeps its offset from the finger.
+                        val edgeMs = TrimMath.edgeMs(startEdit, handle)
+                        grabOffset = TrimMath.grabOffset(startEdit, v0, handle, x0)
                         targets = TrimMath.snapTargets(startEdit, TrimMath.playheadSourceMs(startEdit, position.value), handle)
                         session.selected = handle.segment
                         session.history.beginGesture()
-                        playback.pause()
+                        // Pause, and show the source frame at the handle (cut-out time included) while it moves.
+                        playback.beginScrub(sourceTime = true)
+                        playback.scrubToSource(TrimMath.previewSourceMs(handle, edgeMs))
                         active = handle
                         mode = m
                         session.scrubMs = edgeMs
                         session.scrubHandle = handle
-                        haptics.tick()
+                        haptics.snap()
                     }
                     if (m == StripMode.MINIMAP) mode = m
                     try {
@@ -315,7 +336,10 @@ fun TrimStrip(
                             if (ev.changes.none { it.pressed }) break
                             val pressed = ev.changes.count { it.pressed }
                             if (pressed > 1 && m != StripMode.HANDLE) {
-                                if (m != StripMode.PINCH) { m = StripMode.PINCH; mode = m }
+                                if (m != StripMode.PINCH) {
+                                    if (m == StripMode.SCRUB) { playback.endScrub(); session.scrubPlayhead = false }
+                                    m = StripMode.PINCH; mode = m
+                                }
                                 val z = ev.calculateZoom()
                                 val pan = ev.calculatePan()
                                 val c = ev.calculateCentroid(useCurrent = true)
@@ -329,7 +353,8 @@ fun TrimStrip(
                                 moved = true
                                 if (m == StripMode.NONE) {
                                     m = StripMode.SCRUB; mode = m
-                                    playback.pause()
+                                    playback.beginScrub(sourceTime = false)
+                                    session.scrubPlayhead = true
                                 }
                             }
                             when (m) {
@@ -341,12 +366,13 @@ fun TrimStrip(
                                         if (x < edgeZone) vp = vp.scrolledBy(-(edgeZone - x) * 0.35f)
                                         else if (x > vp.widthPx - edgeZone) vp = vp.scrolledBy((x - (vp.widthPx - edgeZone)) * 0.35f)
                                     }
-                                    val requested = vp.msAt(x + grabOffset)
+                                    val requested = TrimMath.dragRequestMs(vp, x, grabOffset)
                                     val threshold = (TrimMath.SNAP_PX.dp.toPx() * vp.msPerPx).toLong()
                                     val r = TrimMath.dragHandle(startEdit, handle, requested, targets, threshold)
                                     if (r.snappedTo != null && r.snappedTo != lastSnap) haptics.snap()
                                     lastSnap = r.snappedTo
                                     session.history.set(r.edit)
+                                    if (r.edgeMs != session.scrubMs) playback.scrubToSource(TrimMath.previewSourceMs(handle, r.edgeMs))
                                     session.scrubMs = r.edgeMs
                                 }
                                 StripMode.SCRUB -> {
@@ -376,14 +402,14 @@ fun TrimStrip(
                             StripMode.HANDLE -> if (handle != null) {
                                 session.history.endGesture()
                                 val e = session.history.edit
-                                playback.setEdit(e)
-                                val s = e.segments.getOrNull(handle.segment)
-                                if (s != null) {
-                                    val edgeMs = if (handle.edge == TrimEdge.START) s.startMs else (s.endMs - 40).coerceAtLeast(s.startMs)
-                                    e.sourceToOutput(edgeMs)?.let(playback::seekTo)
-                                }
+                                // Back to the edited timeline, resting on the frame at the handle.
+                                playback.endScrub(e, TrimMath.restOutputMs(e, handle))
                                 session.scrubHandle = null
                                 active = null
+                            }
+                            StripMode.SCRUB -> {
+                                playback.endScrub()
+                                session.scrubPlayhead = false
                             }
                             StripMode.NONE -> if (!moved) {
                                 // Tap: select the segment (again to deselect) and move the playhead there.
@@ -554,28 +580,27 @@ private fun DrawScope.drawHandles(e: VideoEdit, v: TimelineViewport, pad: Float,
     val over = 5.dp.toPx()
     val shadow = 3.dp.toPx()
     val border = 2.dp.toPx()
-    val r = CornerRadius(5.dp.toPx())
-    e.segments.forEachIndexed { i, s ->
+    val r = CornerRadius(4.dp.toPx())
+    e.segments.forEachIndexed { i, _ ->
         for (edge in TrimEdge.entries) {
-            val ms = if (edge == TrimEdge.START) s.startMs else s.endMs
-            val x = pad + v.xOf(ms)
-            if (x < -hw * 2 || x > size.width + hw * 2) continue
-            val isActive = active == TrimHandle(i, edge)
-            val l = if (edge == TrimEdge.START) x - hw else x
+            val handle = TrimHandle(i, edge)
+            val cx = pad + TrimMath.handleCentreX(e, v, handle, hw)
+            if (cx < -hw * 2 || cx > size.width + hw * 2) continue
+            val isActive = active == handle
+            // The grabbed handle lifts: a little bigger, a deeper shadow.
             val k = if (isActive) lift else 0f
-            val grow = 3.dp.toPx() * k
-            val rect = Rect(l - grow / 2, top - over - grow, l + hw + grow / 2, top + h + over + grow)
-            val sh = shadow * (1f - k) + 1.dp.toPx()
+            val grow = 4.dp.toPx() * k
+            val rect = Rect(cx - hw / 2 - grow / 2, top - over - grow, cx + hw / 2 + grow / 2, top + h + over + grow)
+            val sh = shadow + 3.dp.toPx() * k
             drawRoundRect(Color.Black, rect.topLeft + Offset(sh, sh), rect.size, r)
             drawRoundRect(if (isActive) BrutalDark.Yellow else BrutalDark.Orange, rect.topLeft, rect.size, r)
             drawRoundRect(Brutal.Ink, rect.topLeft, rect.size, r, style = Stroke(border))
             // Grip: two short ink bars.
-            val cx = rect.center.x
             val cy = rect.center.y
             val gl = 7.dp.toPx()
-            val gap = 2.5.dp.toPx()
-            drawLine(Brutal.Ink, Offset(cx - gap, cy - gl), Offset(cx - gap, cy + gl), 2.dp.toPx())
-            drawLine(Brutal.Ink, Offset(cx + gap, cy - gl), Offset(cx + gap, cy + gl), 2.dp.toPx())
+            val gap = 2.dp.toPx()
+            drawLine(Brutal.Ink, Offset(rect.center.x - gap, cy - gl), Offset(rect.center.x - gap, cy + gl), 1.5.dp.toPx())
+            drawLine(Brutal.Ink, Offset(rect.center.x + gap, cy - gl), Offset(rect.center.x + gap, cy + gl), 1.5.dp.toPx())
         }
     }
 }
