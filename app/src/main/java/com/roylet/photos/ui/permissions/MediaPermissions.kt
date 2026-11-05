@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -164,7 +165,7 @@ fun rememberMediaPermissions(settings: com.roylet.photos.data.Settings): MediaPe
         callback?.invoke(state.access)
         callback = null
     }
-    remember(launcher, context) {
+    SideEffect {
         state.onRequest = { onResult ->
             callback = onResult
             runCatching { launcher.launch(MediaPermissions.requested()) }.onFailure { callback = null; refresh(); onResult(state.access) }

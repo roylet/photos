@@ -175,14 +175,16 @@ private fun ImmichAccountCard(server: ServerConfig?, onConnect: () -> Unit, onSi
             IconBadge(Icons.Rounded.Cloud, fill = Palette.lilac, size = 40.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("Immich", style = Type.Title, color = Palette.ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Immich", style = Type.Title, color = Palette.ink)
+                    Spacer(Modifier.width(8.dp))
+                    if (server == null) Tag("Not connected", fill = Palette.card) else Tag("Connected", fill = Palette.mint)
+                }
                 Text(
                     if (server == null) "Your own photo server, optional" else server.publicUrl.removePrefix("https://").removePrefix("http://"),
                     style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            if (server == null) Tag("Not connected", fill = Palette.card) else Tag("Connected", fill = Palette.mint)
         }
         Spacer(Modifier.height(12.dp))
         if (server == null) {
@@ -217,14 +219,16 @@ private fun DeviceCard(permissions: MediaPermissionsState) {
             IconBadge(Icons.Rounded.PhoneAndroid, fill = Palette.mint, size = 40.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("This device", style = Type.Title, color = Palette.ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("This device", style = Type.Title, color = Palette.ink)
+                    Spacer(Modifier.width(8.dp))
+                    when (permissions.access) {
+                        MediaAccess.Full -> Tag("Full access", fill = Palette.mint)
+                        MediaAccess.Partial -> Tag("Limited", fill = Palette.yellow)
+                        MediaAccess.Denied -> Tag("No access", fill = Palette.red, ink = Palette.onStrong)
+                    }
+                }
                 Text("Photos and videos on this phone", style = Type.Small, color = Palette.mutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.width(8.dp))
-            when (permissions.access) {
-                MediaAccess.Full -> Tag("Full access", fill = Palette.mint)
-                MediaAccess.Partial -> Tag("Limited", fill = Palette.yellow)
-                MediaAccess.Denied -> Tag("No access", fill = Palette.red, ink = Palette.onStrong)
             }
         }
         Spacer(Modifier.height(12.dp))

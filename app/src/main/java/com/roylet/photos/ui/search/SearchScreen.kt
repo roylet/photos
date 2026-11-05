@@ -115,7 +115,7 @@ fun SearchScreen(
                     model.text, { model.text = it },
                     onSearch = { focus.clearFocus(); model.submit() },
                     onClear = { model.clear() },
-                    placeholder = if (smart) "Beach at sunset, red car, birthday cake…" else "File name, folder or date (2024, March 2023)…",
+                    placeholder = if (smart) "Beach at sunset, red car, birthday cake…" else "File name, folder or year…",
                     modifier = Modifier.padding(top = 12.dp),
                 )
             })

@@ -68,10 +68,14 @@ fun LibraryScreen(
         if (Capability.MAP in capabilities) add(LibraryEntry.Places)
         if (Capability.MEMORIES in capabilities) add(LibraryEntry.Memories)
     }
-    val tidy = buildList {
+    val tidyUp = buildList {
         if (Capability.ARCHIVE in capabilities) add(LibraryEntry.Archive)
         if (Capability.TRASH in capabilities) add(LibraryEntry.Trash)
     }
+    // A few tiles (the phone alone) sit together in one section rather than one lonely tile each.
+    val oneSection = collections.size + tidyUp.size <= 3
+    val tiles = if (oneSection) collections + tidyUp else collections
+    val tidy = if (oneSection) emptyList() else tidyUp
     Column(modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Library", actions = { SquareIconButton(Icons.Rounded.Settings, "Settings", { onOpen(LibraryEntry.Settings) }) })
         LazyVerticalGrid(
@@ -81,10 +85,12 @@ fun LibraryScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (collections.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Collections") }
-            collections.forEach { e ->
+            if (tiles.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Collections") }
+            tiles.forEach { e ->
                 item {
                     when (e) {
+                        LibraryEntry.Archive -> Tile(Icons.Rounded.Archive, Palette.sand, "Archive", "Hidden from Photos") { onOpen(e) }
+                        LibraryEntry.Trash -> Tile(Icons.Rounded.Delete, Palette.current.noticeError, "Trash", "Restore or delete") { onOpen(e) }
                         LibraryEntry.Favorites -> Tile(Icons.Rounded.Favorite, Palette.peach, "Favorites", "Everything you've hearted") { onOpen(e) }
                         LibraryEntry.People -> Tile(Icons.Rounded.People, Palette.lilac, "People", "Faces Immich found") { onOpen(e) }
                         LibraryEntry.Places -> Tile(Icons.Rounded.Map, Palette.mint, "Places", "Your photos on a map") { onOpen(e) }
