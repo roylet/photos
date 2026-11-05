@@ -108,6 +108,8 @@ data class AssetDto(
     val id: String,
     val type: String = "IMAGE",
     val originalFileName: String = "",
+    /** Base64 SHA-1 of the original file. */
+    val checksum: String? = null,
     val originalMimeType: String? = null,
     val fileCreatedAt: String? = null,
     val localDateTime: String? = null,
