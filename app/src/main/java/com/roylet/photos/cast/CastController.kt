@@ -29,6 +29,8 @@ data class CastState(
     val notice: String? = null,
     /** An Immich item needs a login session: "Sign in once to cast". */
     val needsSignIn: Boolean = false,
+    /** The slideshow on the TV, while one runs. */
+    val slideshow: SlideshowState? = null,
 ) {
     val casting: Boolean get() = target != null
     /** Show the cast button at all (Play services present). */
@@ -74,6 +76,7 @@ class CastController(
     /** The last item asked for (re-sent after "Sign in once to cast"). */
     private var requested: TimelineAsset? = null
     private val shownNotes = HashSet<String>()
+    private val slideshows = SlideshowRunner(scope, { _, asset -> show(asset) }, { _state.value.playback }, { s -> _state.update { it.copy(slideshow = s) } })
 
     init {
         scope.launch { device.availability.collect { a -> _state.update { it.copy(availability = a) } } }
@@ -124,6 +127,14 @@ class CastController(
         }
     }
 
+    /** "Slideshow on TV": walks [queue] from [startIndex], one item every [intervalMs] (videos play through). */
+    fun startSlideshow(queue: SlideshowQueue, startIndex: Int, intervalMs: Long, shuffle: Boolean) {
+        if (!casting) return
+        slideshows.start(queue, startIndex, intervalMs, shuffle)
+    }
+
+    fun stopSlideshow() = slideshows.stop()
+
     fun togglePlay() {
         if (_state.value.playback.playing) device.pause() else device.play()
     }
@@ -134,6 +145,7 @@ class CastController(
 
     /** STOP CASTING: ends the session (the clean-up runs when the device reports it ended). */
     fun stop() {
+        slideshows.stop()
         device.disconnect()
     }
 
@@ -166,6 +178,7 @@ class CastController(
 
     private fun ended() {
         loadJob?.cancel()
+        slideshows.stop()
         _state.update { it.copy(current = null, loading = false, error = null, notice = null, needsSignIn = false, playback = RemotePlayback()) }
         scope.launch { runCatching { keys()?.end() } }
         relay.stop()

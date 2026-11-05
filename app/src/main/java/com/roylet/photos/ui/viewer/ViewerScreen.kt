@@ -123,6 +123,17 @@ import com.roylet.photos.ui.cast.CastButton
 import com.roylet.photos.ui.cast.CastingBanner
 import com.roylet.photos.ui.cast.LocalCastController
 import com.roylet.photos.ui.cast.rememberCastState
+import com.roylet.photos.ui.cast.MoreAction
+import com.roylet.photos.ui.cast.SlideshowSheet
+import com.roylet.photos.ui.cast.ViewerMoreSheet
+import com.roylet.photos.ui.cast.stopCastingAction
+import com.roylet.photos.cast.RemotePlayback
+import com.roylet.photos.cast.SlideshowRunner
+import com.roylet.photos.cast.SlideshowState
+import com.roylet.photos.cast.TimelineQueue
+import com.roylet.photos.ui.components.KeepScreenOn
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Slideshow
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.components.reducedMotion
@@ -221,11 +232,36 @@ fun ViewerScreen(
         )
     }
     val settledAsset = snapshot.assetAt(pager.settledPage)
+
+    // Slideshow: on the TV while casting (the controller runs it; the pager follows), else on the
+    // phone (this runner turns the pages). Swiping by hand stops either.
+    var moreSheet by remember { mutableStateOf(false) }
+    var slideshowSheet by remember { mutableStateOf(false) }
+    var slideIntervalS by rememberSaveable { mutableIntStateOf(5) }
+    var slideShuffle by rememberSaveable { mutableStateOf(false) }
+    var localShow by remember { mutableStateOf<SlideshowState?>(null) }
+    val localRunner = remember(timeline) {
+        SlideshowRunner(scope, { i, _ -> scope.launch { if (reduced) pager.scrollToPage(i) else pager.animateScrollToPage(i) } }, { RemotePlayback() }, { localShow = it })
+    }
+    DisposableEffect(localRunner) { onDispose { localRunner.stop() } }
+    KeepScreenOn(localShow != null)
+    val tvShow = castState.slideshow
+    LaunchedEffect(tvShow?.index) {
+        val i = tvShow?.index ?: return@LaunchedEffect
+        if (i != pager.currentPage) { if (reduced || abs(i - pager.currentPage) > 3) pager.scrollToPage(i) else pager.animateScrollToPage(i) }
+    }
     LaunchedEffect(casting, settledAsset?.id) {
+        val page = pager.settledPage
+        localShow?.let { if (it.index != page) localRunner.stop() }
+        castState.slideshow?.let { if (it.index != page) cast?.stopSlideshow() }
         if (casting && settledAsset != null) cast?.show(settledAsset)
     }
+    // Casting started mid-slideshow on the phone: the phone's show stops (start one on the TV from ⋯).
+    LaunchedEffect(casting) { if (casting) localRunner.stop() }
 
     BackHandler(enabled = info) { info = false }
+    // A tap during the phone's slideshow brings the chrome back and ends it.
+    LaunchedEffect(chrome) { if (chrome) localRunner.stop() }
     SystemBars(visible = chrome || info)
 
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -344,9 +380,8 @@ fun ViewerScreen(
             AnimatedVisibility(chrome && !info, enter = enter, exit = exit) {
                 TopBar(
                     current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
-                    archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE,
-                    onArchive = if (Capability.ARCHIVE in caps) { { current?.let { actions.archive(listOf(it.id), timeline) } } } else null,
                     castButton = castState.supported || casting,
+                    onMore = { moreSheet = true },
                 )
             }
             if (casting && !info) {
@@ -400,6 +435,47 @@ fun ViewerScreen(
             }
         }
 
+        val tvName = castState.target?.name
+        ViewerMoreSheet(
+            moreSheet,
+            buildList {
+                add(
+                    MoreAction(
+                        Icons.Rounded.Slideshow,
+                        if (tvName != null) "Slideshow on TV" else "Slideshow",
+                        if (tvName != null) "On $tvName, from this photo" else "Full screen, from this photo",
+                    ) { moreSheet = false; slideshowSheet = true },
+                )
+                // Archive lives here (it used to crowd the top bar, which now has cast and ⋯).
+                if (Capability.ARCHIVE in caps) {
+                    val archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE
+                    add(
+                        MoreAction(
+                            if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
+                            if (archived) "Unarchive" else "Archive",
+                            if (archived) "Back to Photos" else "Hide from Photos without deleting",
+                        ) { moreSheet = false; current?.let { actions.archive(listOf(it.id), timeline) } },
+                    )
+                }
+                if (tvName != null) add(stopCastingAction(tvName) { moreSheet = false; cast?.stop() })
+            },
+            onDismiss = { moreSheet = false },
+        )
+        SlideshowSheet(
+            slideshowSheet, tvName, slideIntervalS, slideShuffle,
+            onStart = { s, shuffle ->
+                slideIntervalS = s
+                slideShuffle = shuffle
+                slideshowSheet = false
+                val queue = TimelineQueue(timeline)
+                if (casting) cast?.startSlideshow(queue, pager.currentPage, s * 1000L, shuffle)
+                else {
+                    chrome = false
+                    localRunner.start(queue, pager.currentPage, s * 1000L, shuffle)
+                }
+            },
+            onDismiss = { slideshowSheet = false },
+        )
     }
 }
 
@@ -657,9 +733,8 @@ private fun TopBar(
     onBack: () -> Unit,
     liveActive: Boolean,
     onLive: () -> Unit,
-    archived: Boolean,
-    onArchive: (() -> Unit)?,
     castButton: Boolean = false,
+    onMore: (() -> Unit)? = null,
 ) {
     Row(
         Modifier.fillMaxWidth().background(BrutalDark.Canvas)
@@ -687,19 +762,15 @@ private fun TopBar(
                     Spacer(Modifier.width(6.dp))
                     Text("LIVE", style = Type.Label, color = ink)
                 }
-                Spacer(Modifier.width(8.dp))
-            }
-            if (onArchive != null) {
-                DarkIconButton(
-                    if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive,
-                    if (archived) "Unarchive" else "Archive",
-                    onArchive,
-                )
             }
         } else Spacer(Modifier.weight(1f))
         if (castButton) {
             Spacer(Modifier.width(8.dp))
             CastButton(dark = true)
+        }
+        if (onMore != null) {
+            Spacer(Modifier.width(8.dp))
+            DarkIconButton(Icons.Rounded.MoreVert, "More", onMore)
         }
     }
 }

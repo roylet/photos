@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Slideshow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -129,6 +130,16 @@ fun CastingBanner(state: CastState, onStop: () -> Unit, onDismissNote: () -> Uni
             }
             if (state.loading) {
                 BrutalSpinner(size = 18.dp)
+                Spacer(Modifier.width(8.dp))
+            } else if (state.slideshow != null) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).border(2.dp, Brutal.Ink, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Slideshow, "Slideshow", tint = Brutal.Ink, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("${state.slideshow.intervalMs / 1000}s", style = Type.Tiny, color = Brutal.Ink)
+                }
                 Spacer(Modifier.width(8.dp))
             }
             Row(
