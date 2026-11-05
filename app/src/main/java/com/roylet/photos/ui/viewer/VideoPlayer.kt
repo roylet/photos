@@ -61,6 +61,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.roylet.photos.ui.components.DarkIconButton
+import com.roylet.photos.ui.components.KeepScreenOnWhilePlaying
 import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.gallery.LocalMediaHttpClient
 import com.roylet.photos.ui.gallery.clock
@@ -99,6 +100,8 @@ fun rememberPlayer(url: String?, autoPlay: Boolean = true, loop: Boolean = false
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoSurface(player: Player, modifier: Modifier = Modifier) {
+    // Our own surface (not PlayerView's controller), so keep the screen awake here, only while playing.
+    KeepScreenOnWhilePlaying(player)
     AndroidView(
         factory = { ctx ->
             PlayerView(ctx).apply {

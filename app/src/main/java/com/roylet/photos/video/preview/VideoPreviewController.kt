@@ -39,6 +39,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.video.VideoSink
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.roylet.photos.ui.components.KeepScreenOnWhilePlaying
 import com.roylet.photos.ui.gallery.LocalMediaHttpClient
 import com.roylet.photos.video.export.ColorParamsHolder
 import com.roylet.photos.video.export.CompositionPlanner
@@ -716,6 +717,8 @@ fun rememberVideoPreviewController(key: Any?): VideoPreviewController? {
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoEditPreview(controller: VideoPreviewController, modifier: Modifier = Modifier) {
+    // Awake only while actually playing; the controller's isPlaying also counts buffering.
+    KeepScreenOnWhilePlaying(controller.player)
     AndroidView(
         factory = { ctx ->
             PlayerView(ctx).apply {
