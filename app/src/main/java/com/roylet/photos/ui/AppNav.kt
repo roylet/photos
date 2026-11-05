@@ -121,6 +121,9 @@ import com.roylet.photos.ui.sources.LocalActiveSources
 import com.roylet.photos.ui.sources.LocalCapabilities
 import com.roylet.photos.ui.sources.LocalShowSourceBadges
 import com.roylet.photos.ui.sources.LocalBackupUploading
+import com.roylet.photos.ui.cast.CastButton
+import com.roylet.photos.ui.cast.CastMiniController
+import com.roylet.photos.ui.cast.LocalCastController
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -249,19 +252,31 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalBackupUploading provides uploading,
         LocalMediaPermissions provides permissions,
         LocalConsentLauncher provides container.consent,
+        LocalCastController provides container.cast,
     ) {
       SharedTransitionLayout(Modifier.fillMaxSize()) {
       CompositionLocalProvider(LocalSharedTransitionScope provides this) {
         BoxWithConstraints(Modifier.fillMaxSize().background(Palette.paper)) {
             val wide = maxWidth >= WideBreakpoint
+            // While casting (and the viewer is closed): what's on the TV, above the tab bar.
+            val castState by container.cast.state.collectAsState()
+            val mini: @Composable () -> Unit = {
+                if (castState.casting && !viewer.open) {
+                    CastMiniController(castState, onTogglePlay = container.cast::togglePlay, onStop = container.cast::stop)
+                }
+            }
             if (wide) {
                 Row(Modifier.fillMaxSize()) {
                     if (showBar) BrutalRail(tabs, route, selectTab, header = { AppMark() })
-                    Host(container, nav, viewer, onboarded, Modifier.weight(1f))
+                    Column(Modifier.weight(1f)) {
+                        Host(container, nav, viewer, onboarded, Modifier.weight(1f))
+                        if (showBar) mini()
+                    }
                 }
             } else {
                 Column(Modifier.fillMaxSize()) {
                     Host(container, nav, viewer, onboarded, Modifier.weight(1f))
+                    if (showBar) mini()
                     if (showBar) BrutalTabBar(tabs, route, selectTab)
                 }
             }
@@ -277,7 +292,11 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
                 container.snackbar,
                 Modifier.align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(start = 16.dp, end = 16.dp, bottom = if (route == Routes.VIEWER || viewer.open) 150.dp else if (showBar && !wide) 84.dp else 16.dp),
+                    .padding(
+                        start = 16.dp, end = 16.dp,
+                        bottom = (if (route == Routes.VIEWER || viewer.open) 150.dp else if (showBar && !wide) 84.dp else 16.dp) +
+                            (if (castState.casting && showBar && !viewer.open) 66.dp else 0.dp),
+                    ),
             )
         }
       }
@@ -385,6 +404,10 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                     revealIndex = reveal,
                     onRevealed = { entry.savedStateHandle.remove<Int>(Routes.REVEAL_INDEX) },
                     topContent = memories.takeIf { it.isNotEmpty() }?.let { list -> { MemoriesCarousel(list, onOpen = { nav.navigate(Routes.memories(it)) }) } },
+                    castButton = run {
+                        val cast by container.cast.state.collectAsState()
+                        if (cast.devicesAvailable) { { CastButton(dark = false) } } else null
+                    },
                     connectionChip = {
                         if (sources.hasImmich) {
                             val conn by container.connection.state.collectAsState()

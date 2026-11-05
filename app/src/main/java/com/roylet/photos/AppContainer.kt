@@ -464,8 +464,14 @@ class AppContainer(context: Context) {
         )
     }
 
-    /** Casting: what's on the TV, the slideshow, and the session's clean-up. See docs/SOURCES.md §11. */
-    val cast: CastController by lazy {
+    private var castOverride: CastController? = null
+
+    /** Casting: what's on the TV, the slideshow, and the session's clean-up (docs/SOURCES.md §11); tests can pin a fake-backed one. */
+    var cast: CastController
+        get() = castOverride ?: defaultCast
+        set(value) { castOverride = value }
+
+    private val defaultCast: CastController by lazy {
         val resolver = CastResolver(
             directBase = ::castDirectBase,
             keys = ::castSessions,

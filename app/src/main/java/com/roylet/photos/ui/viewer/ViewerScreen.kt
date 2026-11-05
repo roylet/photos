@@ -119,6 +119,10 @@ import com.roylet.photos.domain.source.Capabilities
 import com.roylet.photos.domain.source.Capability
 import com.roylet.photos.ui.sources.assetCapabilities
 import com.roylet.photos.ui.components.BrutalSpinner
+import com.roylet.photos.ui.cast.CastButton
+import com.roylet.photos.ui.cast.CastingBanner
+import com.roylet.photos.ui.cast.LocalCastController
+import com.roylet.photos.ui.cast.rememberCastState
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.components.reducedMotion
@@ -202,6 +206,24 @@ fun ViewerScreen(
     var liveFor by remember { mutableStateOf<String?>(null) }
     // Shared by the video pages; only the settled page shows controls.
     val scrub = remember { ScrubController() }
+
+    // Casting: the settled page goes to the TV (swiping on the phone changes what's on the TV);
+    // video pages become a remote, so the local player never plays alongside.
+    val cast = LocalCastController.current
+    val castState = rememberCastState()
+    val casting = castState.casting
+    val castActions = remember(cast) {
+        CastRemoteActions(
+            togglePlay = { cast?.togglePlay() },
+            seekTo = { cast?.seekTo(it) },
+            setVolume = { cast?.setVolume(it) },
+            stop = { cast?.stop() },
+        )
+    }
+    val settledAsset = snapshot.assetAt(pager.settledPage)
+    LaunchedEffect(casting, settledAsset?.id) {
+        if (casting && settledAsset != null) cast?.show(settledAsset)
+    }
 
     BackHandler(enabled = info) { info = false }
     SystemBars(visible = chrome || info)
@@ -289,7 +311,10 @@ fun ViewerScreen(
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { BrutalSpinner(size = 32.dp) }
                 } else {
                     val isCurrent = page == pager.settledPage
-                    if (asset.isVideo) {
+                    if (asset.isVideo && casting) {
+                        CastVideoPage(asset, urls, castState, isCurrent, chrome, castActions, onTap = { chrome = !chrome })
+                        if (isCurrent) LaunchedEffect(page) { loadedPage = page }
+                    } else if (asset.isVideo) {
                         VideoPage(asset, urls, isCurrent, chrome, scrub, onTap = { chrome = !chrome })
                         if (isCurrent) LaunchedEffect(page) { loadedPage = page }
                     } else {
@@ -315,12 +340,23 @@ fun ViewerScreen(
         val exit = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { -it / 2 }
         // Only what this asset's sources can do (e.g. no archive for a photo that's only on the phone).
         val caps = assetCapabilities(current)
-        AnimatedVisibility(chrome && !info, Modifier.align(Alignment.TopCenter).graphicsLayer { alpha = chromeAlpha }, enter = enter, exit = exit) {
-            TopBar(
-                current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
-                archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE,
-                onArchive = if (Capability.ARCHIVE in caps) { { current?.let { actions.archive(listOf(it.id), timeline) } } } else null,
-            )
+        Column(Modifier.align(Alignment.TopCenter).graphicsLayer { alpha = chromeAlpha }) {
+            AnimatedVisibility(chrome && !info, enter = enter, exit = exit) {
+                TopBar(
+                    current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
+                    archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE,
+                    onArchive = if (Capability.ARCHIVE in caps) { { current?.let { actions.archive(listOf(it.id), timeline) } } } else null,
+                    castButton = castState.supported || casting,
+                )
+            }
+            if (casting && !info) {
+                CastingBanner(
+                    castState,
+                    onStop = { cast?.stop() },
+                    onDismissNote = { if (castState.error != null) cast?.dismissError() else cast?.dismissNotice() },
+                    modifier = if (chrome) Modifier else Modifier.windowInsetsPadding(WindowInsets.statusBars),
+                )
+            }
         }
         val enterB = if (reduced) fadeIn(snap()) else fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 }
         val exitB = if (reduced) fadeOut(snap()) else fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 2 }
@@ -616,7 +652,15 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
 }
 
 @Composable
-private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolean, onLive: () -> Unit, archived: Boolean, onArchive: (() -> Unit)?) {
+private fun TopBar(
+    asset: TimelineAsset?,
+    onBack: () -> Unit,
+    liveActive: Boolean,
+    onLive: () -> Unit,
+    archived: Boolean,
+    onArchive: (() -> Unit)?,
+    castButton: Boolean = false,
+) {
     Row(
         Modifier.fillMaxWidth().background(BrutalDark.Canvas)
             .drawBehind { drawLine(BrutalDark.Raised, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }
@@ -653,6 +697,10 @@ private fun TopBar(asset: TimelineAsset?, onBack: () -> Unit, liveActive: Boolea
                 )
             }
         } else Spacer(Modifier.weight(1f))
+        if (castButton) {
+            Spacer(Modifier.width(8.dp))
+            CastButton(dark = true)
+        }
     }
 }
 

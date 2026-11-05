@@ -299,7 +299,7 @@ private val ThumbWidth = 14.dp
  * drag-to-dismiss never get the gesture); the thumb follows the finger, not the player.
  */
 @Composable
-private fun SeekBar(
+internal fun SeekBar(
     fraction: Float,
     onStart: (Float) -> Unit,
     onMove: (Float) -> Unit,

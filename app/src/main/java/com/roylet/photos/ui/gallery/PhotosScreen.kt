@@ -124,6 +124,8 @@ fun PhotosScreen(
     onRevealed: () -> Unit = {},
     selection: GridSelection = remember { GridSelection() },
     connectionChip: @Composable () -> Unit = {},
+    /** The cast button, shown only while cast devices are around (AppNav decides). */
+    castButton: (@Composable () -> Unit)? = null,
     selectionActions: @Composable (SelectionScope) -> List<SelectionAction> = { defaultSelectionActions(it) },
     topContent: (@Composable () -> Unit)? = null,
     banner: (@Composable () -> Unit)? = null,
@@ -134,6 +136,7 @@ fun PhotosScreen(
     if (blocked != null) {
         Column(modifier.fillMaxSize().background(Palette.paper)) {
             ScreenHeader("Photos", actions = {
+                castButton?.invoke()
                 connectionChip()
                 SquareIconButton(Icons.Rounded.Settings, "Settings", onSettings)
             })
@@ -150,6 +153,7 @@ fun PhotosScreen(
         revealIndex = revealIndex,
         onRevealed = onRevealed,
         headerActions = {
+            castButton?.invoke()
             connectionChip()
             SquareIconButton(Icons.Rounded.Settings, "Settings", onSettings)
         },
