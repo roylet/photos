@@ -189,6 +189,7 @@ class AppContainer(context: Context) {
         appScope.launch {
             settings.server.map { it?.let { s -> s.publicUrl + "|" + s.userId } }.distinctUntilChanged().drop(1).collect {
                 runCatching { matcher.clear() }
+                mergedTimeline.reset()
                 runCatching { device.scheduleHashing() }
             }
         }
@@ -232,7 +233,9 @@ class AppContainer(context: Context) {
      */
     private fun onDeviceChanged() {
         timelines.forEachRepo { r ->
-            if ((r.filter.isLocal || !hasServer) && r.filter.listId == null && r.status.value != TimelineRepository.Status.Idle) r.refresh(keepLoaded = true)
+            // With a server the main timeline, favourites and trash are merged: they show phone items too.
+            val showsPhone = r.filter.isLocal || !hasServer || mergedTimeline.includesPhone(r.filter)
+            if (showsPhone && r.filter.listId == null && r.status.value != TimelineRepository.Status.Idle) r.refresh(keepLoaded = true)
         }
         if (deviceFolders.albums.value != null) deviceFolders.refresh()
         if (!hasServer && albums.albums.value != null) albums.refresh()

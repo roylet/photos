@@ -70,6 +70,12 @@ class MergedTimelineSource(
         else -> Mode.Merge
     }
 
+    /** Whether [filter]'s timeline shows phone items (so a change on the phone should refresh it). */
+    fun includesPhone(filter: TimelineFilter): Boolean = modeOf(filter) != Mode.RemoteOnly
+
+    /** Another server or account: merged sizes from before don't apply. */
+    fun reset() { mergedCounts.clear() }
+
     override suspend fun buckets(filter: TimelineFilter): List<TimeBucket> {
         val mode = modeOf(filter)
         if (mode == Mode.LocalOnly) return local.buckets(filter)

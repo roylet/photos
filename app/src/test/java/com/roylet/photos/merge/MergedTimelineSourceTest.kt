@@ -115,6 +115,23 @@ class MergedTimelineSourceTest {
         assertEquals(setOf(SourceBadge.LocalOnly, SourceBadge.RemoteOnly), trash.map { it.sourceBadge }.toSet())
     }
 
+    @Test fun `a phone change refreshes the merged timelines that show phone items`() {
+        assertTrue(merged.includesPhone(TimelineFilter.Timeline))
+        assertTrue(merged.includesPhone(TimelineFilter.Favorites))
+        assertTrue(merged.includesPhone(TimelineFilter.Trash))
+        assertTrue(merged.includesPhone(TimelineFilter.album("folder:1")))
+        assertFalse(merged.includesPhone(TimelineFilter.Archive))
+        assertFalse(merged.includesPhone(TimelineFilter.album("x")))
+    }
+
+    @Test fun `another account's merged sizes are forgotten`() {
+        runBlocking { merged.bucket(TimelineFilter.Timeline, oct) }
+        remote.all.removeAll { it.id == "c" }
+        merged.reset()
+        val after = runBlocking { merged.buckets(TimelineFilter.Timeline) }.associate { it.key to it.count }
+        assertEquals(3 + 2 - 2, after[oct]) // the estimate again, not the old merged size
+    }
+
     @Test fun `albums and archive go to Immich, phone folders to the phone`() {
         runBlocking { merged.bucket(TimelineFilter.Archive, oct) }
         runBlocking { merged.bucket(TimelineFilter.album("x"), oct) }
