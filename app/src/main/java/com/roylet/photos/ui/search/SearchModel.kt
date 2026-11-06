@@ -12,7 +12,9 @@ import com.roylet.photos.domain.source.Capability
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.TimelineRegistry
+import com.roylet.photos.domain.library.UnsupportedCapabilityException
 import com.roylet.photos.immich.ImmichApi
+import com.roylet.photos.immich.ImmichException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -29,7 +31,8 @@ sealed interface SearchResult {
     data object Idle : SearchResult
     data class Loading(val query: SearchQuery) : SearchResult
     data class Done(val query: SearchQuery, val filter: TimelineFilter, val count: Int) : SearchResult
-    data class Failed(val query: SearchQuery, val message: String) : SearchResult
+    /** [details] is the technical side (exception, status, server message) for "Copy details". */
+    data class Failed(val query: SearchQuery, val message: String, val details: String = "") : SearchResult
 }
 
 /**
@@ -61,9 +64,12 @@ class SearchModel(
         if (discoverLoaded) return
         discoverLoaded = true
         val caps = library().capabilities
-        if (Capability.PEOPLE in caps) scope.launch { runCatching { library().people() }.onSuccess { people = it } }
-        if (Capability.SMART_SEARCH in caps) scope.launch { runCatching { library().explore() }.onSuccess { explore = it } }
-        if (Capability.MAP in caps) scope.launch { runCatching { library().suggestions("country") }.onSuccess { countries = it.take(12) } }
+        // Each is optional: a failure just leaves its row out (never crashes the tab).
+        if (Capability.PEOPLE in caps) scope.launch { quietly { library().people() }?.let { people = it.distinctBy { p -> p.id } } }
+        if (Capability.SMART_SEARCH in caps) scope.launch {
+            quietly { library().explore() }?.let { sections -> explore = sections.map { it.copy(items = it.items.distinctBy { i -> i.value }) }.filter { it.items.isNotEmpty() } }
+        }
+        if (Capability.MAP in caps) scope.launch { quietly { library().suggestions("country") }?.let { countries = it.filter(String::isNotBlank).distinct().take(12) } }
     }
 
     fun submit(query: SearchQuery = SearchQuery.Text(text)) {
@@ -81,12 +87,14 @@ class SearchModel(
                     }
                     is SearchQuery.Place -> library().placeSearch(query.city, query.country)
                 }
-                val filter = timelines.putList("search-${++counter}", assets)
-                result = SearchResult.Done(query, filter, assets.size)
+                // One cell per asset: the grid tolerates repeats, but the viewer's pager keys by id.
+                val unique = assets.distinctBy { it.id }
+                val filter = timelines.putList("search-${++counter}", unique)
+                result = SearchResult.Done(query, filter, unique.size)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                result = SearchResult.Failed(query, ImmichApi.describe(e))
+                result = failure(query, e)
             }
         }
     }
@@ -100,8 +108,40 @@ class SearchModel(
     /** Shows ready-made results (screenshots). */
     fun showResults(query: SearchQuery, assets: List<TimelineAsset>) {
         text = query.label
-        result = SearchResult.Done(query, timelines.putList("search-${++counter}", assets), assets.size)
+        val unique = assets.distinctBy { it.id }
+        result = SearchResult.Done(query, timelines.putList("search-${++counter}", unique), unique.size)
+    }
+
+    private suspend fun <T> quietly(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        null
     }
 
     fun reset() { clear(); discoverLoaded = false; people = emptyList(); explore = emptyList(); countries = emptyList() }
 }
+
+/** A friendly message plus the technical details to copy. */
+internal fun failure(query: SearchQuery, e: Throwable): SearchResult.Failed {
+    val message = when {
+        e is UnsupportedCapabilityException -> e.message ?: "That search isn't available here"
+        e is kotlinx.serialization.SerializationException -> "The server sent results this app couldn't read"
+        else -> ImmichApi.describe(e)
+    }
+    return SearchResult.Failed(query, message, errorDetails(query, e))
+}
+
+internal fun errorDetails(query: SearchQuery, e: Throwable): String = buildString {
+    append("Search: ").append(query.label).append('\n')
+    (e as? ImmichException)?.status?.let { append("HTTP ").append(it).append('\n') }
+    var t: Throwable? = e
+    var depth = 0
+    while (t != null && depth < 4) {
+        append(if (depth == 0) "" else "Caused by: ").append(t.javaClass.name).append(": ").append(t.message.orEmpty().take(600)).append('\n')
+        t.stackTrace.take(if (depth == 0) 6 else 3).forEach { append("  at ").append(it).append('\n') }
+        t = t.cause?.takeIf { it !== t }
+        depth++
+    }
+}.trimEnd()

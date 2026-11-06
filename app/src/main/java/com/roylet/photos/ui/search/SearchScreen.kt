@@ -50,6 +50,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.font.FontFamily
+import com.roylet.photos.ui.components.ButtonStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,9 +133,7 @@ fun SearchScreen(
                     Spacer(Modifier.height(12.dp))
                     Text("Looking for “${result.query.label}”…", style = Type.Body, color = Palette.mutedInk)
                 }
-                is SearchResult.Failed -> EmptyState(Icons.Rounded.CloudOff, "Search failed", result.message) {
-                    BrutalButton("Try again", { model.submit(result.query) })
-                }
+                is SearchResult.Failed -> SearchFailed(result, onRetry = { model.submit(result.query) })
                 is SearchResult.Done -> if (result.count == 0) {
                     EmptyState(
                         Icons.Rounded.SearchOff, "Nothing found",
@@ -139,6 +142,36 @@ fun SearchScreen(
                 } else if (timeline != null) {
                     TimelineGrid(timeline, onOpen = { i, a -> onOpen(timeline, i, a) }, selection = selection)
                 }
+            }
+        }
+    }
+}
+
+/** A search that failed: what happened in plain words, Try again, and the details to copy for a bug report. */
+@Composable
+internal fun SearchFailed(failed: SearchResult.Failed, onRetry: () -> Unit) {
+    val context = LocalContext.current
+    EmptyState(Icons.Rounded.CloudOff, "Search failed", failed.message) {
+        // Buttons first, so the details can never push them off a small screen.
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (failed.details.isNotEmpty()) {
+                BrutalButton("Copy details", {
+                    context.getSystemService(android.content.ClipboardManager::class.java)
+                        ?.setPrimaryClip(android.content.ClipData.newPlainText("Search error", "${failed.message}\n${failed.details}"))
+                }, style = ButtonStyle.Outline)
+            }
+            BrutalButton("Try again", onRetry)
+        }
+        if (failed.details.isNotEmpty()) {
+            SelectionContainer {
+                Text(
+                    failed.details,
+                    style = Type.Small.copy(fontFamily = FontFamily.Monospace),
+                    color = Palette.mutedInk,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 360.dp).padding(top = 14.dp),
+                )
             }
         }
     }
@@ -196,7 +229,7 @@ private fun Discover(model: SearchModel, onPerson: (Person) -> Unit, onAllPeople
         model.explore.forEach { section ->
             SectionLabel(if (section.isPlaces) "Places" else "Things", pad)
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(section.items, key = { it.value }) { item ->
+                items(section.items.distinctBy { it.value }, key = { "${section.fieldName}:${it.value}" }) { item ->
                     PhotoTile(item.asset, item.value, if (section.isPlaces) Icons.Rounded.Place else null) {
                         model.submit(if (section.isPlaces) SearchQuery.Place(item.value, null) else SearchQuery.Text(item.value))
                     }
