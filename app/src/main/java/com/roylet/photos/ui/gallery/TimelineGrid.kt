@@ -335,12 +335,17 @@ fun TimelineGrid(
                     },
             ) {
                 if (topContent != null) item(key = "top", contentType = -1) { topContent() }
+                // Only the snapshot this model was laid out from: this block re-runs as soon as the
+                // timeline's state changes, before recomposition rebuilds the model, and mixing a
+                // newer snapshot (a first load: no months → some) with the old rows indexed past
+                // the end of them and crashed (e.g. every new search).
                 val items = model.items
-                snapshot.buckets.forEachIndexed { b, bucket ->
+                val laid = model.snapshot
+                laid.buckets.forEachIndexed { b, bucket ->
                     val h = model.headerIndex[b]
-                    val end = if (b + 1 < snapshot.buckets.size) model.headerIndex[b + 1] else items.size
+                    val end = if (b + 1 < laid.buckets.size) model.headerIndex[b + 1] else items.size
                     stickyHeader(key = items[h].key, contentType = 0) {
-                        MonthHeader(bucket, snapshot.countOf(b), selection, { snapshot.assetsOf(b) }, compact = density.squares)
+                        MonthHeader(bucket, laid.countOf(b), selection, { laid.assetsOf(b) }, compact = density.squares)
                     }
                     items(count = end - h - 1, key = { items[h + 1 + it].key }, contentType = { items[h + 1 + it].contentType }) { i ->
                         when (val item = items[h + 1 + i]) {
