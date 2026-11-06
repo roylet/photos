@@ -570,7 +570,9 @@ Chromecast to Google's **Default Media Receiver** (`CC1AD845`), modelled on Immi
   `{duration: 1800, deviceType: "Cast", deviceOS: "Google Cast"}`; the response's `token` is the
   `sessionKey`. Reused until fewer than 10 s remain, then a new one (the old one expires on its
   own, so a video still reading with it isn't cut off early). `DELETE /api/sessions/{id}` when the
-  cast session ends. The token is a full-account credential while it lives; never logged.
+  cast session ends. Each id is also written to a ledger (`PrefsCastKeyLedger`, ids only): ids a
+  killed app left behind are deleted at the next start (`cleanUpStale`, after a 20 s grace unless a
+  saved cast session resumed) or at the next session's end. The token is a full-account credential while it lives; never logged.
 - A 401/403, or no stored token (API-key sign-in), → `NeedsSignIn`. `CastSignIn` asks for the
   password once (email prefilled), calls `/api/auth/login`, checks it's the same user id and
   stores the token through `Settings.updateServer` (Keystore-encrypted). No API key is created and
@@ -579,7 +581,9 @@ Chromecast to Google's **Default Media Receiver** (`CC1AD845`), modelled on Immi
 ### The relay (`LocalMediaServer`, `PhoneMediaProxy`)
 
 - NanoHTTPD 2.3.1 (BSD-3, ~50 KB; Ktor CIO would pull several MB of Ktor). Bound to the Wi-Fi /
-  ethernet IPv4 address only (`lanInfo()`), random port, re-bound if the address changes.
+  ethernet IPv4 address only (`lanInfo()`), random port, re-bound if the address changes; a default-network callback stops it as soon as
+  that address goes (`onNetworkChanged`), and it stops with `CastService`. At most 8 connections
+  at once (a bounded NanoHTTPD runner; more are closed).
 - URLs: `http://<wifi-ip>:<port>/<token>/m/<key>`, `key` like `local-123.jpg`, `immich-<uuid>.mp4`.
   The token is 24 random bytes (base64url) per session, compared in constant time (403 otherwise).
   Only items `register`ed for this session are served (404 otherwise).
@@ -604,7 +608,8 @@ Chromecast to Google's **Default Media Receiver** (`CC1AD845`), modelled on Immi
 - ⋯ (`ViewerMoreSheet`): Slideshow on TV / Slideshow, Archive (moved here from the top bar), Stop
   casting. `SlideshowSheet`: 3/5/10 s, shuffle. `SlideshowRunner` loops the timeline
   (`TimelineQueue` loads months on demand); videos play to their end. The TV's show belongs to the
-  controller (keeps going with the viewer closed; the pager follows); the phone's own show turns
+  controller (survives a rotation; the pager follows) and stops when the viewer closes, since
+  nothing outside the viewer could stop it short of STOP CASTING; the phone's own show turns
   pages with the chrome hidden. A swipe by hand stops either.
 - `CastMiniController` above the tab bar while casting and the viewer is closed.
 - Screenshots: `CastScreenshotTest` (`cast-*.png`). Tests: `cast/` (session manager, routing and
