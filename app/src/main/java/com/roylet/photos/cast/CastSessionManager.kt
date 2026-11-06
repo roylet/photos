@@ -1,5 +1,7 @@
 package com.roylet.photos.cast
 
+import com.roylet.photos.immich.awaitUse
+
 import com.roylet.photos.immich.await
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -136,7 +138,7 @@ class CastSessionManager(
             .post(body.toRequestBody(JSON))
             .build()
         return try {
-            http.newCall(req).await().use { res ->
+            http.newCall(req).awaitUse { res ->
                 when {
                     res.code == 401 || res.code == 403 -> {
                         _needsSignIn.value = true

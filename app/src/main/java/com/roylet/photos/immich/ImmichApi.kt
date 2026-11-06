@@ -83,8 +83,8 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
     }
 
     suspend fun ping(): Boolean = runCatching {
-        val res = http.newBuilder().callTimeout(4, TimeUnit.SECONDS).build().newCall(get("/server/ping")).await()
-        res.use { it.isSuccessful && json.decodeFromString<Ping>(it.body!!.string()).res == "pong" }
+        http.newBuilder().callTimeout(4, TimeUnit.SECONDS).build().newCall(get("/server/ping"))
+            .awaitUse { it.isSuccessful && json.decodeFromString<Ping>(it.body!!.string()).res == "pong" }
     }.getOrDefault(false)
 
     suspend fun version(): String {
@@ -127,10 +127,10 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
                 // Lets Immich short-circuit with "duplicate" if it already has this exact file.
                 .header("x-immich-checksum", spec.checksum),
         )
-        uploadHttp.newCall(req).await().use { res ->
+        return uploadHttp.newCall(req).awaitUse { res ->
             val text = res.body?.string().orEmpty()
             if (!res.isSuccessful) throw httpError(res.code, text)
-            return json.decodeFromString(text)
+            json.decodeFromString(text)
         }
     }
 
@@ -175,7 +175,7 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
 
     fun authed(b: Request.Builder): Request = (if (apiKey != null) b.header("x-api-key", apiKey) else b).build()
 
-    suspend inline fun <reified T> call(req: Request): T = client().newCall(req).await().use { res ->
+    suspend inline fun <reified T> call(req: Request): T = client().newCall(req).awaitUse { res ->
         val text = res.body?.string().orEmpty()
         if (!res.isSuccessful) throw httpError(res.code, text)
         json.decodeFromString<T>(text)
@@ -183,7 +183,7 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
 
     /** For endpoints that return 204 / an ignorable body. */
     suspend fun send(req: Request) {
-        http.newCall(req).await().use { res -> if (!res.isSuccessful) throw httpError(res.code, res.body?.string().orEmpty()) }
+        http.newCall(req).awaitUse { res -> if (!res.isSuccessful) throw httpError(res.code, res.body?.string().orEmpty()) }
     }
 
     @PublishedApi internal fun client(): OkHttpClient = http
@@ -234,8 +234,8 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
             val client = http.newBuilder().callTimeout(6, TimeUnit.SECONDS).build()
             for (origin in candidates) {
                 val final = runCatching {
-                    client.newCall(Request.Builder().url("$origin/api/server/ping").get().build()).await().use { res ->
-                        if (!res.isSuccessful || json.decodeFromString<Ping>(res.body!!.string()).res != "pong") return@use null
+                    client.newCall(Request.Builder().url("$origin/api/server/ping").get().build()).awaitUse { res ->
+                        if (!res.isSuccessful || json.decodeFromString<Ping>(res.body!!.string()).res != "pong") return@awaitUse null
                         // Where we actually ended up after any redirects.
                         res.request.url.toString().removeSuffix("/api/server/ping")
                     }
@@ -284,6 +284,14 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
         }
     }
 }
+
+/**
+ * Awaits the call, then runs [block] on the response — always on [Dispatchers.IO], so reading the body
+ * never happens on the main thread (NetworkOnMainThreadException) whatever dispatcher the caller is on.
+ * The response is closed afterwards. Prefer this over [await] whenever the body is read.
+ */
+suspend inline fun <R> Call.awaitUse(crossinline block: suspend (Response) -> R): R =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { await().use { block(it) } }
 
 suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
     cont.invokeOnCancellation { cancel() }

@@ -66,7 +66,7 @@ suspend fun ImmichApi.downloadOriginal(
     onProgress: (Long, Long) -> Unit = { _, _ -> },
 ): File = withContext(Dispatchers.IO) {
     val path = "/assets/${seg(id)}/original" + if (edited) "?edited=true" else ""
-    client().newCall(get(path)).await().use { res ->
+    client().newCall(get(path)).awaitUse { res ->
         if (!res.isSuccessful) throw ImmichApi.httpError(res.code, res.body?.string().orEmpty())
         val body = res.body ?: throw IOException("Empty response")
         val total = body.contentLength()

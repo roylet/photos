@@ -1,5 +1,7 @@
 package com.roylet.photos.net
 
+import com.roylet.photos.immich.awaitUse
+
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.UserMe
 import com.roylet.photos.immich.await
@@ -192,7 +194,7 @@ class LanScanner(
         repeat(attempts.coerceAtLeast(1)) {
             val started = System.nanoTime()
             last = try {
-                client.newCall(Request.Builder().url("${ImmichApi.normalizeOrigin(origin)}/api/server/ping").build()).await().use { res ->
+                client.newCall(Request.Builder().url("${ImmichApi.normalizeOrigin(origin)}/api/server/ping").build()).awaitUse { res ->
                     val ms = (System.nanoTime() - started) / 1_000_000
                     val body = res.body?.string().orEmpty()
                     when {
@@ -220,9 +222,9 @@ class LanScanner(
         if (userId.isBlank()) return UserCheck(false, null, "no saved user id: sign in again")
         return try {
             val req = Request.Builder().url("${ImmichApi.normalizeOrigin(origin)}/api/users/me").header("x-api-key", apiKey).build()
-            verifyHttp.newCall(req).await().use { res ->
+            verifyHttp.newCall(req).awaitUse { res ->
                 val body = res.body?.string().orEmpty()
-                if (!res.isSuccessful) return@use UserCheck(false, res.code, "HTTP ${res.code}${if (res.code == 401) ": the key was rejected" else ""}")
+                if (!res.isSuccessful) return@awaitUse UserCheck(false, res.code, "HTTP ${res.code}${if (res.code == 401) ": the key was rejected" else ""}")
                 val id = runCatching { ImmichApi.json.decodeFromString<UserMe>(body).id }.getOrNull()
                 when (id) {
                     null -> UserCheck(false, res.code, "HTTP ${res.code}, but not a user")
@@ -245,10 +247,12 @@ class LanScanner(
         val bodies = HashMap<String, String>()
         for (path in Fingerprint.ENDPOINTS) {
             try {
-                client.newCall(Request.Builder().url("$base/$path").build()).await().use { res ->
-                    if (!res.isSuccessful) return FingerprintRead(null, "HTTP ${res.code} from /api/server/$path")
+                val failed = client.newCall(Request.Builder().url("$base/$path").build()).awaitUse { res ->
+                    if (!res.isSuccessful) return@awaitUse "HTTP ${res.code} from /api/server/$path"
                     bodies[path] = res.body?.string().orEmpty()
+                    null
                 }
+                if (failed != null) return FingerprintRead(null, failed)
             } catch (e: IOException) {
                 return FingerprintRead(null, "/api/server/$path: ${describe(e)}")
             } catch (e: IllegalArgumentException) {
@@ -269,8 +273,8 @@ class LanScanner(
 
     /** The server's configured public address (Administration → Server → External domain), if any. */
     suspend fun externalDomain(origin: String): String? = runCatching {
-        verifyHttp.newCall(Request.Builder().url("${ImmichApi.normalizeOrigin(origin)}/api/server/config").build()).await().use { res ->
-            if (!res.isSuccessful) return@use null
+        verifyHttp.newCall(Request.Builder().url("${ImmichApi.normalizeOrigin(origin)}/api/server/config").build()).awaitUse { res ->
+            if (!res.isSuccessful) return@awaitUse null
             ImmichApi.json.decodeFromString<ServerConfigDto>(res.body!!.string()).externalDomain.trim().takeIf { it.isNotEmpty() }
         }
     }.getOrNull()
