@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.roylet.photos.ui.components.ScrollToTopOnReselect
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -88,6 +90,9 @@ fun AlbumsScreen(
     LaunchedEffect(store) { store.start() }
     var sort by rememberSaveable { mutableStateOf(runCatching { AlbumSort.valueOf(prefs.albumSort) }.getOrDefault(AlbumSort.Recent)) }
     var creating by remember { mutableStateOf(false) }
+    // Kept across loading states, so the tab comes back where it was; a re-tap of the tab scrolls it up.
+    val gridState = rememberLazyGridState()
+    ScrollToTopOnReselect(gridState)
 
     Box(modifier.fillMaxSize().background(Palette.paper)) {
         Column(Modifier.fillMaxSize()) {
@@ -122,6 +127,7 @@ fun AlbumsScreen(
                 else -> {
                     val sorted = remember(list, sort) { sort.apply(list) }
                     LazyVerticalGrid(
+                        state = gridState,
                         columns = GridCells.Adaptive(158.dp),
                         contentPadding = PaddingValues(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),

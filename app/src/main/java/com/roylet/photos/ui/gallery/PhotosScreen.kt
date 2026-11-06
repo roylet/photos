@@ -31,6 +31,7 @@ import com.roylet.photos.ui.components.BrutalSpinner
 import com.roylet.photos.ui.components.ButtonStyle
 import com.roylet.photos.ui.components.EmptyState
 import com.roylet.photos.ui.components.ScreenHeader
+import com.roylet.photos.ui.components.ScrollToTopOnReselect
 import com.roylet.photos.ui.components.SquareIconButton
 import com.roylet.photos.ui.theme.Brutal
 import com.roylet.photos.ui.theme.Palette
@@ -68,6 +69,8 @@ fun TimelineScreen(
     val snapshot by timeline.snapshot.collectAsState()
     val listState = rememberLazyListState()
     BackHandler(enabled = selection.active) { selection.clear() }
+    // On a tab's root (Photos): re-tapping the tab closes the selection (bringing the header back) and scrolls to the top.
+    ScrollToTopOnReselect(listState) { selection.clear() }
     // Re-fetch if something elsewhere changed this timeline (e.g. photos were added to this album).
     androidx.compose.runtime.LaunchedEffect(timeline) { timeline.startOrRefresh() }
 
