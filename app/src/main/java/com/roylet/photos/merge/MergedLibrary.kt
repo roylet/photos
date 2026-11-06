@@ -20,6 +20,9 @@ import com.roylet.photos.domain.source.Capabilities
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.domain.timeline.Visibility
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.io.File
 import java.time.LocalDate
 
@@ -206,20 +209,44 @@ class MergedLibrary(
 
     /* ---------------- Search ---------------- */
 
-    /** Immich's smart search, then phone items whose file name matches and that aren't already shown. */
-    override suspend fun smartSearch(query: String): List<TimelineAsset> {
-        val server = immich.smartSearch(query)
-        val phone = runCatching { local.basicSearch(query) }.getOrDefault(emptyList())
-        return dedupe(server, phone)
+    /**
+     * Immich's smart search, then phone items whose file name matches. Either side failing
+     * leaves the other's results; only both failing (or the server failing with nothing on the
+     * phone) is an error.
+     */
+    override suspend fun smartSearch(query: String): List<TimelineAsset> = both({ immich.smartSearch(query) }, { local.basicSearch(query) })
+
+    override suspend fun basicSearch(query: String): List<TimelineAsset> = both({ immich.basicSearch(query) }, { local.basicSearch(query) })
+
+    private suspend fun both(server: suspend () -> List<TimelineAsset>, phone: suspend () -> List<TimelineAsset>): List<TimelineAsset> = coroutineScope {
+        val s = async { runCatchingNonCancel { server() } }
+        val p = async { runCatchingNonCancel { phone() } }
+        val sr = s.await()
+        val pr = p.await()
+        val serverItems = sr.getOrNull()
+        val phoneItems = pr.getOrNull()
+        when {
+            serverItems != null -> dedupe(serverItems, phoneItems.orEmpty())
+            !phoneItems.isNullOrEmpty() -> phoneItems.distinctBy { it.id }
+            else -> throw sr.exceptionOrNull() ?: pr.exceptionOrNull()!!
+        }
     }
 
-    override suspend fun basicSearch(query: String): List<TimelineAsset> =
-        dedupe(runCatching { immich.basicSearch(query) }.getOrDefault(emptyList()), local.basicSearch(query))
-
-    private suspend fun dedupe(server: List<TimelineAsset>, phone: List<TimelineAsset>): List<TimelineAsset> {
-        if (phone.isEmpty()) return server
-        val shown = localCopies(server.map { it.id }).values.toHashSet()
-        return server + phone.filter { it.id !in shown }
+    /**
+     * One cell per photo: an Immich result whose phone copy is known shows once, as a merged
+     * asset (both refs, the Immich id so its order and details stay), and that phone copy is
+     * dropped from the phone matches. Repeats on either side are dropped too.
+     */
+    internal suspend fun dedupe(server: List<TimelineAsset>, phone: List<TimelineAsset>): List<TimelineAsset> {
+        val serverItems = server.distinctBy { it.id }
+        val copies = localCopies(serverItems.map { it.id })
+        val shownLocal = copies.values.toHashSet()
+        val merged = serverItems.map { a ->
+            val lid = copies[a.id]?.let(AssetRef::parse)
+            if (lid != null && a.localRef == null) a.copy(localRef = lid, remoteRef = AssetRef.immich(a.id)) else a
+        }
+        val seen = merged.mapTo(HashSet()) { it.id }
+        return merged + phone.filter { it.id !in shownLocal && seen.add(it.id) }
     }
 
     override suspend fun placeSearch(city: String?, country: String?): List<TimelineAsset> = immich.placeSearch(city, country)
@@ -326,4 +353,13 @@ class MergedLibrary(
             )
         }
     }
+}
+
+/** [runCatching] that still lets cancellation through. */
+private inline fun <T> runCatchingNonCancel(block: () -> T): Result<T> = try {
+    Result.success(block())
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Throwable) {
+    Result.failure(e)
 }

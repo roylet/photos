@@ -151,6 +151,48 @@ class MergedLibraryTest {
         assertTrue(res.any { it.id == "local:1" }) // its copy "a" isn't among the fake results
     }
 
+    /** Immich side for search: answers [server] (or throws [serverFails]). */
+    private fun searchLib(server: List<TimelineAsset>, serverFails: Throwable? = null, phoneSide: EmptyLocalLibrary = phone) =
+        MergedLibrary(
+            object : com.roylet.photos.domain.library.LibrarySource by immich {
+                override suspend fun smartSearch(query: String): List<TimelineAsset> = serverFails?.let { throw it } ?: server
+                override suspend fun basicSearch(query: String): List<TimelineAsset> = serverFails?.let { throw it } ?: server
+            },
+            phoneSide,
+        ) { pairs }
+
+    private fun asset(id: String) = TimelineAsset(id, 1f, true, false)
+
+    @Test fun `merged search shows a pair once, as the Immich result with both copies`() {
+        // "a" is local:1's Immich copy; the phone also matched local:1 and local:5. Immich repeats "z".
+        val res = runBlocking { searchLib(listOf(asset("a"), asset("z"), asset("z"))).smartSearch("beach") }
+        assertEquals(listOf("a", "z", "local:5"), res.map { it.id })
+        assertEquals(com.roylet.photos.domain.source.SourceBadge.Both, res[0].sourceBadge)
+        assertEquals("local:1", res[0].localRef?.id)
+        assertEquals(res.size, res.map { it.id }.toSet().size)
+    }
+
+    @Test fun `merged search keeps the phone's results when Immich fails`() {
+        val res = runBlocking { searchLib(emptyList(), serverFails = java.io.IOException("offline")).smartSearch("beach") }
+        assertEquals(listOf("local:1", "local:5"), res.map { it.id })
+        val basic = runBlocking { searchLib(emptyList(), serverFails = java.io.IOException("offline")).basicSearch("beach") }
+        assertEquals(listOf("local:1", "local:5"), basic.map { it.id })
+    }
+
+    @Test fun `merged search keeps Immich's results when the phone fails`() {
+        val broken = object : EmptyLocalLibrary() {
+            override suspend fun basicSearch(query: String): List<TimelineAsset> = throw IllegalStateException("db closed")
+        }
+        assertEquals(listOf("a"), runBlocking { searchLib(listOf(asset("a")), phoneSide = broken).smartSearch("x") }.map { it.id })
+    }
+
+    @Test fun `merged search fails only when there's nothing to show`() {
+        val e = runCatching {
+            runBlocking { searchLib(emptyList(), serverFails = java.io.IOException("offline"), phoneSide = object : EmptyLocalLibrary() {}).smartSearch("x") }
+        }.exceptionOrNull()
+        assertEquals("offline", e?.message)
+    }
+
     @Test fun `details prefer the phone's EXIF and add Immich's people and place`() {
         val server = AssetDetails("a", MediaSourceKind.Immich, camera = CameraInfo(make = "Sony"),
             location = AssetLocation(city = "Hobart", country = "Australia", latitude = 9.0, longitude = 9.0), people = listOf("Sam"), description = "Dinner")
