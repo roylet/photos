@@ -91,15 +91,33 @@ class ImmichLibrary(
 
     /** Immich's metadata search by original file name. */
     override suspend fun basicSearch(query: String): List<TimelineAsset> =
-        requireApi().metadataSearch(MetadataSearchBody(originalFileName = query)).assets.items.map { it.toTimelineAsset() }
+        requireApi().metadataSearch(MetadataSearchBody(originalFileName = query)).assets.items.toSearchResults()
 
-    override suspend fun smartSearch(query: String): List<TimelineAsset> = requireApi().smartSearch(query).assets.items.map { it.toTimelineAsset() }
+    /**
+     * Immich's smart (CLIP) search. A server with smart search turned off (machine learning
+     * disabled) answers 400 "Smart search is not enabled", and older or proxied ones 404 / 501:
+     * then this falls back to the file-name search rather than failing.
+     */
+    override suspend fun smartSearch(query: String): List<TimelineAsset> {
+        val api = requireApi()
+        return try {
+            api.smartSearch(query).assets.items.toSearchResults()
+        } catch (e: ImmichException) {
+            if (e.status !in SMART_SEARCH_UNAVAILABLE) throw e
+            api.metadataSearch(MetadataSearchBody(originalFileName = query)).assets.items.toSearchResults()
+        }
+    }
 
     override suspend fun placeSearch(city: String?, country: String?): List<TimelineAsset> =
-        requireApi().metadataSearch(MetadataSearchBody(city = city, country = country)).assets.items.map { it.toTimelineAsset() }
+        requireApi().metadataSearch(MetadataSearchBody(city = city, country = country)).assets.items.toSearchResults()
 
     override suspend fun explore(): List<ExploreSection> = requireApi().explore().map { s ->
-        ExploreSection(s.fieldName, s.items.map { ExploreItem(it.value, it.data.toTimelineAsset()) })
+        val items = s.items.mapNotNull { item ->
+            val value = item.value?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val asset = item.data ?: return@mapNotNull null
+            ExploreItem(value, asset.toTimelineAsset())
+        }.distinctBy { it.value }
+        ExploreSection(s.fieldName, items)
     }.filter { it.items.isNotEmpty() }
 
     override suspend fun suggestions(type: String): List<String> = requireApi().searchSuggestions(type).filter { it.isNotBlank() }
@@ -150,6 +168,12 @@ class ImmichLibrary(
     }
 
     companion object {
+        /** Statuses meaning "this server has no smart search" (not a failure of the query itself). */
+        val SMART_SEARCH_UNAVAILABLE = setOf(400, 404, 501)
+
+        /** One grid cell per asset, in the server's (relevance) order. */
+        internal fun List<AssetDto>.toSearchResults(): List<TimelineAsset> = distinctBy { it.id }.map { it.toTimelineAsset() }
+
         const val MAX_MEMBERSHIP_CHECKS = 20
 
         /** Immich serves shared links at `/share/{key}` (or `/s/{slug}` for custom slugs). */

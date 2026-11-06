@@ -207,7 +207,12 @@ class ImmichApi(serverUrl: String, private val apiKey: String?, private val http
             "person.read", "map.read", "memory.read", "memory.update", "user.read", "server.about", "tag.read",
         )
 
-        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        /**
+         * Tolerant decoding: unknown keys are skipped, and a JSON `null` for a non-null field that
+         * has a default (Immich sends nulls for fields it documents as plain strings) takes the
+         * default instead of throwing.
+         */
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false; coerceInputValues = true }
         @PublishedApi internal val JSON = "application/json".toMediaTypeOrNull()
 
         val defaultClient: OkHttpClient = OkHttpClient.Builder()

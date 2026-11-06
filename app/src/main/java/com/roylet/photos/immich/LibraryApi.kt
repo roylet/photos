@@ -2,6 +2,8 @@ package com.roylet.photos.immich
 
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.Visibility
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -56,20 +58,47 @@ suspend fun ImmichApi.serverConfig(): ServerConfigDto = call(get("/server/config
 
 /* ---- Search ---- */
 
-@Serializable data class SmartSearchBody(val query: String, val size: Int = 200, val page: Int? = null, val withExif: Boolean = true)
-@Serializable data class MetadataSearchBody(val city: String? = null, val country: String? = null, val originalFileName: String? = null, val size: Int = 200, val withExif: Boolean = true)
-@Serializable data class SearchAssetsDto(val items: List<AssetDto> = emptyList(), val total: Int = 0, val nextPage: String? = null)
-@Serializable data class SearchResponseDto(val assets: SearchAssetsDto = SearchAssetsDto())
-@Serializable data class ExploreItemDto(val value: String, val data: AssetDto)
-@Serializable data class ExploreDto(val fieldName: String, val items: List<ExploreItemDto> = emptyList())
+/*
+ * Request bodies (v3.4 SmartSearchDto / MetadataSearchDto field names). [ImmichApi.json] drops
+ * values equal to their defaults, so `size` and `withExif` are marked [EncodeDefault]: without
+ * it Immich used its own defaults (100 / 250 results and no EXIF, so no places on results).
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable data class SmartSearchBody(
+    val query: String,
+    @EncodeDefault val size: Int = SEARCH_PAGE,
+    val page: Int? = null,
+    @EncodeDefault val withExif: Boolean = true,
+)
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable data class MetadataSearchBody(
+    val city: String? = null,
+    val country: String? = null,
+    val originalFileName: String? = null,
+    @EncodeDefault val size: Int = SEARCH_PAGE,
+    @EncodeDefault val withExif: Boolean = true,
+)
 
-suspend fun ImmichApi.smartSearch(query: String, size: Int = 200): SearchResponseDto = call(post("/search/smart", SmartSearchBody(query, size)))
+/** `SearchResponseDto.assets` (SearchAssetResponseDto); every field tolerated missing or null. */
+@Serializable data class SearchAssetsDto(val items: List<AssetDto> = emptyList(), val total: Int = 0, val count: Int = 0, val nextPage: String? = null)
+/** `SearchResponseDto`; `albums` is ignored. */
+@Serializable data class SearchResponseDto(val assets: SearchAssetsDto = SearchAssetsDto())
+/** `SearchExploreItem`: [data] is a full AssetResponseDto. Tolerant, so one odd item can't sink the section. */
+@Serializable data class ExploreItemDto(val value: String? = null, val data: AssetDto? = null)
+/** `SearchExploreResponseDto`, e.g. fieldName `exifInfo.city`. */
+@Serializable data class ExploreDto(val fieldName: String = "", val items: List<ExploreItemDto> = emptyList())
+
+/** Results asked for per search (Immich allows 1..1000). */
+const val SEARCH_PAGE = 200
+
+suspend fun ImmichApi.smartSearch(query: String, size: Int = SEARCH_PAGE): SearchResponseDto =
+    call(post("/search/smart", SmartSearchBody(query, size)))
 suspend fun ImmichApi.metadataSearch(body: MetadataSearchBody): SearchResponseDto = call(post("/search/metadata", body))
 suspend fun ImmichApi.explore(): List<ExploreDto> = call(get("/search/explore"))
 
 /** `type` is one of country, state, city, camera-make, camera-model, camera-lens-model. */
 suspend fun ImmichApi.searchSuggestions(type: String): List<String> =
-    call(authed(Request.Builder().url(url("/search/suggestions").toHttpUrl().newBuilder().addQueryParameter("type", type).build()).get()))
+    call<List<String?>>(authed(Request.Builder().url(url("/search/suggestions").toHttpUrl().newBuilder().addQueryParameter("type", type).build()).get())).filterNotNull()
 
 /* ---- People ---- */
 
