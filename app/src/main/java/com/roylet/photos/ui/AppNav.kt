@@ -59,6 +59,13 @@ import com.roylet.photos.ui.components.AppMark
 import com.roylet.photos.ui.components.BrutalRail
 import com.roylet.photos.ui.components.BrutalTabBar
 import com.roylet.photos.ui.components.NavTab
+import com.roylet.photos.ui.components.LocalTabReselects
+import com.roylet.photos.ui.components.TabReselects
+import com.roylet.photos.ui.components.TabRoot
+import com.roylet.photos.ui.components.LocalTabRoot
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.navigation.NavController
 import com.roylet.photos.ui.connect.ConnectScreen
 import com.roylet.photos.domain.timeline.TimelineFilter
 import com.roylet.photos.ui.components.BrutalButton
@@ -207,12 +214,10 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         if (access != seenAccess) { seenAccess = access; container.device.onAccessChanged() }
     }
 
+    val reselects = remember { TabReselects() }
+    val haptics = LocalHapticFeedback.current
     val selectTab: (NavTab) -> Unit = { tab ->
-        nav.navigate(tab.route) {
-            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-            launchSingleTop = true
-            restoreState = true
-        }
+        tapTab(nav, tab, reselects, onReselect = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) })
     }
     val showBar = route in tabRoutes
 
@@ -255,6 +260,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalConsentLauncher provides container.consent,
         LocalCastController provides container.cast,
         LocalCastSignIn provides container.castSignIn,
+        LocalTabReselects provides reselects,
     ) {
       SharedTransitionLayout(Modifier.fillMaxSize()) {
       CompositionLocalProvider(LocalSharedTransitionScope provides this) {
@@ -304,6 +310,34 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
       }
       }
     }
+}
+
+/**
+ * A tap on [tab] in the tab bar or rail. Another tab: switch to it, keeping each tab's state (and
+ * scroll position). The tab being shown, on its root screen: a re-tap, which that screen answers by
+ * scrolling back to the top ([TabReselects]). The tab being shown, on a page pushed within it (an
+ * album, a folder): back to the tab's root first; the next tap scrolls.
+ */
+internal fun tapTab(nav: NavController, tab: NavTab, reselects: TabReselects, onReselect: () -> Unit = {}) {
+    val current = nav.currentDestination?.route
+    when {
+        current == tab.route -> { onReselect(); reselects.reselect(tab.route) }
+        current !in tabRoutes && owningTab(nav) == tab.route -> { onReselect(); nav.popBackStack(tab.route, inclusive = false) }
+        else -> nav.navigate(tab.route) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+}
+
+/**
+ * The tab the current page was pushed from. Switching tabs pops back to Photos (the start), so the
+ * stack holds Photos and at most one other tab: that one, if it's there, owns the top of the stack.
+ */
+private fun owningTab(nav: NavController): String? {
+    val present = Tabs.map { it.route }.filter { route -> runCatching { nav.getBackStackEntry(route) }.isSuccess }
+    return present.lastOrNull { it != Routes.TIMELINE } ?: present.firstOrNull()
 }
 
 /** Map clusters open at most this many photos. */
@@ -394,7 +428,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             )
         }
         composable(Routes.TIMELINE) { entry ->
-            CompositionLocalProvider(LocalNavAnimatedScope provides this) {
+            CompositionLocalProvider(LocalNavAnimatedScope provides this, LocalTabRoot provides Routes.TIMELINE) {
                 val timeline = remember { container.timelines.get(TimelineFilter.Timeline) }
                 LaunchedEffect(Unit) { container.memories.start() }
                 val memories by container.memories.memories.collectAsState()
@@ -485,12 +519,14 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
         }
         composable(Routes.ALBUMS) {
             val serverAlbums = Capability.SERVER_ALBUMS in caps
+            TabRoot(Routes.ALBUMS) {
             AlbumsScreen(
                 container.albums, if (serverAlbums) container.actions else null, container.uiPrefs,
                 onOpen = { nav.navigate(Routes.album(it.id)) },
                 onNewAlbum = if (serverAlbums) { name -> nav.navigate(Routes.newAlbum(name)) } else null,
                 folders = !serverAlbums,
             )
+            }
         }
         composable(Routes.NEW_ALBUM, arguments = listOf(navArgument("name") { type = NavType.StringType; defaultValue = "" })) { entry ->
             val name = entry.arguments?.getString("name").orEmpty()
@@ -526,7 +562,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.SEARCH) { entry ->
-            CompositionLocalProvider(LocalNavAnimatedScope provides this) {
+            CompositionLocalProvider(LocalNavAnimatedScope provides this, LocalTabRoot provides Routes.SEARCH) {
                 SearchScreen(
                     container.search,
                     timelineFor = { container.timelines.get(it) },
@@ -547,6 +583,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
             }
         }
         composable(Routes.LIBRARY) {
+            TabRoot(Routes.LIBRARY) {
             ProvideFolderBackup(container, onOpenBackup = { nav.navigate(Routes.BACKUP) }) {
             LibraryScreen(
                 folders = container.phoneFolders,
@@ -566,6 +603,7 @@ private fun Host(container: AppContainer, nav: NavHostController, viewer: Viewer
                 }
             },
             )
+            }
             }
         }
         composable(Routes.DEVICE) { entry ->

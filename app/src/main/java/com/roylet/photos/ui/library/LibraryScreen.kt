@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.roylet.photos.ui.components.ScrollToTopOnReselect
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -91,10 +93,14 @@ fun LibraryScreen(
     val tiles = if (oneSection) collections + tidyUp else collections
     val tidy = if (oneSection) emptyList() else tidyUp
     var menu by remember { mutableStateOf<DeviceFolder?>(null) }
+    // A re-tap of the Library tab scrolls this back to the top.
+    val gridState = rememberLazyGridState()
+    ScrollToTopOnReselect(gridState)
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(Palette.paper)) {
             ScreenHeader("Library", actions = { SquareIconButton(Icons.Rounded.Settings, "Settings", { onOpen(LibraryEntry.Settings) }) })
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Adaptive(160.dp),
                 contentPadding = PaddingValues(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
