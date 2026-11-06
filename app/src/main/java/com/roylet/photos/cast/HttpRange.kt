@@ -34,8 +34,9 @@ sealed interface RangeRequest {
             }
             val start = a.toLongOrNull() ?: return Full
             val end = if (b.isEmpty()) length - 1 else (b.toLongOrNull() ?: return Full)
-            if (start < 0 || end < start) return Full
+            if (start < 0) return Full
             if (start >= length) return Unsatisfiable
+            if (end < start) return Full
             return Partial(start, end.coerceAtMost(length - 1))
         }
     }

@@ -517,3 +517,102 @@ nothing is ever deleted on either side.
 - Real uploads over LAN and public, the LAN→public switch mid-upload, multi-GB videos.
 - `bulk-upload-check` on a trashed asset, and 401 after the key is revoked.
 - Notification permission on first enable (Android 13+).
+
+## 11. Casting (`cast/`, `ui/cast/`)
+
+Chromecast to Google's **Default Media Receiver** (`CC1AD845`), modelled on Immich's own apps
+(mobile `gcast.service.dart`, web `cast-manager.svelte.ts`). No custom receiver, nothing to register.
+
+### Pieces
+
+- `PhotosCastOptionsProvider` (manifest `OPTIONS_PROVIDER_CLASS_NAME`, kept by R8): the receiver
+  id, the Cast SDK's own media session and notification off, Output Switcher (remote-to-local) on,
+  the receiver closed when the session ends.
+- `Media3CastDevice` (`container.castDevice`, `init()` from MainActivity): Media3 1.9's
+  `RemoteCastPlayer` plus the Cast SDK's session and device-state listeners, behind the
+  `CastDevice` seam. **CastPlayer, not raw RemoteMediaClient:** Media3's
+  `DefaultMediaItemConverter` has no photo type (an `image/*` item goes out as a movie), so
+  `PhotoMediaItemConverter` sends image items as `MEDIA_TYPE_PHOTO` (BUFFERED, as Immich does)
+  and leaves videos to the default. One item is loaded at a time; the phone's timeline is the queue.
+- `CastService` (`MediaSessionService`, `mediaPlayback`): runs only while a session is connected.
+  Its Media3 `MediaSession` around the remote player gives the lock screen, notification and
+  Output Switcher; `MediaTransferReceiver` is in the manifest. It starts the relay on create.
+- `CastController` (`container.cast`, main thread): `show(asset)` (the viewer calls it whenever a
+  page settles while casting), transport (`togglePlay`, `seekTo`, `setVolume`), `stop()`,
+  slideshows, and the clean-up when the session ends: the Immich child session deleted, the relay
+  and the service stopped. `state: StateFlow<CastState>` drives every cast UI. Receiver errors are
+  worded ("TV couldn't load this video (HEVC not supported)", same Wi-Fi, ...).
+
+### Where the TV fetches from (`CastResolver`, `CastRouting`, `CastUrls`)
+
+| Item | Route |
+|---|---|
+| Immich (or merged, with `remoteRef`) and a public HTTPS address | **Direct**: the TV fetches from the server |
+| Phone-only (`local:`) | **Relay**: the phone's `LocalMediaServer` |
+| Merged, but no login session | Relay of the phone copy (no sign-in prompt) |
+| Immich-only, no public HTTPS address or the setting off | Relay of the Immich copy, with a one-time note |
+| Immich-only, no login session | "Sign in once to cast" |
+
+- **Direct URLs** always use the saved public URL, and only if it's HTTPS on a public DNS name
+  (`CastUrls.directBase`: not an IP literal, `.local`/private, or a bare name), since the
+  Chromecast resolves with public DNS and wants a valid certificate:
+  photos `/api/assets/{id}/thumbnail?size=fullsize&edited=true&sessionKey=…` (the server converts
+  HEIC), videos `/api/assets/{id}/video/playback?sessionKey=…`.
+- **Content type**: a HEAD through the shared client; photos announce what it says if the TV can
+  show it, else `image/jpeg`; a HEIC answer (fullsize generation off → redirect to the original)
+  switches to `size=preview`. Videos announce the HEAD's `video/*`, QuickTime as `video/mp4`.
+  Never the original's mime (Immich mobile's bug).
+- Settings → Casting → "Use public address for casting" (`UiPrefs.castUsePublic`, default on).
+
+### Immich child sessions (`CastSessionManager`)
+
+- `POST /api/sessions` with `Authorization: Bearer <container.serverSessionToken()>` and
+  `{duration: 1800, deviceType: "Cast", deviceOS: "Google Cast"}`; the response's `token` is the
+  `sessionKey`. Reused until fewer than 10 s remain, then a new one (the old one expires on its
+  own, so a video still reading with it isn't cut off early). `DELETE /api/sessions/{id}` when the
+  cast session ends. The token is a full-account credential while it lives; never logged.
+- A 401/403, or no stored token (API-key sign-in), → `NeedsSignIn`. `CastSignIn` asks for the
+  password once (email prefilled), calls `/api/auth/login`, checks it's the same user id and
+  stores the token through `Settings.updateServer` (Keystore-encrypted). No API key is created and
+  the password isn't kept. The sheet appears in the viewer when needed and in Settings → Casting.
+
+### The relay (`LocalMediaServer`, `PhoneMediaProxy`)
+
+- NanoHTTPD 2.3.1 (BSD-3, ~50 KB; Ktor CIO would pull several MB of Ktor). Bound to the Wi-Fi /
+  ethernet IPv4 address only (`lanInfo()`), random port, re-bound if the address changes.
+- URLs: `http://<wifi-ip>:<port>/<token>/m/<key>`, `key` like `local-123.jpg`, `immich-<uuid>.mp4`.
+  The token is 24 random bytes (base64url) per session, compared in constant time (403 otherwise).
+  Only items `register`ed for this session are served (404 otherwise).
+- GET/HEAD, `Accept-Ranges: bytes`, 206 with `Content-Range` (`a-b`, `a-`, suffix `-n`; first
+  range only), 416 with `bytes */len`.
+- Phone photos: JPEG ≤ 1920 px as is; anything else (HEIC, PNG, big JPEG) transcoded once to a
+  ≤ 1920 px JPEG (`AndroidJpegTranscoder`: ImageDecoder, EXIF applied; BitmapFactory fallback),
+  six kept in memory. Phone videos: the original, ranged; HEVC is detected (MediaExtractor) for
+  the error message. Relayed Immich items: the `preview` JPEG, or `video/playback` ranged through
+  the shared client (the API key stays on the phone).
+- Permissions: INTERNET is enough at targetSdk 35. **TODO(targetSdk 37):** Android 17's
+  `ACCESS_LOCAL_NETWORK` must be declared and requested before casting phone photos.
+
+### UI
+
+- `CastButton`: Media3's Compose `MediaRouteButton` in our square frame (orange while casting);
+  in the viewer's top bar whenever Play services are there, and in the Photos header only while
+  devices are around (`CastState.devicesAvailable`).
+- Viewer while casting: `CastingBanner` ("Casting to <TV>", STOP, errors and notes), the settled
+  page goes to the TV, video pages are `CastVideoPage` (poster, play/pause, the local `SeekBar`,
+  TV volume, Stop casting); the local ExoPlayer is never created.
+- ⋯ (`ViewerMoreSheet`): Slideshow on TV / Slideshow, Archive (moved here from the top bar), Stop
+  casting. `SlideshowSheet`: 3/5/10 s, shuffle. `SlideshowRunner` loops the timeline
+  (`TimelineQueue` loads months on demand); videos play to their end. The TV's show belongs to the
+  controller (keeps going with the viewer closed; the pager follows); the phone's own show turns
+  pages with the chrome hidden. A swipe by hand stops either.
+- `CastMiniController` above the tab bar while casting and the viewer is closed.
+- Screenshots: `CastScreenshotTest` (`cast-*.png`). Tests: `cast/` (session manager, routing and
+  URLs, the relay on localhost, the transcoder, the controller and slideshow, sign-in).
+
+### Needs a device
+
+- Discovery, the device picker, Output Switcher and the lock-screen controls.
+- The Default Media Receiver with photo items, `sessionKey` URLs from photos.royle.au, and HEVC
+  on the user's Chromecast model.
+- The relay across real Wi-Fi (client isolation, VPNs), and with the app in the background.
