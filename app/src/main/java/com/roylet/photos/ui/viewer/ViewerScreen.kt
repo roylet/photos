@@ -2,6 +2,7 @@ package com.roylet.photos.ui.viewer
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -256,6 +257,12 @@ fun ViewerScreen(
         localShow?.let { if (it.index != page) localRunner.stop() }
         castState.slideshow?.let { if (it.index != page) cast?.stopSlideshow() }
         if (casting && settledAsset != null) cast?.show(settledAsset)
+    }
+    // Leaving the viewer ends the TV's slideshow too (it walks this viewer's timeline, and outside
+    // the viewer nothing could stop it short of STOP CASTING); a rotation doesn't.
+    val activity = LocalActivity.current
+    DisposableEffect(cast) {
+        onDispose { if (activity?.isChangingConfigurations != true) cast?.stopSlideshow() }
     }
     // Casting started mid-slideshow on the phone: the phone's show stops (start one on the TV from ⋯).
     LaunchedEffect(casting) { if (casting) localRunner.stop() }
