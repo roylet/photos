@@ -462,7 +462,10 @@ class AppContainer(context: Context) {
             phone = AndroidPhoneFiles(app) { device.dao },
             immich = { settings.server.value?.let { HttpImmichRelay(http, it.publicUrl) } },
             transcoder = AndroidJpegTranscoder(),
-        )
+        ).also { proxy ->
+            // Leaving the Wi-Fi (or moving to another) stops the server at once.
+            env.observe(onNetworkChange = proxy::onNetworkChanged, onForeground = {})
+        }
     }
 
     private var castOverride: CastController? = null

@@ -109,8 +109,8 @@ class LocalMediaServerTest {
         override fun isHevc(file: PhoneFile) = file.mimeType == "video/hevc-test"
     }
 
-    private fun relay(transcoded: MutableList<Long>, wifi: String? = "127.0.0.1") = PhoneMediaProxy(
-        wifiAddress = { wifi },
+    private fun relay(transcoded: MutableList<Long>, wifi: String? = "127.0.0.1", wifiNow: () -> String? = { wifi }) = PhoneMediaProxy(
+        wifiAddress = wifiNow,
         phone = Files(
             mapOf(
                 1L to PhoneFile(1, false, "image/heic", 4032, 3024, 1),
@@ -169,6 +169,44 @@ class LocalMediaServerTest {
         assertTrue(r.running)
         r.stop()
         assertTrue(!r.running)
+    }
+
+    @Test fun leavingTheWifiStopsTheServer() {
+        var wifi: String? = "127.0.0.1"
+        val r = relay(mutableListOf(), wifiNow = { wifi })
+        assertTrue(r.start())
+        r.onNetworkChanged()
+        assertTrue("same address: keeps serving", r.running)
+        wifi = null
+        r.onNetworkChanged()
+        assertTrue(!r.running)
+        r.stop()
+    }
+
+    @Test fun connectionsAreCapped() {
+        val capped = LocalMediaServer("127.0.0.1", token = "tok123", maxConnections = 1).apply { startServing() }
+        capped.register("a.jpg") { BytesContent(body, "image/jpeg") }
+        val strict = http.newBuilder().retryOnConnectionFailure(false).build()
+        val url = "http://127.0.0.1:${capped.listeningPort}/tok123/m/a.jpg"
+        try {
+            // An idle connection holds the only slot (its handler waits for a request line).
+            java.net.Socket("127.0.0.1", capped.listeningPort).use { _ ->
+                Thread.sleep(200)
+                try {
+                    strict.newCall(Request.Builder().url(url).build()).execute().use { fail("served over the cap: ${it.code}") }
+                } catch (e: java.io.IOException) {
+                    // Closed without a response.
+                }
+            }
+            // The slot frees once that connection goes.
+            var code = 0
+            for (attempt in 0 until 40) {
+                code = runCatching { strict.newCall(Request.Builder().url(url).build()).execute().use { it.code } }.getOrDefault(0)
+                if (code == 200) break
+                Thread.sleep(50)
+            }
+            assertEquals(200, code)
+        } finally { capped.stop() }
     }
 
     @Test fun photoPlan() {

@@ -167,7 +167,10 @@ class CastController(
         if (casting) relay.start()
     }
 
-    fun onServiceStopped() {}
+    /** [CastService] is gone (the session ended, or the system stopped it): the relay goes with it. */
+    fun onServiceStopped() {
+        relay.stop()
+    }
 
     private fun started() {
         shownNotes.clear()

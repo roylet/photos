@@ -29,6 +29,7 @@ class BytesContent(private val bytes: ByteArray, override val contentType: Strin
  * - It serves only what was [register]ed for this cast session (the items actually sent to the
  *   TV), never arbitrary MediaStore ids.
  * - GET and HEAD, `Range` (206 / 416, `Accept-Ranges: bytes`) so the TV can seek in videos.
+ * - At most [MAX_CONNECTIONS] connections at once (a thread each); more are closed.
  * - Runs only while casting ([CastService]); [stop] when the cast session ends.
  *
  * Android 17 (targetSdk 37) puts local-network access behind ACCESS_LOCAL_NETWORK. At targetSdk
@@ -38,7 +39,13 @@ class LocalMediaServer(
     host: String,
     port: Int = 0,
     val token: String = newToken(),
+    maxConnections: Int = MAX_CONNECTIONS,
 ) : NanoHTTPD(host, port) {
+    init {
+        // NanoHTTPD's default runner starts a thread per connection without limit.
+        setAsyncRunner(BoundedRunner(maxConnections))
+    }
+
     private val items: MutableMap<String, () -> ProxyContent> = Collections.synchronizedMap(
         object : LinkedHashMap<String, () -> ProxyContent>(16, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, () -> ProxyContent>?) = size > MAX_ITEMS
@@ -98,7 +105,20 @@ class LocalMediaServer(
 
     private fun plain(status: Response.Status, text: String): Response = newFixedLengthResponse(status, MIME_PLAINTEXT, text)
 
+    /** At most [max] connections at once; any more are closed straight away. */
+    private class BoundedRunner(private val max: Int) : DefaultAsyncRunner() {
+        override fun exec(code: ClientHandler) {
+            if (running.size >= max) {
+                code.close()
+                return
+            }
+            super.exec(code)
+        }
+    }
+
     companion object {
+        /** A receiver uses one or two (a video plus its seek); a few more for HEADs and retries. */
+        const val MAX_CONNECTIONS = 8
         private const val MAX_ITEMS = 64
         private val KEY = Regex("[A-Za-z0-9._-]{1,120}")
 

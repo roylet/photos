@@ -141,6 +141,15 @@ class CastControllerTest {
         assertEquals("DELETE /api/sessions/s-9", "${del.method} ${del.path}")
     }
 
+    @Test fun theRelayStopsWhenTheServiceIsDestroyed() {
+        val relay = CountingRelay()
+        val c = fakeCastController(CoroutineScope(Dispatchers.Unconfined), FakeCastDevice().apply { connect() }, relay = relay)
+        c.onServiceStarted()
+        assertEquals(1, relay.starts)
+        c.onServiceStopped()
+        assertEquals(1, relay.stops)
+    }
+
     @Test fun signInRetriesTheItem() = runBlocking {
         val device = FakeCastDevice().apply { connect() }
         var parent: String? = null

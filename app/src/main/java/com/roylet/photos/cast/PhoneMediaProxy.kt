@@ -47,7 +47,8 @@ interface ImmichRelay {
  * - Immich assets (no public HTTPS address): the preview JPEG, or the playback stream ranged.
  *
  * [start] binds to the Wi-Fi address (from [CastService]); [prepare] starts it if needed and
- * rebinds when the address changed. [stop] at the end of the cast session.
+ * rebinds when the address changed; [onNetworkChanged] stops it as soon as the address goes.
+ * [stop] at the end of the cast session.
  */
 class PhoneMediaProxy(
     private val wifiAddress: () -> String?,
@@ -75,6 +76,18 @@ class PhoneMediaProxy(
         server?.stop()
         server = null
         jpegs.clear()
+    }
+
+    /**
+     * The network changed: if the Wi-Fi address the server is bound to is gone (Wi-Fi off, another
+     * network, mobile data), stop it now rather than at the next item. [prepare] rebinds.
+     */
+    @Synchronized
+    fun onNetworkChanged() {
+        val s = server ?: return
+        if (wifiAddress() == s.host) return
+        s.stop()
+        server = null
     }
 
     @Synchronized
