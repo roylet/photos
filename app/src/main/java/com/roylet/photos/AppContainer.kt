@@ -1,5 +1,7 @@
 package com.roylet.photos
 
+import com.roylet.photos.immich.awaitUse
+
 import android.content.Context
 import coil3.ImageLoader
 import coil3.disk.DiskCache
@@ -508,7 +510,7 @@ class AppContainer(context: Context) {
 
     /** HEAD of a cast URL through the shared client: the Content-Type the TV will get. */
     private suspend fun castProbe(url: String): String? = runCatching {
-        http.newCall(okhttp3.Request.Builder().url(url).head().build()).await().use { if (it.isSuccessful) it.header("Content-Type") else null }
+        http.newCall(okhttp3.Request.Builder().url(url).head().build()).awaitUse { if (it.isSuccessful) it.header("Content-Type") else null }
     }.getOrNull()
 
     fun api(): ImmichApi? = settings.server.value?.let { ImmichApi(it.publicUrl, it.apiKey, http) }

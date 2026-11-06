@@ -1,5 +1,7 @@
 package com.roylet.photos.cast
 
+import com.roylet.photos.immich.awaitUse
+
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -77,7 +79,7 @@ class AndroidPhoneFiles(context: Context, private val dao: () -> MediaDao) : Pho
 class HttpImmichRelay(private val http: OkHttpClient, private val base: String) : ImmichRelay {
     override suspend fun preview(id: String): Pair<ByteArray, String> {
         val req = Request.Builder().url("$base/api/assets/$id/thumbnail?size=preview&edited=true").build()
-        return http.newCall(req).await().use { res ->
+        return http.newCall(req).awaitUse { res ->
             if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
             val body = res.body ?: throw IOException("empty")
             body.bytes() to (res.header("Content-Type") ?: "image/jpeg")
@@ -86,7 +88,7 @@ class HttpImmichRelay(private val http: OkHttpClient, private val base: String) 
 
     override suspend fun video(id: String): ProxyContent {
         val url = "$base/api/assets/$id/video/playback"
-        val (length, type) = http.newCall(Request.Builder().url(url).head().build()).await().use { res ->
+        val (length, type) = http.newCall(Request.Builder().url(url).head().build()).awaitUse { res ->
             if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
             (res.header("Content-Length")?.toLongOrNull() ?: throw IOException("no length")) to (res.header("Content-Type") ?: "video/mp4")
         }
