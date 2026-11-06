@@ -1,5 +1,7 @@
 package com.roylet.photos.cast
 
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import android.app.PendingIntent
 import android.content.Intent
 import androidx.media3.session.MediaSession
@@ -14,6 +16,7 @@ import com.roylet.photos.PhotosApp
  * process alive for the phone-side media server ([LocalMediaServer]) the TV reads phone-only
  * photos from.
  */
+@OptIn(UnstableApi::class)
 class CastService : MediaSessionService() {
     private var session: MediaSession? = null
 

@@ -1,5 +1,7 @@
 package com.roylet.photos.cast
 
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * shared CastContext never arrives and [availability] stays [CastAvailability.Unsupported].
  * [player] is what [CastService]'s MediaSession wraps.
  */
+@OptIn(UnstableApi::class)
 class Media3CastDevice(context: Context) : CastDevice {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())

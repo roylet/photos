@@ -1,5 +1,7 @@
 package com.roylet.photos.cast
 
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.cast.DefaultMediaItemConverter
 import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.MediaItem
@@ -13,6 +15,7 @@ import com.google.android.gms.cast.MediaQueueItem
  * Media Receiver shows as a still), keeping the default's custom data so RemoteCastPlayer can
  * turn the queue item back into a MediaItem. Videos go through the default unchanged.
  */
+@OptIn(UnstableApi::class)
 class PhotoMediaItemConverter(private val base: MediaItemConverter = DefaultMediaItemConverter()) : MediaItemConverter {
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
         val item = base.toMediaQueueItem(mediaItem)

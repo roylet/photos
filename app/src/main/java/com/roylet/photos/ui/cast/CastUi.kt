@@ -1,5 +1,7 @@
 package com.roylet.photos.ui.cast
 
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -78,6 +80,7 @@ fun rememberCastState(): CastState {
  * of our square buttons, orange while casting. [dark] is the viewer's ink kit; otherwise the
  * theme's. Previews and screenshots (no Cast SDK) draw the same frame with a static icon.
  */
+@OptIn(UnstableApi::class)
 @Composable
 fun CastButton(dark: Boolean, modifier: Modifier = Modifier) {
     val state = rememberCastState()
