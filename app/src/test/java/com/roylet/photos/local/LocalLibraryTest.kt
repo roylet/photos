@@ -124,6 +124,23 @@ class LocalLibraryTest {
         assertEquals(emptyList<String>(), runBlocking { lib.basicSearch("  ") })
     }
 
+    @Test fun `search treats LIKE wildcards in what's typed as plain characters`() {
+        store.put(photo(5, taken = utc(2026, 8, 1), bucket = 10, bucketName = "Camera", name = "50%_off.jpg"))
+        store.put(photo(6, taken = utc(2026, 8, 2), bucket = 10, bucketName = "Camera", name = "50x off.jpg"))
+        store.put(photo(7, taken = utc(2026, 8, 3), bucket = 10, bucketName = "Camera", name = "back\\slash.jpg"))
+        runBlocking { indexer.sync() }
+        val lib = library()
+        // Unescaped, "%" and "_" would match every file.
+        assertEquals(listOf("local:5"), runBlocking { lib.basicSearch("%") }.map { it.id })
+        // "_" is a literal underscore: the IMG_n names and Screenshot_beach have one, "50x off" doesn't.
+        assertTrue("local:6" !in runBlocking { lib.basicSearch("_") }.map { it.id })
+        assertEquals(listOf("local:5"), runBlocking { lib.basicSearch("0%_o") }.map { it.id })
+        assertEquals(listOf("local:5"), runBlocking { lib.basicSearch("50%_") }.map { it.id })
+        assertEquals(listOf("local:7"), runBlocking { lib.basicSearch("\\") }.map { it.id })
+        assertEquals(listOf("local:7"), runBlocking { lib.basicSearch("k\\s") }.map { it.id })
+        assertEquals(emptyList<String>(), runBlocking { lib.basicSearch("'; DROP TABLE media; --") })
+    }
+
     /* ---------------- MediaStore requests (Android 11+) ---------------- */
 
     @Test fun `favourite, trash, restore and delete build MediaStore requests with the right collections`() {
