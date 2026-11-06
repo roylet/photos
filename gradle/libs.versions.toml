@@ -19,7 +19,7 @@ media3 = "1.9.4"  # last line that builds with compileSdk 35; 1.10+ needs compil
 maplibre = "13.7.1"
 nanohttpd = "2.3.1"
 junit = "4.13.2"
-robolectric = "4.14.1"
+robolectric = "4.17"
 androidxTestCore = "1.6.1"
 # Baseline Profiles (the :baselineprofile producer module)
 benchmark = "1.4.1"
