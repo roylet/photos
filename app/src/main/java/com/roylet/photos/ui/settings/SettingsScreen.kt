@@ -49,6 +49,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.AppContainer
+import com.roylet.photos.cast.CastUrls
+import com.roylet.photos.ui.cast.CastSignInHost
+import com.roylet.photos.ui.cast.LocalCastSignIn
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material.icons.rounded.Cast
 import com.roylet.photos.data.ConnectionMode
 import com.roylet.photos.data.ServerConfig
 import com.roylet.photos.net.ConnState
@@ -105,6 +110,18 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
         if (server != null) container.device.matching else kotlinx.coroutines.flow.MutableStateFlow(null)
     }.collectAsState()
     LaunchedEffect(server != null) { if (server != null) container.device.refreshMatching() }
+    val castPublic by container.uiPrefs.castUsePublic.collectAsState()
+    var castSignIn by remember { mutableStateOf(false) }
+    val casting = server?.let { s ->
+        CastingSettings(
+            signedIn = s.castSessionToken != null,
+            email = s.email,
+            usePublic = castPublic,
+            publicUrl = s.publicUrl,
+            publicUsable = CastUrls.directBase(s.publicUrl, true) != null,
+        )
+    }
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     SettingsContent(
         server = server,
         state = state,
@@ -127,7 +144,67 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
         onShowBackupBadges = container.uiPrefs::setShowBackupBadges,
         photosFolderMode = folderPrefs.mode,
         onPhotosFolderMode = container.phoneFolders::setMode,
+        casting = casting,
+        onCastSignIn = { castSignIn = true },
+        onCastUsePublic = container.uiPrefs::setCastUsePublic,
     )
+    CompositionLocalProvider(LocalCastSignIn provides container.castSignIn) {
+        CastSignInHost(castSignIn, onDismiss = { castSignIn = false })
+    }
+    }
+}
+
+/** What Settings → Casting shows. */
+data class CastingSettings(
+    /** A login session is stored (email sign-in, or "Sign in for casting" done). */
+    val signedIn: Boolean,
+    val email: String?,
+    val usePublic: Boolean,
+    val publicUrl: String,
+    /** [publicUrl] is HTTPS on a public name, so the TV can fetch from it directly. */
+    val publicUsable: Boolean,
+)
+
+/** Settings → Casting: the login session casting needs, and direct vs through-the-phone. */
+@Composable
+private fun CastingCard(c: CastingSettings, onSignIn: () -> Unit, onUsePublic: (Boolean) -> Unit) {
+    BrutalCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.Cast, fill = Palette.lilac, size = 40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Chromecast", style = Type.Title, color = Palette.ink)
+                Text(
+                    if (c.signedIn) "Ready to cast from Immich" + (c.email?.let { " as $it" } ?: "") else "Sign in once to cast Immich photos",
+                    style = Type.Small, color = Palette.mutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (!c.signedIn) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "This app signed in with an API key. Casting from Immich needs an Immich login once; phone photos cast without it.",
+                style = Type.Small, color = Palette.mutedInk,
+            )
+            Spacer(Modifier.height(10.dp))
+            BrutalButton("Sign in for casting", onSignIn, icon = Icons.Rounded.Cast, modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(14.dp))
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.sand))
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(
+            "Use public address for casting",
+            if (c.publicUsable) "The TV loads photos from ${c.publicUrl.removePrefix("https://")} itself, so the phone can sleep"
+            else "${c.publicUrl} isn't a public HTTPS address, so photos go through this phone",
+            c.usePublic && c.publicUsable,
+            onUsePublic,
+            enabled = c.publicUsable,
+        )
+        if (c.signedIn) {
+            Spacer(Modifier.height(4.dp))
+            BrutalButton("Sign in again", onSignIn, style = ButtonStyle.Ghost)
+        }
+    }
 }
 
 /** Stateless Settings UI, so it can be previewed and screenshotted with sample data. */
@@ -164,6 +241,10 @@ fun SettingsContent(
     /** "Show device folders in Photos timeline": every folder, or Camera plus the ones turned on. */
     photosFolderMode: PhotosFolderMode = PhotosFolderMode.All,
     onPhotosFolderMode: (PhotosFolderMode) -> Unit = {},
+    /** Settings → Casting (with a server); null hides the card. */
+    casting: CastingSettings? = null,
+    onCastSignIn: () -> Unit = {},
+    onCastUsePublic: (Boolean) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Settings", onBack = onBack, actions = { if (server != null) ConnectionChip(state) })
@@ -179,6 +260,12 @@ fun SettingsContent(
             if (backupState != null) BackupSettingsCard(backupState, onBackup)
 
             if (server != null) ServerSections(server, state, activeUrl, scan, check, onMode, onSavePublic, onSaveLocal, onScan)
+
+            if (casting != null) {
+                Spacer(Modifier.height(4.dp))
+                SectionLabel("Casting")
+                CastingCard(casting, onCastSignIn, onCastUsePublic)
+            }
 
             Spacer(Modifier.height(4.dp))
             SectionLabel("Appearance")

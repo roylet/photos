@@ -125,6 +125,7 @@ import com.roylet.photos.ui.cast.LocalCastController
 import com.roylet.photos.ui.cast.rememberCastState
 import com.roylet.photos.ui.cast.MoreAction
 import com.roylet.photos.ui.cast.SlideshowSheet
+import com.roylet.photos.ui.cast.CastSignInHost
 import com.roylet.photos.ui.cast.ViewerMoreSheet
 import com.roylet.photos.ui.cast.stopCastingAction
 import com.roylet.photos.cast.RemotePlayback
@@ -476,6 +477,8 @@ fun ViewerScreen(
             },
             onDismiss = { slideshowSheet = false },
         )
+        // An Immich item needs a login session (API-key sign-in, or the stored one was revoked).
+        CastSignInHost(castState.needsSignIn && casting, onDismiss = { cast?.dismissSignIn() }, onDone = {})
     }
 }
 

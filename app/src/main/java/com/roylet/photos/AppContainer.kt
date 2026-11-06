@@ -14,6 +14,7 @@ import com.roylet.photos.cast.AndroidPhoneFiles
 import com.roylet.photos.cast.CastController
 import com.roylet.photos.cast.CastResolver
 import com.roylet.photos.cast.CastSessionManager
+import com.roylet.photos.cast.CastSignIn
 import com.roylet.photos.cast.CastUrls
 import com.roylet.photos.cast.HttpImmichRelay
 import com.roylet.photos.cast.Media3CastDevice
@@ -484,6 +485,17 @@ class AppContainer(context: Context) {
             override fun stop() = castRelay.stop()
         }
         CastController(castDevice, resolver, ::castSessions, relay, AndroidCastServiceLauncher(app), uiScope)
+    }
+
+    /** "Sign in once to cast": a login session for an API-key sign-in (or a revoked one); stored encrypted. */
+    val castSignIn: CastSignIn by lazy {
+        CastSignIn(
+            http,
+            server = { settings.server.value },
+            store = { token -> settings.updateServer { it.copy(castSessionToken = token) } },
+            stored = { serverSessionToken() != null },
+            onSignedIn = { cast.onSignedIn() },
+        )
     }
 
     /** HEAD of a cast URL through the shared client: the Content-Type the TV will get. */

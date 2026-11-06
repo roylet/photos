@@ -124,6 +124,7 @@ import com.roylet.photos.ui.sources.LocalBackupUploading
 import com.roylet.photos.ui.cast.CastButton
 import com.roylet.photos.ui.cast.CastMiniController
 import com.roylet.photos.ui.cast.LocalCastController
+import com.roylet.photos.ui.cast.LocalCastSignIn
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -253,6 +254,7 @@ fun AppNav(container: AppContainer, nav: NavHostController = rememberNavControll
         LocalMediaPermissions provides permissions,
         LocalConsentLauncher provides container.consent,
         LocalCastController provides container.cast,
+        LocalCastSignIn provides container.castSignIn,
     ) {
       SharedTransitionLayout(Modifier.fillMaxSize()) {
       CompositionLocalProvider(LocalSharedTransitionScope provides this) {
