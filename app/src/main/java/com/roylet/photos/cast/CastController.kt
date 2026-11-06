@@ -3,6 +3,7 @@ package com.roylet.photos.cast
 import com.roylet.photos.domain.timeline.TimelineAsset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -162,6 +163,19 @@ class CastController(
         requested?.let { if (casting) load(it) }
     }
 
+    /**
+     * At start-up: delete Immich child sessions a killed app left behind, unless a cast session
+     * is (or is about to be) resumed within [graceMs]; that one's are deleted when it ends.
+     */
+    fun cleanUpStaleSessions(graceMs: Long = STALE_CLEANUP_GRACE_MS) {
+        scope.launch {
+            delay(graceMs)
+            val a = _state.value.availability
+            if (casting || a == CastAvailability.Connecting || a == CastAvailability.Connected) return@launch
+            runCatching { keys()?.cleanUpStale() }
+        }
+    }
+
     /** [CastService] is up: bind the relay now, so the first phone item doesn't wait for it. */
     fun onServiceStarted() {
         if (casting) relay.start()
@@ -186,6 +200,11 @@ class CastController(
         scope.launch { runCatching { keys()?.end() } }
         relay.stop()
         service.stop()
+    }
+
+    private companion object {
+        /** Long enough for the Cast SDK to resume a session it saved. */
+        const val STALE_CLEANUP_GRACE_MS = 20_000L
     }
 
     private fun friendlyError(now: NowCasting): String = when {

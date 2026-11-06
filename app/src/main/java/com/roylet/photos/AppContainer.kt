@@ -19,6 +19,7 @@ import com.roylet.photos.cast.CastUrls
 import com.roylet.photos.cast.HttpImmichRelay
 import com.roylet.photos.cast.Media3CastDevice
 import com.roylet.photos.cast.PhoneMediaProxy
+import com.roylet.photos.cast.PrefsCastKeyLedger
 import com.roylet.photos.cast.RelayLifecycle
 import com.roylet.photos.immich.await
 import com.roylet.photos.domain.library.LocalLibrary
@@ -440,13 +441,16 @@ class AppContainer(context: Context) {
     private var castSessionsHeld: CastSessionManager? = null
     private var castSessionsFor: String? = null
 
+    /** Child-session ids, persisted so a killed app's are deleted at the next start. */
+    private val castKeyLedger: PrefsCastKeyLedger by lazy { PrefsCastKeyLedger(app) }
+
     @Synchronized
     fun castSessions(): CastSessionManager? {
         val s = settings.server.value ?: return null
         val key = s.publicUrl + "|" + s.userId
         if (castSessionsFor != key) {
             castSessionsFor = key
-            castSessionsHeld = CastSessionManager(http, { settings.server.value?.publicUrl }, ::serverSessionToken)
+            castSessionsHeld = CastSessionManager(http, { settings.server.value?.publicUrl }, ::serverSessionToken, ledger = castKeyLedger)
         }
         return castSessionsHeld
     }
@@ -488,6 +492,7 @@ class AppContainer(context: Context) {
             override fun stop() = castRelay.stop()
         }
         CastController(castDevice, resolver, ::castSessions, relay, AndroidCastServiceLauncher(app), uiScope)
+            .also { it.cleanUpStaleSessions() }
     }
 
     /** "Sign in once to cast": a login session for an API-key sign-in (or a revoked one); stored encrypted. */

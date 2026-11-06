@@ -12,6 +12,21 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
 
+/** [CastKeyLedger] in the app's private preferences (ids only, not tokens). */
+class PrefsCastKeyLedger(context: Context) : CastKeyLedger {
+    private val prefs = context.applicationContext.getSharedPreferences("cast", Context.MODE_PRIVATE)
+
+    override fun ids(): Set<String> = prefs.getStringSet(KEY, null)?.toSet().orEmpty()
+
+    override fun replace(ids: Set<String>) {
+        prefs.edit().putStringSet(KEY, ids).apply()
+    }
+
+    private companion object {
+        const val KEY = "childSessionIds"
+    }
+}
+
 /** [PhoneFiles] over the MediaStore index and ContentResolver. */
 class AndroidPhoneFiles(context: Context, private val dao: () -> MediaDao) : PhoneFiles {
     private val resolver = context.applicationContext.contentResolver

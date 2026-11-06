@@ -20,6 +20,23 @@ data class CastKey(val id: String, val token: String, val expiresAt: Long) {
     override fun toString() = "CastKey(id=$id, expiresAt=$expiresAt, token=<redacted>)"
 }
 
+/**
+ * The ids of child sessions that may still be live on the server, kept across process death so
+ * an app killed mid-cast can still delete them ([CastSessionManager.cleanUpStale]). Ids only:
+ * they aren't credentials (the token never leaves memory).
+ */
+interface CastKeyLedger {
+    fun ids(): Set<String>
+    fun replace(ids: Set<String>)
+
+    /** In memory only (tests, previews). */
+    class InMemory : CastKeyLedger {
+        private var held: Set<String> = emptySet()
+        @Synchronized override fun ids() = held
+        @Synchronized override fun replace(ids: Set<String>) { held = ids }
+    }
+}
+
 sealed interface KeyResult {
     data class Ok(val key: CastKey) : KeyResult
     /** No session token (API-key sign-in) or the server refused it: "Sign in once to cast". */
@@ -35,7 +52,9 @@ sealed interface KeyResult {
  *
  * - One key is reused until fewer than [refreshBeforeMs] remain, then a new one is made for the
  *   next item (a video already playing keeps reading with its own key until that expires).
- * - [end] deletes it when the cast session ends (Immich's apps leave theirs to expire).
+ * - [end] deletes it when the cast session ends (Immich's apps leave theirs to expire). Every id
+ *   made is written to [ledger] first, so one left behind by a killed app is deleted by
+ *   [cleanUpStale] at the next start (or the next [end]).
  * - A 401/403 means the stored login session was revoked or expired: [needsSignIn] turns on and
  *   the UI offers "Sign in once to cast".
  *
@@ -50,6 +69,7 @@ class CastSessionManager(
     private val now: () -> Long = System::currentTimeMillis,
     private val durationSeconds: Int = DEFAULT_DURATION_S,
     private val refreshBeforeMs: Long = REFRESH_BEFORE_MS,
+    private val ledger: CastKeyLedger = CastKeyLedger.InMemory(),
 ) {
     private val lock = Mutex()
     private var current: CastKey? = null
@@ -70,6 +90,7 @@ class CastSessionManager(
         val result = create(base, parent)
         if (result is KeyResult.Ok) {
             current = result.key
+            ledger.replace((ledger.ids() + result.key.id).toList().takeLast(MAX_LEDGER).toSet())
             _needsSignIn.value = false
             // The one it replaces expires within seconds on its own; deleting it early could cut
             // off a stream the TV is still reading with it.
@@ -77,13 +98,30 @@ class CastSessionManager(
         result
     }
 
-    /** The cast session ended: delete the child session. */
+    /** The cast session ended: delete the child session (and any a killed app left behind). */
     suspend fun end() = lock.withLock {
-        val held = current ?: return@withLock
+        val held = current
         current = null
-        val base = baseUrl() ?: return@withLock
-        val parent = parentToken() ?: return@withLock
-        runCatching { delete(base, parent, held.id) }
+        deleteAll(listOfNotNull(held?.id) + ledger.ids())
+    }
+
+    /**
+     * At start-up, with no cast session: delete child sessions a killed app left in [ledger].
+     * Not while a key is held (a session is live).
+     */
+    suspend fun cleanUpStale() = lock.withLock {
+        if (current != null) return@withLock
+        deleteAll(ledger.ids())
+    }
+
+    private suspend fun deleteAll(ids: Collection<String>) {
+        val distinct = ids.distinct()
+        if (distinct.isEmpty()) return
+        // They expire on their own within [durationSeconds] even if these fail.
+        ledger.replace(emptySet())
+        val base = baseUrl() ?: return
+        val parent = parentToken() ?: return
+        for (id in distinct) runCatching { delete(base, parent, id) }
     }
 
     /** After "Sign in once to cast" stored a new login session. */
@@ -135,6 +173,7 @@ class CastSessionManager(
         const val REFRESH_BEFORE_MS = 10_000L
         const val DEVICE_TYPE = "Cast"
         const val DEVICE_OS = "Google Cast"
+        private const val MAX_LEDGER = 16
         private val JSON = "application/json".toMediaType()
         private val json = Json { ignoreUnknownKeys = true }
     }

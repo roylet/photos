@@ -22,7 +22,8 @@ class CastSessionManagerTest {
     @Before fun setUp() { server = MockWebServer().apply { start() } }
     @After fun tearDown() = server.shutdown()
 
-    private fun manager() = CastSessionManager(OkHttpClient(), { server.url("/").toString().trimEnd('/') }, { parent }, now = { now })
+    private fun manager(ledger: CastKeyLedger = CastKeyLedger.InMemory()) =
+        CastSessionManager(OkHttpClient(), { server.url("/").toString().trimEnd('/') }, { parent }, now = { now }, ledger = ledger)
 
     private fun created(id: String, token: String, expires: String = "2026-11-06T10:30:00.000Z") = MockResponse().setResponseCode(201)
         .setBody("""{"id":"$id","token":"$token","expiresAt":"$expires","createdAt":"x","updatedAt":"x","current":false,"deviceOS":"Google Cast","deviceType":"Cast","appVersion":null,"isPendingSyncReset":false}""")
@@ -91,6 +92,39 @@ class CastSessionManagerTest {
         server.enqueue(MockResponse().setResponseCode(500))
         val r = manager().key()
         assertTrue(r is KeyResult.Failed)
+    }
+
+    @Test fun aKilledAppsChildSessionIsDeletedAtTheNextStart() = runBlocking {
+        val ledger = CastKeyLedger.InMemory()
+        server.enqueue(created("s-1", "child-1"))
+        manager(ledger).key()
+        server.takeRequest()
+        assertEquals(setOf("s-1"), ledger.ids())
+        // The process dies here; the next one starts with only the ledger.
+        server.enqueue(MockResponse().setResponseCode(204))
+        val next = manager(ledger)
+        next.cleanUpStale()
+        val del = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("DELETE /api/sessions/s-1", "${del.method} ${del.path}")
+        assertEquals("Bearer parent-token", del.getHeader("Authorization"))
+        assertTrue(ledger.ids().isEmpty())
+        next.cleanUpStale()
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun cleanUpLeavesALiveSessionAlone() = runBlocking {
+        val ledger = CastKeyLedger.InMemory()
+        server.enqueue(created("s-1", "child-1"))
+        val m = manager(ledger)
+        m.key()
+        m.cleanUpStale()
+        assertEquals(1, server.requestCount)
+        assertEquals(setOf("s-1"), ledger.ids())
+        // Ending deletes it and empties the ledger.
+        server.enqueue(MockResponse().setResponseCode(204))
+        m.end()
+        assertEquals(2, server.requestCount)
+        assertTrue(ledger.ids().isEmpty())
     }
 
     @Test fun keyNeverPrintsItsToken() {
