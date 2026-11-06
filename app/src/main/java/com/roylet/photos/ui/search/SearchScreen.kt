@@ -50,6 +50,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.key
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import com.roylet.photos.ui.components.OnTabReselect
+import com.roylet.photos.ui.components.reducedMotion
+import com.roylet.photos.ui.components.scrollToTop
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.widthIn
@@ -107,6 +115,24 @@ fun SearchScreen(
     val done = result as? SearchResult.Done
     val timeline = done?.let { remember(it.filter) { timelineFor(it.filter) } }
     val smart = Capability.SMART_SEARCH in LocalCapabilities.current
+    // Re-tapping the Search tab: back to the top of the results (or discover), and if already
+    // there, into the search field to type the next search.
+    val fieldFocus = remember { FocusRequester() }
+    val discoverScroll = rememberScrollState()
+    val resultsState = done?.let { key(it.filter) { rememberLazyListState() } }
+    val reduced = reducedMotion()
+    OnTabReselect {
+        if (selection.active) { selection.clear(); return@OnTabReselect }
+        val scrolled = when {
+            resultsState != null -> resultsState.scrollToTop(reduced)
+            result is SearchResult.Idle && discoverScroll.value > 0 -> {
+                if (reduced) discoverScroll.scrollTo(0) else discoverScroll.animateScrollTo(0)
+                true
+            }
+            else -> false
+        }
+        if (!scrolled) runCatching { fieldFocus.requestFocus() }
+    }
 
     Column(modifier.fillMaxSize().background(Palette.paper)) {
         if (selection.active && timeline != null) {
@@ -121,13 +147,13 @@ fun SearchScreen(
                     onSearch = { focus.clearFocus(); model.submit() },
                     onClear = { model.clear() },
                     placeholder = if (smart) "Beach at sunset, red car, birthday cake…" else "File name, folder or year…",
-                    modifier = Modifier.padding(top = 12.dp),
+                    modifier = Modifier.padding(top = 12.dp).focusRequester(fieldFocus),
                 )
             })
         }
         Box(Modifier.weight(1f)) {
             when (result) {
-                SearchResult.Idle -> Discover(model, onPerson, onAllPeople, smart)
+                SearchResult.Idle -> Discover(model, onPerson, onAllPeople, smart, discoverScroll)
                 is SearchResult.Loading -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     BrutalSpinner(size = 32.dp)
                     Spacer(Modifier.height(12.dp))
@@ -140,7 +166,7 @@ fun SearchScreen(
                         if (smart) "Try different words: what's in the photo, a place, or a colour." else "Try part of a file name, a folder, or a year or month like “2024” or “March 2023”.",
                     )
                 } else if (timeline != null) {
-                    TimelineGrid(timeline, onOpen = { i, a -> onOpen(timeline, i, a) }, selection = selection)
+                    TimelineGrid(timeline, onOpen = { i, a -> onOpen(timeline, i, a) }, selection = selection, state = resultsState ?: rememberLazyListState())
                 }
             }
         }
@@ -208,9 +234,9 @@ private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () 
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Discover(model: SearchModel, onPerson: (Person) -> Unit, onAllPeople: () -> Unit, smart: Boolean) {
+private fun Discover(model: SearchModel, onPerson: (Person) -> Unit, onAllPeople: () -> Unit, smart: Boolean, scroll: ScrollState) {
     val recent by model.prefs.recentSearches.collectAsState()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 16.dp, bottom = 24.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(top = 16.dp, bottom = 24.dp)) {
         val pad = Modifier.padding(horizontal = 16.dp)
         if (recent.isNotEmpty()) {
             SectionLabel("Recent", pad, trailing = { Text("CLEAR", style = Type.Tiny, color = Brutal.Orange, modifier = Modifier.clickable { model.prefs.clearRecentSearches() }.padding(4.dp)) })

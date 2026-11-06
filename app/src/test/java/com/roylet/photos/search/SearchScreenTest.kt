@@ -6,6 +6,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.hasSetTextAction
+import com.roylet.photos.ui.Routes
+import com.roylet.photos.ui.components.LocalTabReselects
+import com.roylet.photos.ui.components.LocalTabRoot
+import com.roylet.photos.ui.components.TabReselects
 import androidx.compose.ui.test.performClick
 import coil3.compose.LocalAsyncImagePreviewHandler
 import com.roylet.photos.FakeGallery
@@ -50,8 +57,13 @@ class SearchScreenTest {
         )
     }
 
+    private val reselects = TabReselects()
+
     private fun show(model: SearchModel) = compose.setContent {
-        CompositionLocalProvider(LocalInspectionMode provides true, LocalAsyncImagePreviewHandler provides FakeGallery.previewHandler) {
+        CompositionLocalProvider(
+            LocalInspectionMode provides true, LocalAsyncImagePreviewHandler provides FakeGallery.previewHandler,
+            LocalTabReselects provides reselects, LocalTabRoot provides Routes.SEARCH,
+        ) {
             PhotosTheme(dark = false) { SearchScreen(model, { registry.get(it) }, { _, _, _ -> }, {}, {}) }
         }
     }
@@ -104,6 +116,23 @@ class SearchScreenTest {
             assertTrue(failed.message.isNotBlank())
             assertTrue(failed.details, failed.details.contains(e.javaClass.name))
         }
+    }
+
+    @Test fun `re-tapping the Search tab at the top focuses the search field`() {
+        val lib = library { some }
+        val model = SearchModel({ lib }, registry, UiPrefs(null), CoroutineScope(Dispatchers.Unconfined))
+        show(model)
+        compose.waitForIdle()
+        compose.onNode(hasSetTextAction()).assertIsNotFocused()
+        compose.runOnUiThread { reselects.reselect(Routes.SEARCH) }
+        compose.waitForIdle()
+        compose.onNode(hasSetTextAction()).assertIsFocused()
+        // With results showing (already at their top) it focuses too, and never crashes.
+        compose.runOnUiThread { model.submit(SearchQuery.Text("beach")) }
+        compose.waitForIdle()
+        compose.runOnUiThread { reselects.reselect(Routes.SEARCH) }
+        compose.waitForIdle()
+        compose.onNode(hasSetTextAction()).assertIsFocused()
     }
 
     @Test fun `discover rows that fail are left out`() {
