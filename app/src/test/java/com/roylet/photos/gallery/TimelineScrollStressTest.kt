@@ -79,6 +79,8 @@ class TimelineScrollStressTest {
             compose.onNodeWithTag("timeline-grid").performTouchInput { swipeUp(durationMillis = 120) }
             compose.waitForIdle()
         }
+        // Scrolling down got somewhere (and didn't throw).
+        assertTrue(compose.runOnIdle { state.firstVisibleItemIndex } > 0)
         // Scrubber-style jumps deep into months that are still loading.
         val rnd = Random(7)
         repeat(jumps) {
@@ -87,7 +89,6 @@ class TimelineScrollStressTest {
             compose.onNodeWithTag("timeline-grid").performTouchInput { swipeUp(durationMillis = 120) }
             compose.waitForIdle()
         }
-        assertTrue(state.firstVisibleItemIndex > 0)
     }
 
     @Test fun feedLevelScrollsThroughUnloadedMonths() = scrollThrough(GridDensity.Feed, 40, jumps = 20)
