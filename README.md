@@ -38,7 +38,7 @@ new releases and installs them.
 
 | | |
 |---|---|
-| Language / UI | Kotlin 2.4 (AGP built-in Kotlin), Jetpack Compose (BOM 2025.06.01), Material 3, navigation-compose |
+| Language / UI | Kotlin 2.4 (AGP built-in Kotlin), Jetpack Compose (BOM 2026.09.00), Material 3, navigation-compose |
 | Build | AGP 9.5.0, Gradle 9.8.2, compileSdk 37, targetSdk 35, minSdk 29, JDK 21 |
 | Network | OkHttp 5.5 (one shared client), kotlinx-serialization |
 | Images | Coil 3 (+ coil-video), telephoto zoomable-image-coil3 |
