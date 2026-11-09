@@ -63,30 +63,30 @@ jobs:
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "Releasing $version (versionCode $code)" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
 
       # Robolectric downloads its Android runtime jars from Maven Central at test time; cache them
       # so a flaky or rate-limited download can't fail the build.
       - name: Cache Robolectric runtime jars
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.m2/repository/org/robolectric
           key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
           restore-keys: robolectric-
 
-      - name: Ensure Android SDK platform 35 / build-tools 35
+      - name: Ensure Android SDK platform 37 / build-tools 36
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
 
       - name: Decode keystore
         env:
@@ -117,7 +117,7 @@ jobs:
           cp "$out/app-arm64-v8a-release.apk" "dist/Photos-$VERSION-arm64-v8a.apk"
           cp "$out/app-universal-release.apk"  "dist/Photos-$VERSION-universal.apk"
           # Fail if the APKs were not signed with the release key (debug fallback).
-          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/35.*/apksigner | tail -1)"
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/36.*/apksigner | tail -1)"
           if "$apksigner" verify --print-certs dist/*.apk | grep -q "CN=Android Debug"; then
             echo "::error::Release APK is signed with the debug key; check the signing secrets."
             exit 1
@@ -127,7 +127,7 @@ jobs:
           ls -l dist
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Photos ${{ steps.version.outputs.name }}
