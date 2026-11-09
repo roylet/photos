@@ -160,6 +160,7 @@ dependencies {
     // NanoHTTPD (BSD-3, ~60 KB) for serving phone-only photos and videos to the TV.
     implementation(libs.media3.cast)
     implementation(libs.media3.session)
+    implementation(libs.androidx.mediarouter)
     implementation(libs.nanohttpd)
     implementation(libs.maplibre.android)
     // Installs the bundled baseline profile on devices without Play's cloud profiles.

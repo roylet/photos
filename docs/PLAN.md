@@ -102,7 +102,10 @@ Extract with `git show origin/claude/youthful-turing-ccj6l5:<path>` and rename t
 - **Navigation:** bottom bar on phones (Photos · Albums · Search · Library), navigation rail on tablets.
 
 ### Actions in the viewer and on selections (photos and videos)
-The same set of actions appears in the viewer's bottom bar and in the multi-select bar:
+The same set of actions appears in the viewer and in the multi-select bar. The viewer's bottom bar
+groups them at its ends: [♡] [add to album] … [EDIT] [delete]; share sits in the top bar
+([back] [date] … [share] [⋯]) and Info, Cast to TV…, Slideshow and Archive in ⋯. Photos open with
+the chrome shown, videos full-bleed (a tap shows it; it hides again after 3 s of playback):
 
 | Action | Behaviour |
 |---|---|

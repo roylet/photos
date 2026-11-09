@@ -136,7 +136,10 @@ import com.roylet.photos.cast.TimelineQueue
 import com.roylet.photos.ui.components.KeepScreenOn
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Slideshow
+import com.roylet.photos.ui.components.DarkButton
 import com.roylet.photos.ui.components.DarkIconButton
+import com.roylet.photos.ui.cast.CastRoutePicker
+import androidx.compose.material.icons.rounded.Cast
 import com.roylet.photos.ui.components.brutalDark
 import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.gallery.AssetActions
@@ -163,6 +166,11 @@ import kotlin.math.abs
  * Full-screen viewer over a timeline: swipe between every asset of [timeline] (months load on
  * demand), pinch / double-tap zoom, drag down to dismiss, tap to toggle the chrome.
  *
+ * Chrome (top bar, filmstrip, action bar, video controls): photos open with it, videos without
+ * (full-bleed playback; a tap brings it back and it hides again after [CHROME_AUTO_HIDE_MS] of
+ * playback without a touch; paused, it stays). Paging onto a video hides it, paging from a video
+ * back to a photo shows it. While casting, a video page is a remote, so it's treated as a photo.
+ *
  * @param startIndex global timeline index to open at; [startId] corrects it if the timeline shifted.
  * @param onIndexChange reports the current index (so the grid can scroll to it for the return transition).
  * @param loadDetails fetches the info sheet's [AssetDetails] (the active LibrarySource's `details`).
@@ -180,7 +188,8 @@ fun ViewerScreen(
     onIndexChange: (Int) -> Unit = {},
     loadDetails: suspend (String) -> AssetDetails? = { null },
     actions: AssetActions = LocalAssetActions.current,
-    initialChrome: Boolean = true,
+    /** Chrome shown at first; null picks by the opening asset (photos yes, videos no). */
+    initialChrome: Boolean? = null,
     initialInfo: Boolean = false,
 ) {
     val snapshot by timeline.snapshot.collectAsState()
@@ -213,18 +222,20 @@ fun ViewerScreen(
     val status by timeline.status.collectAsState()
     LaunchedEffect(snapshot.total == 0, status) { if (snapshot.total == 0 && status == TimelineRepository.Status.Ready) onBack() }
 
-    var chrome by rememberSaveable { mutableStateOf(initialChrome) }
+    // Casting: the settled page goes to the TV (swiping on the phone changes what's on the TV);
+    // video pages become a remote, so the local player never plays alongside.
+    val cast = LocalCastController.current
+    val castState = rememberCastState()
+    val casting = castState.casting
+
+    val opening = snapshot.assetAt(startIndex)
+    var chrome by rememberSaveable { mutableStateOf(initialChrome ?: !(opening?.isVideo == true && !casting)) }
     var info by rememberSaveable { mutableStateOf(initialInfo) }
     val zoomed = remember { mutableStateMapOf<Int, Boolean>() }
     var liveFor by remember { mutableStateOf<String?>(null) }
     // Shared by the video pages; only the settled page shows controls.
     val scrub = remember { ScrubController() }
 
-    // Casting: the settled page goes to the TV (swiping on the phone changes what's on the TV);
-    // video pages become a remote, so the local player never plays alongside.
-    val cast = LocalCastController.current
-    val castState = rememberCastState()
-    val casting = castState.casting
     val castActions = remember(cast) {
         CastRemoteActions(
             togglePlay = { cast?.togglePlay() },
@@ -267,12 +278,50 @@ fun ViewerScreen(
     // Casting started mid-slideshow on the phone: the phone's show stops (start one on the TV from ⋯).
     LaunchedEffect(casting) { if (casting) localRunner.stop() }
 
+    // Chrome by kind: a (local) video page starts full-bleed, a photo after a video brings it back.
+    // Keyed on the page the pager is landing on, so the bars fade as the new page comes in.
+    val pageIsVideo by remember(casting) { derivedStateOf { snapshot.assetAt(pager.currentPage)?.let { it.isVideo && !casting } } }
+    var lastKind by rememberSaveable { mutableStateOf(opening?.let { it.isVideo && !casting }) }
+    var lastPage by rememberSaveable { mutableIntStateOf(pager.currentPage) }
+    LaunchedEffect(pageIsVideo, pager.currentPage) {
+        val video = pageIsVideo ?: return@LaunchedEffect
+        val was = lastKind
+        val moved = pager.currentPage != lastPage
+        lastKind = video
+        lastPage = pager.currentPage
+        // The phone's slideshow keeps the chrome away (bringing it back would stop the show).
+        if (localShow != null || info) return@LaunchedEffect
+        when {
+            was == null -> if (initialChrome == null) chrome = !video
+            !moved && was == video -> Unit
+            video -> chrome = false
+            was -> chrome = true
+        }
+    }
+    // Auto-hide over a playing video: any touch (or the ⋯ / info sheets) restarts the wait.
+    var touches by remember { mutableIntStateOf(0) }
+    var videoPlaying by remember { mutableStateOf(false) }
+    LaunchedEffect(chrome, videoPlaying, pageIsVideo, touches, scrub.scrubbing, moreSheet, slideshowSheet, info) {
+        if (!chrome || !videoPlaying || pageIsVideo != true || scrub.scrubbing || moreSheet || slideshowSheet || info) return@LaunchedEffect
+        delay(CHROME_AUTO_HIDE_MS)
+        chrome = false
+    }
+    var castPicker by remember { mutableStateOf(false) }
+
     BackHandler(enabled = info) { info = false }
     // A tap during the phone's slideshow brings the chrome back and ends it.
     LaunchedEffect(chrome) { if (chrome) localRunner.stop() }
     SystemBars(visible = chrome || info)
 
-    BoxWithConstraints(modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier.fillMaxSize().pointerInput(Unit) {
+            // Observed, never consumed: only restarts the chrome's auto-hide.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                touches++
+            }
+        },
+    ) {
         val heightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         val dismiss = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
         val progress = (dismiss.value.y / heightPx).coerceIn(0f, 1f)
@@ -359,7 +408,10 @@ fun ViewerScreen(
                         CastVideoPage(asset, urls, castState, isCurrent, chrome, castActions, onTap = { chrome = !chrome })
                         if (isCurrent) LaunchedEffect(page) { loadedPage = page }
                     } else if (asset.isVideo) {
-                        VideoPage(asset, urls, isCurrent, chrome, scrub, onTap = { chrome = !chrome })
+                        VideoPage(
+                            asset, urls, isCurrent, chrome, scrub, onTap = { chrome = !chrome },
+                            onPlaying = { if (isCurrent) videoPlaying = it },
+                        )
                         if (isCurrent) LaunchedEffect(page) { loadedPage = page }
                     } else {
                         PhotoPage(
@@ -388,7 +440,8 @@ fun ViewerScreen(
             AnimatedVisibility(chrome && !info, enter = enter, exit = exit) {
                 TopBar(
                     current, onBack, liveActive = liveFor != null && liveFor == current?.id, onLive = { current?.let { liveFor = it.id } },
-                    castButton = castState.supported || casting,
+                    casting = casting,
+                    onShare = { current?.let { actions.share(listOf(it.id), timeline) } },
                     onMore = { moreSheet = true },
                 )
             }
@@ -415,10 +468,8 @@ fun ViewerScreen(
                         if (fav) haptics.performHapticFeedback(HapticFeedbackType.ToggleOn)
                         actions.favorite(listOf(a.id), fav, timeline)
                     },
-                    onShare = { current?.let { actions.share(listOf(it.id), timeline) } },
                     onAddToAlbum = { current?.let { actions.addToAlbum(listOf(it.id), timeline) } },
                     onEdit = { current?.let { if (it.isVideo) onEditVideo(it.id) else onEdit(it.id) } },
-                    onInfo = { info = true },
                     onDelete = { current?.let { actions.delete(listOf(it.id), timeline) } },
                 )
             }
@@ -447,6 +498,12 @@ fun ViewerScreen(
         ViewerMoreSheet(
             moreSheet,
             buildList {
+                // Cast and info live here (the action bar keeps the everyday four); while casting,
+                // the top bar's lit cast button and STOP below take over.
+                if (castState.supported && !casting) {
+                    add(MoreAction(Icons.Rounded.Cast, "Cast to TV…", "Show this on a Chromecast or TV") { moreSheet = false; castPicker = true })
+                }
+                add(MoreAction(Icons.Rounded.Info, "Info", "Date, camera, place and file") { moreSheet = false; info = true })
                 add(
                     MoreAction(
                         Icons.Rounded.Slideshow,
@@ -454,7 +511,7 @@ fun ViewerScreen(
                         if (tvName != null) "On $tvName, from this photo" else "Full screen, from this photo",
                     ) { moreSheet = false; slideshowSheet = true },
                 )
-                // Archive lives here (it used to crowd the top bar, which now has cast and ⋯).
+                // Archive lives here (it used to crowd the top bar, which now has share and ⋯).
                 if (Capability.ARCHIVE in caps) {
                     val archived = timeline.filter.visibility == com.roylet.photos.domain.timeline.Visibility.ARCHIVE
                     add(
@@ -484,6 +541,7 @@ fun ViewerScreen(
             },
             onDismiss = { slideshowSheet = false },
         )
+        CastRoutePicker(castPicker, onDismiss = { castPicker = false })
         // An Immich item needs a login session (API-key sign-in, or the stored one was revoked).
         CastSignInHost(castState.needsSignIn && casting, onDismiss = { cast?.dismissSignIn() }, onDone = {})
     }
@@ -699,9 +757,17 @@ private fun LivePhotoMotion(url: String, onEnded: () -> Unit) {
 }
 
 @Composable
-private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean, chrome: Boolean, scrub: ScrubController, onTap: () -> Unit) {
+private fun VideoPage(
+    asset: TimelineAsset,
+    urls: MediaUrls,
+    isCurrent: Boolean,
+    chrome: Boolean,
+    scrub: ScrubController,
+    onTap: () -> Unit,
+    onPlaying: (Boolean) -> Unit = {},
+) {
     BoxWithConstraints(
-        Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null, onClick = onTap),
+        Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null, onClick = onTap).testTag("viewer-video-${asset.id}"),
         contentAlignment = Alignment.Center,
     ) {
         val px = LocalDensity.current
@@ -714,6 +780,8 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
         // Frames for the scrub strip: only for the settled page, and only once it plays or the bar is touched.
         var wantFrames by remember(asset.id) { mutableStateOf(false) }
         LaunchedEffect(playback.playing) { if (playback.playing) wantFrames = true }
+        val playing by rememberUpdatedState(onPlaying)
+        LaunchedEffect(isCurrent, playback.playing) { if (isCurrent) playing(playback.playing) }
         val frames = rememberVideoFrames(asset.id, url, playback.duration, active = isCurrent && wantFrames)
         Box(Modifier.size(w, h).sharedAsset(asset.id, inViewer = true)) {
             AssetImage(urls.preview(asset.id), asset.thumbhash, fitted.width, fitted.height, Modifier.fillMaxSize())
@@ -724,7 +792,11 @@ private fun VideoPage(asset: TimelineAsset, urls: MediaUrls, isCurrent: Boolean,
                 Icon(Icons.Rounded.PlayArrow, "Play", tint = BrutalDark.Shadow, modifier = Modifier.size(34.dp))
             }
         }
-        AnimatedVisibility(chrome && isCurrent, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
+        val reduced = reducedMotion()
+        AnimatedVisibility(
+            chrome && isCurrent, Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(if (reduced) snap() else tween(160)), exit = fadeOut(if (reduced) snap() else tween(140)),
+        ) {
             VideoControls(
                 player, playback,
                 Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(start = 12.dp, end = 12.dp, bottom = 150.dp).fillMaxWidth(),
@@ -743,7 +815,8 @@ private fun TopBar(
     onBack: () -> Unit,
     liveActive: Boolean,
     onLive: () -> Unit,
-    castButton: Boolean = false,
+    casting: Boolean = false,
+    onShare: (() -> Unit)? = null,
     onMore: (() -> Unit)? = null,
 ) {
     Row(
@@ -762,6 +835,7 @@ private fun TopBar(
                 Text(sub, style = Type.Small, color = BrutalDark.MutedText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (asset.isLivePhoto) {
+                Spacer(Modifier.width(8.dp))
                 Row(
                     Modifier.brutalDark(if (liveActive) BrutalDark.Orange else BrutalDark.Panel, shape = RoundedCornerShape(50), shadow = 3.dp)
                         .clickable(onClick = onLive).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -774,9 +848,14 @@ private fun TopBar(
                 }
             }
         } else Spacer(Modifier.weight(1f))
-        if (castButton) {
+        // Lit only while casting: tap for the TV's controls (volume, stop). Starting a cast is in ⋯.
+        if (casting) {
             Spacer(Modifier.width(8.dp))
             CastButton(dark = true)
+        }
+        if (onShare != null) {
+            Spacer(Modifier.width(8.dp))
+            DarkIconButton(Icons.Rounded.Share, "Share", onShare, enabled = asset != null)
         }
         if (onMore != null) {
             Spacer(Modifier.width(8.dp))
@@ -790,26 +869,29 @@ private fun ActionBar(
     asset: TimelineAsset?,
     caps: Capabilities,
     onFavorite: () -> Unit,
-    onShare: () -> Unit,
     onAddToAlbum: () -> Unit,
     onEdit: () -> Unit,
-    onInfo: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    // Two groups at the bar's ends: keep (♡, album) on the left, change (EDIT, delete) on the right.
     Row(
         Modifier.fillMaxWidth().background(BrutalDark.Canvas)
             .drawBehind { drawLine(BrutalDark.Raised, Offset.Zero, Offset(size.width, 0f), 2.dp.toPx()) }
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .testTag("viewer-actions"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (Capability.FAVORITE in caps) FavoriteButton(asset?.isFavorite == true, onFavorite, enabled = asset != null)
-        DarkIconButton(Icons.Rounded.Share, "Share", onShare, enabled = asset != null)
-        if (Capability.SERVER_ALBUMS in caps) DarkIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", onAddToAlbum, enabled = asset != null)
-        if (Capability.EDIT_SAVE in caps) DarkIconButton(Icons.Rounded.Edit, "Edit", onEdit, active = true, enabled = asset != null)
-        DarkIconButton(Icons.Rounded.Info, "Info", onInfo, enabled = asset != null)
-        if (Capability.TRASH in caps) DarkIconButton(Icons.Rounded.DeleteOutline, "Delete", onDelete, enabled = asset != null)
+        val gap = Arrangement.spacedBy(10.dp)
+        Row(horizontalArrangement = gap, verticalAlignment = Alignment.CenterVertically) {
+            if (Capability.FAVORITE in caps) FavoriteButton(asset?.isFavorite == true, onFavorite, enabled = asset != null)
+            if (Capability.SERVER_ALBUMS in caps) DarkIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to album", onAddToAlbum, enabled = asset != null)
+        }
+        Spacer(Modifier.weight(1f))
+        Row(horizontalArrangement = gap, verticalAlignment = Alignment.CenterVertically) {
+            if (Capability.EDIT_SAVE in caps) DarkButton("Edit", onEdit, icon = Icons.Rounded.Edit, enabled = asset != null)
+            if (Capability.TRASH in caps) DarkIconButton(Icons.Rounded.DeleteOutline, "Delete", onDelete, enabled = asset != null)
+        }
     }
 }
 
@@ -890,3 +972,5 @@ private fun Filmstrip(pager: PagerState, timeline: TimelineRepository, urls: Med
     }
 }
 
+/** How long a playing video's chrome stays up without a touch. */
+internal const val CHROME_AUTO_HIDE_MS = 3_000L

@@ -1,5 +1,9 @@
 package com.roylet.photos.ui.cast
 
+import android.app.Dialog
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.compose.animation.AnimatedVisibility
@@ -34,7 +38,9 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -42,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
@@ -50,6 +57,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.cast.MediaRouteButton
+import androidx.mediarouter.app.MediaRouteChooserDialog
+import androidx.mediarouter.app.MediaRouteControllerDialog
+import androidx.mediarouter.app.SystemOutputSwitcherDialogController
+import androidx.mediarouter.media.MediaRouter
+import androidx.mediarouter.media.MediaTransferReceiver
+import com.google.android.gms.cast.framework.CastContext
 import com.roylet.photos.cast.CastController
 import com.roylet.photos.cast.CastState
 import com.roylet.photos.ui.components.BrutalSpinner
@@ -111,6 +124,46 @@ fun CastButton(dark: Boolean, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * The cast button's picker without the button, for a menu row ("Cast to TV…"): while [visible],
+ * the same dialog Media3's MediaRouteButton opens (the system Output Switcher where the platform
+ * has one, else the device chooser, or the connected device's controls while casting).
+ * [onDismiss] runs when it closes (at once for the Output Switcher, which is the system's).
+ * Nothing in previews and screenshots (no Cast SDK).
+ */
+@Composable
+fun CastRoutePicker(visible: Boolean, onDismiss: () -> Unit) {
+    if (!visible) return
+    val context = LocalContext.current
+    val inspection = LocalInspectionMode.current
+    val connected = rememberCastState().casting
+    val dismiss by rememberUpdatedState(onDismiss)
+    DisposableEffect(Unit) {
+        val dialog = if (inspection) null else showRouteDialog(context, connected) { dismiss() }
+        if (dialog == null) dismiss()
+        onDispose { dialog?.setOnDismissListener(null); dialog?.dismiss() }
+    }
+}
+
+/** Media3's MediaRouteButton click, by hand. Null when no dialog of ours is showing. */
+@OptIn(UnstableApi::class)
+private fun showRouteDialog(context: Context, connected: Boolean, onDismiss: () -> Unit): Dialog? = runCatching {
+    val router = MediaRouter.getInstance(context)
+    val transfer = Build.VERSION.SDK_INT >= 30 && context.packageManager
+        .queryBroadcastReceivers(Intent(context, MediaTransferReceiver::class.java).setPackage(context.packageName), 0).isNotEmpty()
+    if (router.routerParams?.isOutputSwitcherEnabled == true && transfer && SystemOutputSwitcherDialogController.showDialog(context)) return null
+    val theme = androidx.media3.cast.R.style.AppThemeDialog
+    val dialog: Dialog = if (connected) {
+        MediaRouteControllerDialog(context, theme)
+    } else {
+        val selector = CastContext.getSharedInstance()?.mergedSelector ?: return null
+        MediaRouteChooserDialog(context, theme).apply { routeSelector = selector }
+    }
+    dialog.setOnDismissListener { onDismiss() }
+    dialog.show()
+    dialog
+}.getOrNull()
 
 /**
  * "Casting to <TV>" under the viewer's top bar: what's happening on the TV (sending, an error in
