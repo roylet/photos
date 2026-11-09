@@ -197,7 +197,7 @@ fun TimelineGrid(
             return when (item) {
                 is GridItem.Header -> base
                 is GridItem.Row -> base + item.row.start
-                is GridItem.Pending -> base + (state.firstVisibleItemScrollOffset / item.heightPx.coerceAtLeast(1f) * m.snapshot.countOf(item.bucket)).toInt()
+                is GridItem.Pending -> base + ((item.part * item.heightPx + state.firstVisibleItemScrollOffset) / item.monthHeightPx.coerceAtLeast(1f) * m.snapshot.countOf(item.bucket)).toInt()
             }
         }
 
