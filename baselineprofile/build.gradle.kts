@@ -4,7 +4,6 @@
 // Not part of the ordinary build; CI and assembleRelease never run it.
 plugins {
     alias(libs.plugins.android.test)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.baselineprofile)
 }
 

@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       # Caches are written on the default branch and read everywhere else.
       - uses: gradle/actions/setup-gradle@v6
@@ -37,10 +37,10 @@ jobs:
           key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
           restore-keys: robolectric-
 
-      - name: Ensure Android SDK platform 35 / build-tools 35
+      - name: Ensure Android SDK platform 35 / build-tools 36
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;36.0.0" > /dev/null
 
       - name: Lint, unit tests, debug APK
         run: ./gradlew --stacktrace lintDebug testDebugUnitTest assembleDebug || ./gradlew --stacktrace lintDebug testDebugUnitTest assembleDebug

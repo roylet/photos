@@ -68,7 +68,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - uses: gradle/actions/setup-gradle@v6
         with:
@@ -83,10 +83,10 @@ jobs:
           key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
           restore-keys: robolectric-
 
-      - name: Ensure Android SDK platform 35 / build-tools 35
+      - name: Ensure Android SDK platform 35 / build-tools 36
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;36.0.0" > /dev/null
 
       - name: Decode keystore
         env:
@@ -117,7 +117,7 @@ jobs:
           cp "$out/app-arm64-v8a-release.apk" "dist/Photos-$VERSION-arm64-v8a.apk"
           cp "$out/app-universal-release.apk"  "dist/Photos-$VERSION-universal.apk"
           # Fail if the APKs were not signed with the release key (debug fallback).
-          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/35.*/apksigner | tail -1)"
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/36.*/apksigner | tail -1)"
           if "$apksigner" verify --print-certs dist/*.apk | grep -q "CN=Android Debug"; then
             echo "::error::Release APK is signed with the debug key; check the signing secrets."
             exit 1
