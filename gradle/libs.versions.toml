@@ -65,6 +65,8 @@ media3-transformer = { group = "androidx.media3", name = "media3-transformer", v
 media3-effect = { group = "androidx.media3", name = "media3-effect", version.ref = "media3" }
 media3-cast = { group = "androidx.media3", name = "media3-cast", version.ref = "media3" }
 media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
+# Already on the runtime classpath through media3-cast; on the compile classpath for the viewer's ⋯ "Cast to TV…" row.
+androidx-mediarouter = { group = "androidx.mediarouter", name = "mediarouter", version = "1.8.1" }
 nanohttpd = { group = "org.nanohttpd", name = "nanohttpd", version.ref = "nanohttpd" }
 maplibre-android = { group = "org.maplibre.gl", name = "android-sdk", version.ref = "maplibre" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

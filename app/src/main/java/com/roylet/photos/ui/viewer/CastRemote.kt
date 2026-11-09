@@ -1,6 +1,9 @@
 package com.roylet.photos.ui.viewer
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
@@ -48,6 +51,7 @@ import com.roylet.photos.ui.components.BrutalSpinner
 import com.roylet.photos.ui.components.DarkButton
 import com.roylet.photos.ui.components.DarkIconButton
 import com.roylet.photos.ui.components.brutalDark
+import com.roylet.photos.ui.components.reducedMotion
 import com.roylet.photos.ui.gallery.AssetImage
 import com.roylet.photos.ui.gallery.MediaUrls
 import com.roylet.photos.ui.gallery.clock
@@ -114,10 +118,14 @@ internal fun CastVideoPage(
                 )
             }
         }
-        AnimatedVisibility(chrome && isCurrent, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
+        // The remote stays up with the chrome hidden too (it's the only way to drive the TV here);
+        // it just drops into the space the action bar and filmstrip leave.
+        val reduced = reducedMotion()
+        val bottom by animateDpAsState(if (chrome) 150.dp else 24.dp, if (reduced) snap() else tween(200), label = "remote")
+        AnimatedVisibility(isCurrent, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
             CastRemoteControls(
                 state, onTv, actions,
-                Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(start = 12.dp, end = 12.dp, bottom = 150.dp).fillMaxWidth(),
+                Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(start = 12.dp, end = 12.dp, bottom = bottom).fillMaxWidth(),
                 fallbackDurationMs = asset.durationMs ?: 0,
             )
         }

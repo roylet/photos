@@ -600,13 +600,15 @@ Chromecast to Google's **Default Media Receiver** (`CC1AD845`), modelled on Immi
 ### UI
 
 - `CastButton`: Media3's Compose `MediaRouteButton` in our square frame (orange while casting);
-  in the viewer's top bar whenever Play services are there, and in the Photos header only while
-  devices are around (`CastState.devicesAvailable`).
+  in the viewer's top bar only while casting (tap for the TV's controls), and in the Photos header
+  only while devices are around (`CastState.devicesAvailable`), after the connection chip:
+  [HOME/REMOTE] [cast] [settings]. The viewer starts a cast from ⋯ → "Cast to TV…"
+  (`CastRoutePicker`: the same dialog the button opens, from androidx.mediarouter).
 - Viewer while casting: `CastingBanner` ("Casting to <TV>", STOP, errors and notes), the settled
   page goes to the TV, video pages are `CastVideoPage` (poster, play/pause, the local `SeekBar`,
   TV volume, Stop casting); the local ExoPlayer is never created.
-- ⋯ (`ViewerMoreSheet`): Slideshow on TV / Slideshow, Archive (moved here from the top bar), Stop
-  casting. `SlideshowSheet`: 3/5/10 s, shuffle. `SlideshowRunner` loops the timeline
+- ⋯ (`ViewerMoreSheet`): Cast to TV… (not while casting), Info, Slideshow on TV / Slideshow,
+  Archive, Stop casting. The remote panel of a cast video stays up with the chrome hidden. `SlideshowSheet`: 3/5/10 s, shuffle. `SlideshowRunner` loops the timeline
   (`TimelineQueue` loads months on demand); videos play to their end. The TV's show belongs to the
   controller (survives a rotation; the pager follows) and stops when the viewer closes, since
   nothing outside the viewer could stop it short of STOP CASTING; the phone's own show turns

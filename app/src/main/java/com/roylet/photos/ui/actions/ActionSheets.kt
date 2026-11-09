@@ -82,6 +82,11 @@ import com.roylet.photos.ui.theme.Palette
 import com.roylet.photos.ui.theme.Type
 import com.roylet.photos.util.Format
 import com.roylet.photos.domain.library.DeleteTarget
+import com.roylet.photos.share.OptionSummary
+import com.roylet.photos.share.ShareEstimator
+import com.roylet.photos.share.ShareItemInfo
+import com.roylet.photos.share.SharePhase
+import com.roylet.photos.share.ShareQuality
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.PhoneAndroid
@@ -98,6 +103,7 @@ fun ActionSheets(actions: LibraryActions, modifier: Modifier = Modifier) {
             is ActionSheet.AddToAlbum -> AddToAlbumContent(actions, s)
             is ActionSheet.Share -> ShareContent(actions, s)
             is ActionSheet.DeleteChoice -> DeleteChoiceContent(s, actions::chooseDelete)
+            is ActionSheet.Compress -> CompressContent(actions, s)
             null -> Unit
         }
     }
@@ -227,7 +233,7 @@ fun ShareContent(actions: LibraryActions, sheet: ActionSheet.Share) {
     Spacer(Modifier.height(14.dp))
     if (links || albumMode) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ModeTile(Icons.Rounded.Send, "Send file", "Originals to any app", selected = mode == "file", enabled = !albumMode, modifier = Modifier.weight(1f)) { mode = "file" }
+            ModeTile(Icons.Rounded.Send, "Send file", if (actions.canCompress) "Original or smaller" else "Originals to any app", selected = mode == "file", enabled = !albumMode, modifier = Modifier.weight(1f)) { mode = "file" }
             ModeTile(Icons.Rounded.Link, "Share link", "A link anyone can open", selected = mode == "link", modifier = Modifier.weight(1f)) { mode = "link" }
         }
         Spacer(Modifier.height(16.dp))
@@ -321,15 +327,7 @@ private fun ModeTile(icon: ImageVector, title: String, subtitle: String, selecte
 @Composable
 private fun SendFilePane(actions: LibraryActions, ids: List<String>) {
     val t = actions.transfer
-    if (t == null) {
-        Text(
-            if (ids.size == 1) "Downloads the full-quality original, then opens Android's share sheet."
-            else "Downloads ${ids.size} full-quality originals, then shares them together.",
-            style = Type.Small, color = Palette.mutedInk,
-        )
-        Spacer(Modifier.height(14.dp))
-        BrutalButton("Send ${Format.plural(ids.size, "file")}", { actions.sendFiles(ids) }, icon = Icons.Rounded.Share, large = true, modifier = Modifier.fillMaxWidth())
-    } else {
+    if (t != null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("DOWNLOADING ${minOf(t.done + 1, t.count)} OF ${t.count}", style = Type.Label, color = Palette.ink, modifier = Modifier.weight(1f))
             if (t.totalBytes > 0) Text("${Format.bytes(t.bytes)} / ${Format.bytes(t.totalBytes)}", style = Type.Small, color = Palette.mutedInk)
@@ -338,6 +336,172 @@ private fun SendFilePane(actions: LibraryActions, ids: List<String>) {
         BrutalProgress(t.fraction, moving = true)
         Spacer(Modifier.height(14.dp))
         BrutalButton("Cancel", actions::cancelTransfer, style = ButtonStyle.Outline, modifier = Modifier.fillMaxWidth())
+        return
+    }
+    if (!actions.canCompress) {
+        Text(
+            if (ids.size == 1) "Downloads the full-quality original, then opens Android's share sheet."
+            else "Downloads ${ids.size} full-quality originals, then shares them together.",
+            style = Type.Small, color = Palette.mutedInk,
+        )
+        Spacer(Modifier.height(14.dp))
+        BrutalButton("Send ${Format.plural(ids.size, "file")}", { actions.sendFiles(ids) }, icon = Icons.Rounded.Share, large = true, modifier = Modifier.fillMaxWidth())
+        return
+    }
+    // Sizes come from each item's details; until they're in, only Original can be sent.
+    var measured by remember(ids) { mutableStateOf<List<ShareItemInfo>?>(null) }
+    LaunchedEffect(ids) { measured = actions.measureShare(ids) }
+    SendQualityPane(
+        count = ids.size,
+        measured = measured?.let { m -> val byId = m.associateBy { it.id }; ids.map { byId[it] ?: ShareItemInfo(it, it, null, null, null, null, null) } },
+        remembered = ShareQuality.of(actions.prefs.shareQuality),
+        onSend = { q -> actions.sendFiles(ids, q, measured.orEmpty()) },
+    )
+}
+
+/** The quality choice for "Send file": Original / Smaller / Smallest with sizes, then the send button. */
+@Composable
+fun SendQualityPane(count: Int, measured: List<ShareItemInfo>?, remembered: ShareQuality, onSend: (ShareQuality) -> Unit) {
+    val summaries = remember(measured) { measured?.let { items -> ShareQuality.entries.associateWith { ShareEstimator.summary(items, it) } } }
+    var choice by remember { mutableStateOf(remembered) }
+    // A remembered choice that doesn't help this selection shows as Original (the memory stays).
+    val effective = if (choice == ShareQuality.ORIGINAL || summaries?.get(choice)?.enabled != false) choice else ShareQuality.ORIGINAL
+    Text("QUALITY", style = Type.Tiny, color = Palette.mutedInk)
+    Spacer(Modifier.height(8.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ShareQuality.entries.forEach { q ->
+            QualityRow(q, summaries?.get(q), original = summaries?.get(ShareQuality.ORIGINAL), selected = effective == q) { choice = q }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    val s = summaries?.get(effective)
+    Text(
+        when {
+            effective == ShareQuality.ORIGINAL ->
+                if (count == 1) "Sends the full-quality original to any app." else "Sends $count full-quality originals together."
+            s == null -> "Measuring…"
+            s.compressCount == count -> "Makes ${if (count == 1) "a smaller copy" else "smaller copies"} first. Keep this open while it works."
+            else -> "Makes smaller copies of ${s.compressCount} of $count; the rest are already small and go as they are."
+        },
+        style = Type.Small, color = Palette.mutedInk,
+    )
+    Spacer(Modifier.height(14.dp))
+    val ready = effective == ShareQuality.ORIGINAL || summaries != null
+    BrutalButton(
+        if (effective == ShareQuality.ORIGINAL) "Send ${Format.plural(count, "file")}" else "Compress & send",
+        { onSend(effective) },
+        icon = Icons.Rounded.Share, large = true, enabled = ready, modifier = Modifier.fillMaxWidth().testTag("sendFiles"),
+    )
+}
+
+@Composable
+private fun QualityRow(quality: ShareQuality, summary: OptionSummary?, original: OptionSummary?, selected: Boolean, onClick: () -> Unit) {
+    val enabled = summary?.enabled ?: (quality == ShareQuality.ORIGINAL)
+    val ink = if (selected) Brutal.Ink else Palette.ink
+    val muted = if (selected) Brutal.Ink else Palette.mutedInk
+    Pressable(
+        onClick, Modifier.fillMaxWidth().testTag("quality-${quality.name}").graphicsLayer { alpha = if (enabled) 1f else 0.45f },
+        fill = if (selected) Brutal.Orange else Palette.card, shadow = if (selected) 4.dp else 2.dp, enabled = enabled,
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            RadioDot(selected, ink)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (quality == ShareQuality.ORIGINAL) "ORIGINAL" else "COMPRESSED: ${quality.title.uppercase()}", style = Type.Label, color = ink)
+                Text(quality.subtitle, style = Type.Small, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                val size = when {
+                    summary == null -> "…"
+                    !enabled -> "—"
+                    summary.totalBytes <= 0 -> "?"
+                    quality == ShareQuality.ORIGINAL -> Format.bytes(summary.totalBytes) + if (summary.partial) "+" else ""
+                    else -> "~" + Format.bytes(summary.totalBytes) + if (summary.partial) "+" else ""
+                }
+                Text(size, style = Type.Label, color = ink)
+                val note = when {
+                    summary == null || quality == ShareQuality.ORIGINAL -> null
+                    !enabled -> "Not smaller"
+                    original != null && original.totalBytes > 0 && !original.partial && !summary.partial ->
+                        "−${((1 - summary.totalBytes.toDouble() / original.totalBytes) * 100).toInt().coerceIn(0, 99)}%"
+                    else -> null
+                }
+                if (note != null) Text(note, style = Type.Small, color = muted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadioDot(selected: Boolean, ink: androidx.compose.ui.graphics.Color) {
+    Box(Modifier.size(20.dp).border(2.dp, ink, RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
+        if (selected) Box(Modifier.size(10.dp).background(ink, RoundedCornerShape(50)))
+    }
+}
+
+/* ---------------- Compress progress ---------------- */
+
+/**
+ * "Compressing 2 of 3 · 45%" with CANCEL. Compression runs while this sheet is shown: leaving it
+ * (CANCEL, back, a tap outside) cancels; when it's done Android's share sheet opens.
+ */
+@Composable
+fun CompressContent(actions: LibraryActions, sheet: ActionSheet.Compress) {
+    LaunchedEffect(sheet) { actions.runCompression(sheet) }
+    CompressProgressPane(
+        sheet, actions.compressing,
+        onCancel = actions::closeSheet,
+        onSendOriginal = actions::sendOriginalInstead,
+    )
+}
+
+@Composable
+fun CompressProgressPane(sheet: ActionSheet.Compress, state: CompressState?, onCancel: () -> Unit, onSendOriginal: () -> Unit) {
+    when (state) {
+        is CompressState.Failed -> {
+            SheetTitle("Couldn't compress", sheet.quality.title)
+            Spacer(Modifier.height(8.dp))
+            Text(state.message, style = Type.Body, color = Palette.ink)
+            Spacer(Modifier.height(6.dp))
+            Text("The originals can still go: they're bigger, but they'll arrive as they are.", style = Type.Small, color = Palette.mutedInk)
+            Spacer(Modifier.height(14.dp))
+            BrutalButton("Send original instead", onSendOriginal, icon = Icons.Rounded.Share, large = true, modifier = Modifier.fillMaxWidth().testTag("sendOriginal"))
+            Spacer(Modifier.height(10.dp))
+            BrutalButton("Close", onCancel, style = ButtonStyle.Outline, modifier = Modifier.fillMaxWidth())
+        }
+        else -> {
+            val p = (state as? CompressState.Running)?.progress
+            val count = p?.count ?: sheet.items.size
+            val n = minOf((p?.index ?: 0) + 1, count)
+            val overall = ((p?.overall ?: 0f) * 100).toInt().coerceIn(0, 100)
+            SheetTitle("Preparing to send", sheet.quality.title)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (count == 1) "COMPRESSING · $overall%" else "COMPRESSING $n OF $count · $overall%",
+                style = Type.Label, color = Palette.ink, modifier = Modifier.testTag("compressProgress"),
+            )
+            Spacer(Modifier.height(8.dp))
+            BrutalProgress(p?.overall ?: 0f, moving = true)
+            if (p != null && (count > 1 || p.phase == SharePhase.Downloading)) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(p.name, style = Type.Small, color = Palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    val what = when (p.phase) {
+                        SharePhase.Preparing -> "Starting"
+                        SharePhase.Downloading -> "Downloading"
+                        SharePhase.Compressing -> "Encoding"
+                    }
+                    Text("$what ${(p.itemFraction * 100).toInt()}%", style = Type.Small, color = Palette.mutedInk)
+                }
+                Spacer(Modifier.height(6.dp))
+                BrutalProgress(p.itemFraction, height = 8.dp, fill = Palette.mint)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text("Keep this open: closing it stops compressing. Android's share sheet opens when it's done.", style = Type.Small, color = Palette.mutedInk)
+            Spacer(Modifier.height(14.dp))
+            BrutalButton("Cancel", onCancel, style = ButtonStyle.Outline, modifier = Modifier.fillMaxWidth().testTag("cancelCompress"))
+        }
     }
 }
 

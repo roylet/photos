@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
@@ -196,11 +197,32 @@ class GalleryScreenshotTest {
         }
     }
 
+    /** A video opens full-bleed: no bars, no filmstrip, no controls. */
     @Test fun viewerVideo() {
         val repo = FakeGallery.repository(loadAll = true)
-        val s = repo.snapshot.value
-        val index = (0 until s.total).first { s.assetAt(it)?.isVideo == true }
+        val index = videoIndex(repo)
         shoot("gallery-06-viewer-video", dark = true) { ViewerScreen(repo, startIndex = index, onBack = {}, onEdit = {}) }
+    }
+
+    /** One tap on the video: the chrome and the control card come back. */
+    @Test fun viewerVideoControls() {
+        val repo = FakeGallery.repository(loadAll = true)
+        val index = videoIndex(repo)
+        val id = repo.snapshot.value.assetAt(index)!!.id
+        shoot("gallery-06-viewer-video-controls", dark = true, before = { tapVideo(id) }) {
+            ViewerScreen(repo, startIndex = index, onBack = {}, onEdit = {})
+        }
+    }
+
+    private fun tapVideo(id: String) {
+        compose.onNodeWithTag("viewer-video-$id").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(600)
+    }
+
+    private fun videoIndex(repo: com.roylet.photos.domain.timeline.TimelineRepository): Int {
+        val s = repo.snapshot.value
+        return (0 until s.total).first { s.assetAt(it)?.let { a -> a.isVideo && (a.durationMs ?: 0) > 60_000 && a.ratio > 1.2f } == true }
     }
 
     /** Mid-scrub on a video: preview bubble, frame strip and the bar under the finger. */
@@ -212,6 +234,7 @@ class GalleryScreenshotTest {
         val strip = VideoFrameCache.obtain(asset.id, asset.durationMs!!)!!
         FakeGallery.videoFrames(asset, strip.count).forEachIndexed { i, b -> strip.frames[i] = b.asImageBitmap() }
         shoot("gallery-08-viewer-video-scrub", dark = true, before = {
+            tapVideo(asset.id)
             compose.onNodeWithTag("video-seekbar", useUnmergedTree = true).performTouchInput {
                 down(Offset(width * 0.15f, centerY))
                 moveTo(Offset(width * 0.45f, centerY))

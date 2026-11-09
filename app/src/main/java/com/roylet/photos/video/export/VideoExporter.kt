@@ -20,6 +20,7 @@ import androidx.media3.container.Mp4TimestampData
 import androidx.media3.effect.Crop
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.ScaleAndRotateTransformation
+import androidx.media3.transformer.AudioEncoderSettings
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
@@ -169,8 +170,23 @@ fun describeExportError(code: Int): Pair<String, Boolean> = when (code) {
 class Media3VideoExporter(context: Context) : VideoExportEngine {
     private val app = context.applicationContext
 
-    override suspend fun export(source: File, plan: ExportPlan, output: File, onProgress: (Float) -> Unit): ExportSummary = try {
-        runOnce(source, plan, output, onProgress)
+    override suspend fun export(source: File, plan: ExportPlan, output: File, onProgress: (Float) -> Unit): ExportSummary =
+        withFallback(plan, output, onProgress) { p ->
+            if (!source.exists()) throw VideoExportException("The downloaded original was removed from the cache.")
+            runOnce(Uri.fromFile(source), p, output, onProgress)
+        }
+
+    /** The same for a video read in place by its content URI (a phone video, for a compressed share). */
+    suspend fun export(source: Uri, plan: ExportPlan, output: File, onProgress: (Float) -> Unit): ExportSummary =
+        withFallback(plan, output, onProgress) { p -> runOnce(source, p, output, onProgress) }
+
+    private suspend fun withFallback(
+        plan: ExportPlan,
+        output: File,
+        onProgress: (Float) -> Unit,
+        run: suspend (ExportPlan) -> ExportSummary,
+    ): ExportSummary = try {
+        run(plan)
     } catch (e: VideoExportException) {
         val fallback = plan.fallback()
         if (!e.fallbackMayHelp || fallback == null) throw e
@@ -180,11 +196,10 @@ class Media3VideoExporter(context: Context) : VideoExportEngine {
             if (plan.videoMime != fallback.videoMime) add("H.264")
             if (plan.hdr != fallback.hdr) add("SDR")
         }.joinToString(" and ").ifEmpty { "a simpler format" }
-        runOnce(source, fallback, output, onProgress).let { it.copy(warning = it.warning ?: "Exported as $note: ${e.message}") }
+        run(fallback).let { it.copy(warning = it.warning ?: "Exported as $note: ${e.message}") }
     }
 
-    private suspend fun runOnce(source: File, plan: ExportPlan, output: File, onProgress: (Float) -> Unit): ExportSummary {
-        if (!source.exists()) throw VideoExportException("The downloaded original was removed from the cache.")
+    private suspend fun runOnce(source: Uri, plan: ExportPlan, output: File, onProgress: (Float) -> Unit): ExportSummary {
         output.parentFile?.mkdirs()
         output.delete()
         val thread = HandlerThread("video-export").apply { start() }
@@ -223,7 +238,7 @@ class Media3VideoExporter(context: Context) : VideoExportEngine {
                     try {
                         val t = build(plan, listener)
                         transformer = t
-                        t.start(Media3Compositions.composition(plan, Uri.fromFile(source)), output.path)
+                        t.start(Media3Compositions.composition(plan, source), output.path)
                         val holder = ProgressHolder()
                         handler.post(object : Runnable {
                             override fun run() {
@@ -247,6 +262,7 @@ class Media3VideoExporter(context: Context) : VideoExportEngine {
         val encoders = DefaultEncoderFactory.Builder(app)
             .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(plan.bitrate).build())
             .setEnableFallback(true)
+            .apply { plan.audioBitrate?.let { setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(it).build()) } }
             .build()
         val muxer = InAppMp4Muxer.Factory { entries ->
             plan.creationTimeMs?.takeIf { t -> entries.none { it is Mp4TimestampData } }?.let {

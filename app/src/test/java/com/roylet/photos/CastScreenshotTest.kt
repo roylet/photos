@@ -38,6 +38,7 @@ import com.roylet.photos.net.ConnState
 import com.roylet.photos.net.ScanState
 import com.roylet.photos.net.LocalUrlResult
 import com.roylet.photos.ui.components.BrutalTabBar
+import com.roylet.photos.ui.components.ConnectionChip
 import com.roylet.photos.ui.components.LocalReducedMotion
 import com.roylet.photos.ui.gallery.PhotosScreen
 import com.roylet.photos.ui.theme.BrutalDark
@@ -105,7 +106,7 @@ class CastScreenshotTest {
         return (0 until s.total).first { s.assetAt(it)?.let { a -> a.isVideo && (a.durationMs ?: 0) > 60_000 && a.ratio > 1.2f } == true }
     }
 
-    /** Not casting, a Chromecast on the Wi-Fi: the cast button in the viewer's top bar. */
+    /** Not casting, a Chromecast on the Wi-Fi: the top bar keeps share and ⋯ (casting starts from ⋯). */
     @Test fun viewerCastButton() {
         val repo = FakeGallery.repository(loadAll = true)
         val cast = fakeCastController(scope, FakeCastDevice(CastAvailability.Available))
@@ -114,7 +115,7 @@ class CastScreenshotTest {
         }
     }
 
-    /** Casting a photo: the "Casting to" banner under the top bar. */
+    /** Casting a photo: the lit cast button in the top bar and the "Casting to" banner under it. */
     @Test fun viewerCastingPhoto() {
         val repo = FakeGallery.repository(loadAll = true)
         val device = FakeCastDevice(CastAvailability.Connected).apply { connect() }
@@ -158,6 +159,42 @@ class CastScreenshotTest {
         }
     }
 
+    @Test fun viewerMenu() = viewerMenu("cast-11-viewer-menu", dark = false)
+
+    @Test fun viewerMenuDark() = viewerMenu("cast-11-viewer-menu-dark", dark = true)
+
+    /** Viewer ⋯ with a Chromecast around: Cast to TV…, Info, Slideshow, Archive (the sheet follows the theme). */
+    private fun viewerMenu(name: String, dark: Boolean) {
+        val repo = FakeGallery.repository(loadAll = true)
+        val cast = fakeCastController(scope, FakeCastDevice(CastAvailability.Available))
+        shoot(name, cast, dark = dark, before = {
+            compose.onNodeWithContentDescription("More").performClick()
+        }) {
+            ViewerScreen(repo, startIndex = photoIndex(repo), onBack = {}, onEdit = {}, modifier = Modifier.background(BrutalDark.Canvas))
+        }
+    }
+
+    @Test fun photosHeader() = photosHeader("cast-12-photos-header", dark = false)
+
+    @Test fun photosHeaderDark() = photosHeader("cast-12-photos-header-dark", dark = true)
+
+    /** The Photos header with a Chromecast around: [REMOTE] [cast] [settings]. */
+    private fun photosHeader(name: String, dark: Boolean) {
+        val repo = FakeGallery.repository(loadAll = true)
+        val cast = fakeCastController(scope, FakeCastDevice(CastAvailability.Available))
+        shoot(name, cast, dark = dark) {
+            Column(Modifier.fillMaxSize().background(Palette.paper)) {
+                PhotosScreen(
+                    repo, onOpen = { _, _ -> }, onSettings = {},
+                    connectionChip = { ConnectionChip(ConnState.Remote) },
+                    castButton = { CastButton(dark = false) },
+                    modifier = Modifier.weight(1f),
+                )
+                BrutalTabBar(Tabs, Routes.TIMELINE, {})
+            }
+        }
+    }
+
     @Test fun miniController() = mini("cast-06-mini-controller", dark = false)
 
     @Test fun miniControllerDark() = mini("cast-06-mini-controller-dark", dark = true)
@@ -172,7 +209,12 @@ class CastScreenshotTest {
         shoot(name, cast, dark = dark) {
             val state by cast.state.collectAsState()
             Column(Modifier.fillMaxSize().background(Palette.paper)) {
-                PhotosScreen(repo, onOpen = { _, _ -> }, onSettings = {}, castButton = { CastButton(dark = false) }, modifier = Modifier.weight(1f))
+                PhotosScreen(
+                    repo, onOpen = { _, _ -> }, onSettings = {},
+                    connectionChip = { ConnectionChip(ConnState.Home) },
+                    castButton = { CastButton(dark = false) },
+                    modifier = Modifier.weight(1f),
+                )
                 CastMiniController(state, onTogglePlay = cast::togglePlay, onStop = cast::stop)
                 BrutalTabBar(Tabs, Routes.TIMELINE, {})
             }

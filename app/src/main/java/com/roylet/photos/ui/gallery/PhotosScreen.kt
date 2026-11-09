@@ -139,8 +139,9 @@ fun PhotosScreen(
     if (blocked != null) {
         Column(modifier.fillMaxSize().background(Palette.paper)) {
             ScreenHeader("Photos", actions = {
-                castButton?.invoke()
+                // [connection chip] [cast] [settings]
                 connectionChip()
+                castButton?.invoke()
                 SquareIconButton(Icons.Rounded.Settings, "Settings", onSettings)
             })
             Box(Modifier.weight(1f)) { blocked() }
@@ -156,8 +157,9 @@ fun PhotosScreen(
         revealIndex = revealIndex,
         onRevealed = onRevealed,
         headerActions = {
-            castButton?.invoke()
+            // [connection chip] [cast] [settings]
             connectionChip()
+            castButton?.invoke()
             SquareIconButton(Icons.Rounded.Settings, "Settings", onSettings)
         },
         selectionActions = selectionActions,
