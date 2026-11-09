@@ -97,6 +97,8 @@ data class ExportPlan(
      * stream and only re-encode up to the first keyframe. Much faster for long 4K footage.
      */
     val trimOptimization: Boolean = false,
+    /** AAC bitrate for the re-encoded audio; null keeps Media3's default (and lets audio pass through untouched). */
+    val audioBitrate: Int? = null,
 ) {
     /**
      * The safest variant after an encoder/HDR failure: H.264, SDR (tone-mapped), no transmux.
