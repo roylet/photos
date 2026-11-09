@@ -19,12 +19,19 @@ import com.roylet.photos.domain.timeline.TimelineRegistry
 import com.roylet.photos.domain.timeline.TimelineRepository
 import com.roylet.photos.domain.timeline.Visibility
 import com.roylet.photos.immich.ImmichApi
+import com.roylet.photos.share.ShareCompression
+import com.roylet.photos.share.ShareItemInfo
+import com.roylet.photos.share.SharePhase
+import com.roylet.photos.share.ShareProgress
+import com.roylet.photos.share.ShareQuality
 import com.roylet.photos.ui.components.SnackTone
 import com.roylet.photos.ui.components.SnackbarController
 import com.roylet.photos.ui.gallery.AssetActions
 import com.roylet.photos.util.Format
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
@@ -42,6 +49,14 @@ sealed interface ActionSheet {
         /** Some are in a folder that's backed up: choosing "Immich" warns that they won't be backed up again. */
         val backedUp: Boolean = false,
     ) : ActionSheet
+    /** "Send file" at a compressed [quality]: the progress sheet; compression runs while it's open. */
+    data class Compress(val ids: List<String>, val items: List<ShareItemInfo>, val quality: ShareQuality) : ActionSheet
+}
+
+/** The compress progress sheet's state. */
+sealed interface CompressState {
+    data class Running(val progress: ShareProgress) : CompressState
+    data class Failed(val message: String) : CompressState
 }
 
 /** Hands files or text to other apps; Android's share sheet and clipboard in the app. */
@@ -86,6 +101,8 @@ class LibraryActions(
     private val session: () -> Any? = { null },
     /** Whether any of these ids is in a folder backup covers (docs/SOURCES.md §10). */
     private val inBackedUpFolder: suspend (List<String>) -> Boolean = { false },
+    /** Compressed "Send file" (Smaller / Smallest); null hides the quality choice. */
+    private val compression: ShareCompression? = null,
 ) : AssetActions {
 
     /** The answer to "Delete from:" for this session (asked once, then used for every delete). */
@@ -103,9 +120,13 @@ class LibraryActions(
     var link by mutableStateOf<LinkState>(LinkState.Idle)
         private set
     private var transferJob: Job? = null
+    var compressing by mutableStateOf<CompressState?>(null)
+        private set
+    private var compressJob: Job? = null
 
     fun closeSheet() {
         cancelTransfer()
+        cancelCompression()
         sheet = null
         link = LinkState.Idle
     }
@@ -446,6 +467,7 @@ class LibraryActions(
         if (ids.isEmpty()) return
         link = LinkState.Idle
         sheet = ActionSheet.Share(ids)
+        compression?.let { c -> scope.launch(Dispatchers.IO) { c.cleanStale() } }
     }
 
     override fun shareAlbum(albumId: String) {
@@ -484,6 +506,65 @@ class LibraryActions(
                 transfer = null
             }
         }
+    }
+
+    /** Whether "Send file" offers compressed copies. */
+    val canCompress: Boolean get() = compression != null
+
+    /** The selection's sizes for the quality choice (empty when unknown). */
+    suspend fun measureShare(ids: List<String>): List<ShareItemInfo> =
+        runCatching { compression?.measure(ids) }.getOrNull().orEmpty()
+
+    /**
+     * "Send file" at [quality], remembered for next time. Original sends as before; the others open
+     * the progress sheet, which compresses [measured] items (unmeasured ones go as originals).
+     */
+    fun sendFiles(ids: List<String>, quality: ShareQuality, measured: List<ShareItemInfo>) {
+        if (ids.isEmpty()) return
+        prefs.shareQuality = quality.name
+        if (quality == ShareQuality.ORIGINAL || compression == null) return sendFiles(ids)
+        val byId = measured.associateBy { it.id }
+        val items = ids.map { byId[it] ?: ShareItemInfo(it, it, null, null, null, null, null) }
+        prefs.shareMode = "file"
+        compressing = null
+        sheet = ActionSheet.Compress(ids, items, quality)
+    }
+
+    /**
+     * Runs the compression for the progress sheet [s], then opens Android's share sheet. Called by
+     * the sheet itself, so it's cancelled when the sheet goes (or [closeSheet] is called).
+     */
+    suspend fun runCompression(s: ActionSheet.Compress) {
+        val c = compression ?: return
+        compressJob = currentCoroutineContext()[Job]
+        compressing = CompressState.Running(ShareProgress(0, s.items.size, SharePhase.Preparing, 0f, 0f, s.items.firstOrNull()?.fileName.orEmpty()))
+        try {
+            val bundle = c.compress(s.items, s.quality) { p -> compressing = CompressState.Running(p) }
+            if (bundle.uris.isEmpty()) launcher.sendFiles(bundle.files) else launcher.send(bundle.files, bundle.uris)
+            compressing = null
+            if (sheet === s) sheet = null
+        } catch (e: CancellationException) {
+            compressing = null
+            throw e
+        } catch (e: Throwable) {
+            compressing = CompressState.Failed(e.message ?: "Couldn't compress: ${describe(e)}")
+        } finally {
+            compressJob = null
+        }
+    }
+
+    fun cancelCompression() {
+        compressJob?.cancel()
+        compressJob = null
+        compressing = null
+    }
+
+    /** After a failed compression: send the originals of the same items. */
+    fun sendOriginalInstead() {
+        val s = sheet as? ActionSheet.Compress ?: return
+        cancelCompression()
+        sheet = ActionSheet.Share(s.ids)
+        sendFiles(s.ids)
     }
 
     fun cancelTransfer() {

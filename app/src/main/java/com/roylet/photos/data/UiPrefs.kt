@@ -20,6 +20,12 @@ class UiPrefs(context: Context?) {
         set(v) { memShare = v; prefs?.edit()?.putString("shareMode", v)?.apply() }
     private var memShare = "file"
 
+    /** "Send file" quality: `ORIGINAL`, `SMALLER` or `SMALLEST` (the last one chosen). */
+    var shareQuality: String
+        get() = prefs?.getString("shareQuality", null) ?: memQuality
+        set(v) { memQuality = v; prefs?.edit()?.putString("shareQuality", v)?.apply() }
+    private var memQuality = "ORIGINAL"
+
     var albumSort: String
         get() = prefs?.getString("albumSort", null) ?: memSort
         set(v) { memSort = v; prefs?.edit()?.putString("albumSort", v)?.apply() }
