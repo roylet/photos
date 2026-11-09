@@ -197,7 +197,7 @@ fun TimelineGrid(
             return when (item) {
                 is GridItem.Header -> base
                 is GridItem.Row -> base + item.row.start
-                is GridItem.Pending -> base + (state.firstVisibleItemScrollOffset / item.heightPx.coerceAtLeast(1f) * m.snapshot.countOf(item.bucket)).toInt()
+                is GridItem.Pending -> base + ((item.part * item.heightPx + state.firstVisibleItemScrollOffset) / item.monthHeightPx.coerceAtLeast(1f) * m.snapshot.countOf(item.bucket)).toInt()
             }
         }
 
@@ -392,6 +392,19 @@ internal fun heightOf(item: GridItem, headerPx: Float): Float = when (item) {
     is GridItem.Pending -> item.heightPx
 }
 
+/**
+ * The rendition a grid cell of [widthPx]×[heightPx] loads (always decoded at the cell's size; see
+ * [AssetImage]). Immich: above ~180dp the 250px thumbnail looks soft, so big cells (and every
+ * close-up level) get the preview. Phone items always go through MediaStore's thumbnails
+ * (`ContentResolver.loadThumbnail`, sized to the cell; see [com.roylet.photos.local.LocalThumbnailFetcher]):
+ * their "preview" is the original file, far too heavy to decode for every cell scrolled past.
+ */
+internal fun gridImageUrl(urls: MediaUrls, id: String, widthPx: Float, heightPx: Float, sharp: Boolean): String = when {
+    AssetRef.isLocal(id) -> urls.thumbnail(id)
+    sharp || widthPx > 360f || heightPx > 360f -> urls.preview(id)
+    else -> urls.thumbnail(id)
+}
+
 @Composable
 private fun GridRow(item: GridItem.Row, selection: GridSelection, urls: MediaUrls, density: GridDensity) {
     val px = LocalDensity.current
@@ -423,8 +436,7 @@ private fun GridCell(asset: TimelineAsset, widthPx: Float, heightPx: Float, sele
     )
     val w = with(px) { widthPx.toDp() }
     val h = with(px) { heightPx.toDp() }
-    // Above ~180px the 250px thumbnail starts to look soft, so big cells (and every close-up level) get the preview rendition.
-    val url = if (sharp || widthPx > 360f || heightPx > 360f) urls.preview(asset.id) else urls.thumbnail(asset.id)
+    val url = gridImageUrl(urls, asset.id, widthPx, heightPx, sharp)
     Box(Modifier.size(w, h).background(if (selected) Palette.peach else Color.Transparent)) {
         AssetImage(
             url, asset.thumbhash, widthPx.toInt(), heightPx.toInt(),

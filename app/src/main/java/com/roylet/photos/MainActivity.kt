@@ -11,6 +11,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.roylet.photos.ui.settings.CrashReportSheet
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
@@ -26,6 +30,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as PhotosApp).container
+        val crashLog = (application as PhotosApp).crashLog
         applySystemBars(container.uiPrefs.themeMode.value)
         // Chromecast: the shared CastContext (device discovery, sessions), if Play services are here.
         container.castDevice.init()
@@ -42,7 +47,12 @@ class MainActivity : ComponentActivity() {
             }
             PhotosTheme(dark = dark, animate = true) {
                 // Test tags double as resource ids so the baseline-profile generator (UiAutomator) can find the grid and pager.
-                Box(Modifier.semantics { testTagsAsResourceId = true }) { AppNav(container) }
+                Box(Modifier.semantics { testTagsAsResourceId = true }) {
+                    AppNav(container)
+                    // The last run crashed: say so once, with the report to copy (until DISMISS).
+                    var crash by remember { mutableStateOf(crashLog.readUnseen()) }
+                    CrashReportSheet(crash, onDismiss = { crashLog.markSeen(); crash = null })
+                }
             }
         }
     }

@@ -99,6 +99,13 @@ import com.roylet.photos.ui.search.SearchModel
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
+/**
+ * The image memory cache's size for a process whose heap limit is [heapBytes]: 15% of it, at most
+ * 192 MB. It used to be a quarter of the app's memory, which on a big-heap phone let decoded
+ * bitmaps pile up to ~128 MB+ on top of everything else while the grid scrolled.
+ */
+internal fun imageMemoryCacheBytes(heapBytes: Long): Long = minOf((heapBytes * 0.15).toLong(), 192L * 1024 * 1024).coerceAtLeast(16L * 1024 * 1024)
+
 /** Hand-rolled dependency container; one per process. */
 class AppContainer(context: Context) {
     private val app = context.applicationContext
@@ -122,9 +129,9 @@ class AppContainer(context: Context) {
     val http: OkHttpClient = serverClient(ImmichApi.defaultClient, connection)
 
     val imageLoader: ImageLoader = ImageLoader.Builder(app)
-        // A quarter of the app's memory holds roughly a dozen full-screen viewer previews next to
-        // the grid's thumbnails. The disk cache keeps swiped-past and prefetched previews across sessions.
-        .memoryCache { MemoryCache.Builder().maxSizePercent(app, 0.25).build() }
+        // Room for the grid's cell-sized bitmaps and several full-screen viewer previews, capped (see
+        // imageMemoryCacheBytes). The disk cache keeps swiped-past and prefetched previews across sessions.
+        .memoryCache { MemoryCache.Builder().maxSizeBytes(imageMemoryCacheBytes(Runtime.getRuntime().maxMemory())).build() }
         .diskCache { DiskCache.Builder().directory(app.cacheDir.resolve("image_cache").toOkioPath()).maxSizeBytes(512L * 1024 * 1024).build() }
         .components {
             add(OkHttpNetworkFetcherFactory(callFactory = { http }))

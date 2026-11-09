@@ -4,13 +4,12 @@
 // Not part of the ordinary build; CI and assembleRelease never run it.
 plugins {
     alias(libs.plugins.android.test)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.baselineprofile)
 }
 
 android {
     namespace = "com.roylet.photos.baselineprofile"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 29

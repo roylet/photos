@@ -6,7 +6,9 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     ignore:
-      # Media3 1.10+ needs compileSdk 36 (see gradle/libs.versions.toml).
+      # Media3 1.10+ is a deliberate upgrade, not a routine bump: it needs code changes
+      # (Transformer's trim optimization is @ExperimentalApi) and changes MediaSession, Cast
+      # and scrubbing behaviour (see gradle/libs.versions.toml).
       - dependency-name: 'androidx.media3:*'
         versions: ['>= 1.10.0']
     groups:

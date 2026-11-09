@@ -3,6 +3,7 @@ package com.roylet.photos.ui.gallery
 import com.roylet.photos.domain.timeline.JustifiedLayout
 import com.roylet.photos.domain.timeline.JustifiedRow
 import androidx.compose.runtime.Immutable
+import kotlin.math.ceil
 import com.roylet.photos.domain.timeline.TimelineAsset
 import com.roylet.photos.domain.timeline.TimelineSnapshot
 
@@ -29,11 +30,24 @@ enum class GridDensity(val columns: Int, val squares: Boolean, val closeUp: Bool
 sealed class GridItem(val bucket: Int, val key: String, val contentType: Int) {
     class Header(bucket: Int, bucketKey: String) : GridItem(bucket, "h:$bucketKey", 0)
     class Row(bucket: Int, bucketKey: String, val row: JustifiedRow, val assets: List<TimelineAsset>) : GridItem(bucket, "r:$bucketKey:${row.start}", 1)
-    /** A month that hasn't been fetched, drawn at its estimated height; composing it triggers the fetch. */
-    class Pending(bucket: Int, bucketKey: String, val heightPx: Float) : GridItem(bucket, "p:$bucketKey", 2)
+    /**
+     * A month that hasn't been fetched, drawn at its estimated height; composing it triggers the
+     * fetch. A big month is split into [parts] placeholders of [heightPx] each (this is part
+     * [part]), since one LazyColumn item can't be taller than Compose's Constraints allow
+     * (~262k px): a 400-photo month in the one-up feed would be ~350k px and crash the grid.
+     */
+    class Pending(bucket: Int, bucketKey: String, val heightPx: Float, val part: Int = 0, val parts: Int = 1) :
+        GridItem(bucket, if (part == 0) "p:$bucketKey" else "p:$bucketKey:$part", 2) {
+        /** The whole month's estimated height. */
+        val monthHeightPx: Float get() = heightPx * parts
+    }
 }
 
 class GridModel(val items: List<GridItem>, val headerIndex: IntArray, val snapshot: TimelineSnapshot, val spacingPx: Float) {
+    /** Which of a pending month's [parts] placeholders holds its asset [inBucket] (of [count]), by estimated position. */
+    private fun pendingPartOf(inBucket: Int, count: Int, parts: Int): Int =
+        if (parts <= 1 || count <= 0) 0 else (inBucket.toLong() * parts / count).toInt().coerceIn(0, parts - 1)
+
     /** LazyColumn index of the row holding global asset [index] (or its month's header). */
     fun itemIndexOfAsset(index: Int): Int {
         val b = snapshot.bucketIndexOf(index)
@@ -44,7 +58,7 @@ class GridModel(val items: List<GridItem>, val headerIndex: IntArray, val snapsh
             val it = items[i]
             if (it.bucket != b) break
             if (it is GridItem.Row && inBucket < it.row.end) return i
-            if (it is GridItem.Pending) return i
+            if (it is GridItem.Pending) return i + pendingPartOf(inBucket, snapshot.countOf(b), it.parts)
             i++
         }
         return headerIndex[b]
@@ -101,7 +115,8 @@ class GridLayoutCache {
                     val n = (bucket.count + columns - 1) / columns
                     n * side + (n - 1).coerceAtLeast(0) * spacingPx
                 } else JustifiedLayout.estimateHeight(bucket.count, widthPx, target, spacingPx)
-                items += GridItem.Pending(b, bucket.key, h)
+                val parts = ceil(h / MAX_PENDING_PX).toInt().coerceAtLeast(1)
+                for (p in 0 until parts) items += GridItem.Pending(b, bucket.key, h / parts, p, parts)
             } else {
                 val cached = rows[bucket.key]
                 val laid = if (cached != null && cached.assets === assets && cached.bucket == b) cached.items else {
@@ -116,6 +131,12 @@ class GridLayoutCache {
     }
 
     companion object {
+        /**
+         * The tallest a single pending placeholder gets. Compose can't measure an item much taller
+         * than 262,142 px (at phone widths), so a big unloaded month is split well below that.
+         */
+        const val MAX_PENDING_PX = 32_768f
+
         fun columnsFor(density: GridDensity, columnScale: Float): Int = (density.columns * columnScale.coerceAtLeast(1f)).toInt().coerceAtLeast(1)
 
         /** Row height that gives roughly [columns] typical (3:2-ish) photos per row. */

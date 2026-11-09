@@ -98,7 +98,9 @@ internal fun TimelineScrubber(
             val idx = m.itemIndexOfAsset(asset)
             val offset = (m.items.getOrNull(idx) as? GridItem.Pending)?.let { p ->
                 val inBucket = asset - m.snapshot.offsets[b]
-                (inBucket.toFloat() / m.snapshot.countOf(b).coerceAtLeast(1) * p.heightPx).toInt()
+                // Where in the month, then where in this part of its placeholder.
+                val y = inBucket.toFloat() / m.snapshot.countOf(b).coerceAtLeast(1) * p.monthHeightPx - p.part * p.heightPx
+                y.coerceIn(0f, p.heightPx).toInt()
             } ?: 0
             state.requestScrollToItem(idx + lead, offset)
         }

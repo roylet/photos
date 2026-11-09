@@ -176,11 +176,19 @@ class LocalThumbnailFetcher(
     }
 
     companion object {
-        /** loadThumbnail's square bound: the larger requested side, 512 when the size is open. */
+        /** The square bounds loadThumbnail is asked for: grid cells, close-up cells, and the viewer's video poster. */
+        val SIZE_BUCKETS = intArrayOf(256, 512, 1080, 2048)
+
+        /**
+         * loadThumbnail's square bound: the smallest [SIZE_BUCKETS] entry that covers the larger
+         * requested side (so a cell never gets the full-resolution decode, and similar cells share
+         * MediaStore's cached sizes), 512 when the size is open.
+         */
         fun thumbnailSide(width: Dimension, height: Dimension): Int {
             val w = (width as? Dimension.Pixels)?.px ?: 0
             val h = (height as? Dimension.Pixels)?.px ?: 0
-            return maxOf(w, h).takeIf { it > 0 }?.coerceAtMost(2048) ?: 512
+            val side = maxOf(w, h).takeIf { it > 0 } ?: return 512
+            return SIZE_BUCKETS.firstOrNull { it >= side } ?: SIZE_BUCKETS.last()
         }
     }
 }

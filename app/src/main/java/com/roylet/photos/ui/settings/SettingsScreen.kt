@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.roylet.photos.AppContainer
+import com.roylet.photos.util.CrashLog
 import com.roylet.photos.cast.CastUrls
 import com.roylet.photos.ui.cast.CastSignInHost
 import com.roylet.photos.ui.cast.LocalCastSignIn
@@ -112,6 +113,11 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
     LaunchedEffect(server != null) { if (server != null) container.device.refreshMatching() }
     val castPublic by container.uiPrefs.castUsePublic.collectAsState()
     var castSignIn by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val crashLog = remember { CrashLog.of(context) }
+    val lastCrash = remember { crashLog.read() }
+    var showCrash by remember { mutableStateOf(false) }
+    val appVersion = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() }
     val casting = server?.let { s ->
         CastingSettings(
             signedIn = s.castSessionToken != null,
@@ -147,7 +153,11 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onConnect: () ->
         casting = casting,
         onCastSignIn = { castSignIn = true },
         onCastUsePublic = container.uiPrefs::setCastUsePublic,
+        appVersion = appVersion,
+        lastCrash = lastCrash,
+        onShowCrash = { showCrash = true },
     )
+    CrashReportSheet(lastCrash?.takeIf { showCrash }, onDismiss = { crashLog.markSeen(); showCrash = false })
     CompositionLocalProvider(LocalCastSignIn provides container.castSignIn) {
         CastSignInHost(castSignIn, onDismiss = { castSignIn = false })
     }
@@ -245,6 +255,10 @@ fun SettingsContent(
     casting: CastingSettings? = null,
     onCastSignIn: () -> Unit = {},
     onCastUsePublic: (Boolean) -> Unit = {},
+    /** Settings → About: the version name, and the last crash report (null: none recorded). */
+    appVersion: String? = null,
+    lastCrash: String? = null,
+    onShowCrash: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().background(Palette.paper)) {
         ScreenHeader("Settings", onBack = onBack, actions = { if (server != null) ConnectionChip(state) })
@@ -283,6 +297,10 @@ fun SettingsContent(
                 style = Type.Small,
                 color = Palette.mutedInk,
             )
+
+            Spacer(Modifier.height(4.dp))
+            SectionLabel("About")
+            AboutCard(appVersion, lastCrash, onShowCrash)
             Spacer(Modifier.height(16.dp))
         }
     }
