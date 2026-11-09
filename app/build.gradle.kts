@@ -30,7 +30,7 @@ val appVersionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 
 
 android {
     namespace = "com.roylet.photos"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.roylet.photos"

@@ -39,7 +39,7 @@ new releases and installs them.
 | | |
 |---|---|
 | Language / UI | Kotlin 2.4 (AGP built-in Kotlin), Jetpack Compose (BOM 2025.06.01), Material 3, navigation-compose |
-| Build | AGP 9.5.0, Gradle 9.8.2, compileSdk/targetSdk 35, minSdk 29, JDK 21 |
+| Build | AGP 9.5.0, Gradle 9.8.2, compileSdk 37, targetSdk 35, minSdk 29, JDK 21 |
 | Network | OkHttp 4.12 (one shared client), kotlinx-serialization |
 | Images | Coil 3 (+ coil-video), telephoto zoomable-image-coil3 |
 | Video / map | Media3 ExoPlayer + UI + OkHttp data source, MapLibre Android |
@@ -49,7 +49,7 @@ new releases and installs them.
 
 ## Building
 
-Requires JDK 21 and the Android SDK (platform 35, build-tools 36). Point `ANDROID_HOME`
+Requires JDK 21 and the Android SDK (platform 37, i.e. `platforms;android-37.0`, and build-tools 36.0.0). Point `ANDROID_HOME`
 at the SDK, or put `sdk.dir=...` in `local.properties`.
 
 ```bash

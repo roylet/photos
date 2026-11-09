@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "com.roylet.photos.baselineprofile"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 29
