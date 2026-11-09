@@ -60,6 +60,10 @@ import com.roylet.photos.domain.library.LibrarySource
 import com.roylet.photos.domain.library.MemoryStore
 import com.roylet.photos.editor.save.EditSaveManager
 import com.roylet.photos.video.save.VideoSaveManager
+import com.roylet.photos.share.AndroidPhotoTranscoder
+import com.roylet.photos.share.AndroidShareSources
+import com.roylet.photos.share.Media3ShareTranscoder
+import com.roylet.photos.share.ShareCompressor
 import com.roylet.photos.immich.ImmichApi
 import com.roylet.photos.immich.ImmichLibrary
 import com.roylet.photos.immich.ImmichTimelineSource
@@ -402,6 +406,17 @@ class AppContainer(context: Context) {
             timelines = timelines,
             session = ::sessionKey,
             inBackedUpFolder = ::inBackedUpFolder,
+            compression = shareCompressor,
+        )
+    }
+
+    /** Compressed "Send file": phone items in place, Immich videos via the editor's originals cache. */
+    val shareCompressor: ShareCompressor by lazy {
+        ShareCompressor(
+            shareDir = File(app.cacheDir, "share"),
+            sources = AndroidShareSources({ library }, { editSource }, { videoEdits.originals }),
+            videos = Media3ShareTranscoder(app),
+            photos = AndroidPhotoTranscoder(app),
         )
     }
 
