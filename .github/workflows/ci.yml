@@ -47,7 +47,7 @@ jobs:
 
       - name: Test summary
         if: ${{ !cancelled() }}
-        uses: mikepenz/action-junit-report@v5
+        uses: mikepenz/action-junit-report@v6
         with:
           report_paths: app/build/test-results/testDebugUnitTest/*.xml
           annotate_only: true
