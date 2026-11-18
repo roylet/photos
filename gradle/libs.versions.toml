@@ -20,7 +20,7 @@ media3 = "1.9.4"  # pinned: 1.11 fails lint without code changes (Transformer tr
 maplibre = "13.7.1"
 nanohttpd = "2.3.1"
 junit = "4.13.2"
-robolectric = "4.17"
+robolectric = "4.18"
 androidxTestCore = "1.6.1"
 # Baseline Profiles (the :baselineprofile producer module)
 benchmark = "1.5.0"
